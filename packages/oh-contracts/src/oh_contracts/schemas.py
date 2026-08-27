@@ -31,7 +31,7 @@ class SourceMeta(_Strict):
     """信源元数据（裁决 C SourceAdapter.describe 的契约面；蓝图 §6 图3）。"""
 
     source_id: str
-    language: Literal["zh", "en"]
+    language: Literal["zh", "en", "de", "fr", "it"]
     tier: SourceTier
     credibility_prior: float = Field(ge=0.0, le=1.0)
     bias: str | None = None
