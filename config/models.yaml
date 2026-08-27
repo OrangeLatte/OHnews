@@ -1,0 +1,49 @@
+# OH!News 模型路由配置（裁决 E）。
+# 契约：输出 schema 永不变，策略统一 function_calling；
+# fallback 链顺序即优先级；候选失败（超时/限流/校验失败/密钥缺失）自动降级。
+#
+# 扩展新供应商：在 providers 下加条目（OpenAI 兼容 base_url + api_key_env），
+# routing 中以 provider/model_id 引用。模型 ID 须与供应商 API 实际名称一致，
+# 运行 `scripts/dev/annotate_gold.py --live` 失败时优先核对此项。
+defaults:
+  strategy: function_calling
+  max_retries: 1
+
+providers:
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+    models:
+      deepseek-v4-flash:
+        context_window: 128000
+  zhipu:
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    api_key_env: ZHIPU_API_KEY
+    models:
+      glm-5.3:
+        context_window: 200000
+      glm-5.3-flash:
+        context_window: 128000
+  # openrouter 与任何 OpenAI 兼容端点按同样方式接入：
+  # openrouter:
+  #   base_url: https://openrouter.ai/api/v1
+  #   api_key_env: OPENROUTER_API_KEY
+  #   models: {anthropic/claude-sonnet-4: {}}
+  # ollama（本地）:
+  #   base_url: http://localhost:11434/v1
+  #   api_key_env: null
+  #   models: {qwen2.5: {}}
+
+routing:
+  # io：批量读取/确定性输出/标注员 A
+  io:
+    primary: deepseek/deepseek-v4-flash
+    fallback: [zhipu/glm-5.3-flash]
+  # execute：常规分析/标注员 B
+  execute:
+    primary: zhipu/glm-5.3-flash
+    fallback: [deepseek/deepseek-v4-flash]
+  # strategic：最高复杂度/裁决员
+  strategic:
+    primary: zhipu/glm-5.3
+    fallback: [zhipu/glm-5.3-flash, deepseek/deepseek-v4-flash]

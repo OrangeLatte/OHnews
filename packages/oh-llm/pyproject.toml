@@ -1,0 +1,17 @@
+[project]
+name = "oh-llm"
+version = "0.1.0"
+description = "OH!News Provider 层：全供应商 models.yaml + 三级模型路由（裁决 E）"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain-core>=1.6,<2",
+    "langchain-openai>=1.0",
+    "oh-contracts",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oh_llm"]
