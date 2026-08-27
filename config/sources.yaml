@@ -195,6 +195,53 @@ sources:
     params:
       url: "https://www.federalreserve.gov/feeds/press_all.xml"
 
+  # 央行演讲稿/证词（长文本高框架密度；官方簇 NDI 主粮，detail 抓全文）
+  - source_id: fed_speeches
+    adapter: rss
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.federalreserve.gov/feeds/speeches.xml"
+      article_type: analysis
+      window_days: 30
+      detail:
+        content_selector: "div#article"
+        drop_selectors: ["div.article__controls", "div.alert"]
+        max_items: 5
+
+  - source_id: fed_testimony
+    adapter: rss
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.federalreserve.gov/feeds/testimony.xml"
+      article_type: analysis
+      window_days: 30
+      detail:
+        content_selector: "div#article"
+        drop_selectors: ["div.article__controls", "div.alert"]
+        max_items: 5
+
+  - source_id: ecb_publications
+    adapter: rss
+    tier: L1
+    language: en
+    credibility_prior: 0.90
+    bias: official
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.ecb.europa.eu/rss/pub.html"
+      window_days: 14
+
   - source_id: ecb_press
     adapter: rss
     tier: L1
