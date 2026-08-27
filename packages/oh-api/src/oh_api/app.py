@@ -155,17 +155,18 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         return out
 
     @app.get("/api/events/{event_id}/ndi")
-    def event_ndi(event_id: str) -> list[dict[str, Any]]:
+    def event_ndi(event_id: str, language: str | None = None) -> list[dict[str, Any]]:
         return [
             {
                 "ts": p.ts.isoformat(),
+                "language": p.language,
                 "ndi": p.ndi,
                 "ci_low": p.ci_low,
                 "ci_high": p.ci_high,
                 "n_sources": p.n_sources,
                 "status": p.status,
             }
-            for p in _store().ndi_series(event_id)
+            for p in _store().ndi_series(event_id, language=language)
         ]
 
     @app.get("/api/events/{event_id}/evidence")

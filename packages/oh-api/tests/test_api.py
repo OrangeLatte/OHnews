@@ -45,10 +45,17 @@ def test_status_and_events(client: TestClient) -> None:
 def test_event_ndi_and_evidence(client: TestClient) -> None:
     ndi = client.get("/api/events/E01/ndi").json()
     assert len(ndi) == 1 and ndi[0]["status"] == "ok"
+    assert ndi[0]["language"] == "all"
     ev = client.get("/api/events/E01/evidence").json()
     assert len(ev) == 24
     assert all(e["quote"] for e in ev)
     assert {"gov", "wscn"} <= {e["source_id"] for e in ev}
+
+
+def test_event_ndi_language_filter(client: TestClient) -> None:
+    """language 查询参数过滤（within-language，裁决 F）。"""
+    assert len(client.get("/api/events/E01/ndi", params={"language": "all"}).json()) == 1
+    assert client.get("/api/events/E01/ndi", params={"language": "zh"}).json() == []
 
 
 def test_evidence_404(client: TestClient) -> None:
