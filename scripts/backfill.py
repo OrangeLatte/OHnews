@@ -60,6 +60,7 @@ def main() -> int:
             "written": r.n_written,
             "error": r.error,
             "duration_ms": r.duration_ms,
+            "attempts": list(r.attempts),
         }
         for r in results
     ]
@@ -74,14 +75,33 @@ def main() -> int:
         encoding="utf-8",
     )
     tracker.close()
+    n_fail = n_warn = n_fallback = 0
     for r in report:
-        status = "OK  " if r["ok"] else "FAIL"
-        print(
-            f"[{status}] {r['source_id']:<18} items={r['items']:<5} "
-            f"written={r['written']:<5} {r['error'] or ''}"
-        )
-    print(f"report -> {out}")
-    return 0 if report and all(r["ok"] for r in report) else 1
+        if r["ok"]:
+            if r["attempts"]:
+                n_fallback += 1
+            if r["items"] == 0:
+                n_warn += 1
+                print(
+                    f"[WARN] {r['source_id']:<18} items=0（窗内无新内容——稀疏源属正常，"
+                    f"持续 0 条请核查 query/日期解析）"
+                )
+                continue
+            print(
+                f"[OK  ] {r['source_id']:<18} items={r['items']:<5} "
+                f"written={r['written']:<5}"
+                + (f" via fallback{r['attempts']}" if r["attempts"] else "")
+            )
+        else:
+            n_fail += 1
+            attempts = f" -> 备用{r['attempts']}皆败" if r["attempts"] else ""
+            print(f"[FAIL] {r['source_id']:<18} error={r['error']}{attempts}")
+    print(
+        f"summary: ok={len(report) - n_fail} fail={n_fail} "
+        f"warn0={n_warn} recovered_by_fallback={n_fallback} -> {out}"
+    )
+    # 硬失败（含备用链皆败）→ 非零退出码，供 cron/CI 告警
+    return 1 if n_fail else 0
 
 
 if __name__ == "__main__":
