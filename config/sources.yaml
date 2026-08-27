@@ -230,6 +230,24 @@ sources:
         drop_selectors: ["div.article__controls", "div.alert"]
         max_items: 5
 
+  # Fed Notes：央行研究长文（周更，货币市场/支付/银行风险主题，高框架密度）
+  - source_id: feds_notes
+    adapter: rss
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.federalreserve.gov/feeds/feds_notes.xml"
+      article_type: analysis
+      window_days: 30
+      detail:
+        content_selector: "div#content"   # FEDS Notes 新版站点结构（无 div#article）
+        drop_selectors: ["nav", "div.t2__offcanvas", "div.article__controls"]
+        max_items: 5
+
   - source_id: ecb_publications
     adapter: rss
     tier: L1
@@ -777,3 +795,11 @@ sources:
   # china_daily_world：HTTP 200 但 feed 日期冻结 2017-12（假 feed，停用）
   # moneycontrol：HTTP 200 但 feed 日期冻结 2024-04（假 feed，停用）
   # AP 401；BLS 403；Reuters RSS 404；Nikkei 日文站 404（英文站已入+date_fallback）
+  # ---- L1 长文本源专项探测（2026-08-28 wave5）：央行演讲稿静态通道已饱和 ----
+  # ecb speeches（/rss/key.html 404，/press/key 列表页 JS 渲染无静态链接）
+  # boe speeches（列表页 72KB JS 壳，无 /speech/ 链接；speeches RSS 404）
+  # bis cbspeeches（列表页/下载页均 JS 壳，无静态链接）；rba speeches RSS+HTML 全 403（WAF）
+  # bankofcanada feed ?post_type 参数被忽略（返回通用 Posts 混入非演讲内容，语义不可控弃用）
+  # fed per-speaker feeds（s_t_powell 等）与 speeches.xml 内容重叠，不加（避免同文多源放大 n_sources）
+  # → ECB/BoE/BIS/RBA 演讲稿全文待 Phase 6+ playwright 壳（needs_browser 通道）；
+  #   官方簇样本量当前靠 LLMTagger 补盲（fed_press 每日 1-5 条已可出 NDI）+ feds_notes 周更长文
