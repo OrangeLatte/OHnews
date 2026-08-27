@@ -69,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         "--min-per-source", type=int, default=2, help="NDI 源级样本门：开发态 2 / 对外数字 10"
     )
     parser.add_argument("--limit", type=int, default=0, help="只跑前 K 个事件（0=全部）")
+    parser.add_argument("--skip", type=int, default=0, help="跳过前 K 个事件（分批跑用）")
     parser.add_argument("--llm", action="store_true", help="启用 LLM 补盲/假设/解释（需 API keys）")
     parser.add_argument(
         "--language",
@@ -93,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         min_articles=args.min_articles,
         min_sources=args.min_sources,
     )
+    if args.skip:
+        built = built[args.skip :]
     if args.limit:
         built = built[: args.limit]
     if not built:
