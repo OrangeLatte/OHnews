@@ -1,0 +1,110 @@
+# OH!News 采集源注册表（Phase 1：中文 within-language + 宏观基线回填）
+#
+# 纪律（蓝图 §6 图3）：
+# - credibility_prior 为信源先验（裁决 H SourcePrior 输入）
+# - GDELT 仅覆盖度信号，不作 tone/frame（研究员/数据科学家共识）
+# - rate_limit_rpm 令牌桶限速；needs_browser/paywall=true 的源走敏感壳（裁决 G）
+# - URL 存活以首次真实运行验证为准；失败计入 source_fetch_logs → 自动降级
+version: 1
+
+sources:
+  # ---- L2 通讯社/官方媒体（中文）----
+  - source_id: people_politics
+    adapter: rss
+    tier: L2
+    language: zh
+    credibility_prior: 0.85
+    bias: state_media
+    rate_limit_rpm: 10
+    params:
+      url: "http://www.people.com.cn/rss/politics.xml"
+
+  - source_id: people_economy
+    adapter: rss
+    tier: L2
+    language: zh
+    credibility_prior: 0.85
+    bias: state_media
+    rate_limit_rpm: 10
+    params:
+      url: "http://www.people.com.cn/rss/economy.xml"
+
+  # ---- L3 财经媒体（中文，市场化）----
+  - source_id: wallstreetcn
+    adapter: rss
+    tier: L3
+    language: zh
+    credibility_prior: 0.75
+    bias: financial_press
+    rate_limit_rpm: 10
+    params:
+      url: "https://dedicated.wallstreetcn.com/rss.xml"
+
+  - source_id: yicai
+    adapter: rss
+    tier: L3
+    language: zh
+    credibility_prior: 0.75
+    bias: financial_press
+    rate_limit_rpm: 10
+    params:
+      url: "https://www.yicai.com/feed/"
+
+  - source_id: "36kr"
+    adapter: rss
+    tier: L3
+    language: zh
+    credibility_prior: 0.70
+    bias: commercial
+    rate_limit_rpm: 10
+    params:
+      url: "https://36kr.com/feed"
+
+  # ---- GDELT（回填主通道；仅覆盖度信号）----
+  - source_id: gdelt_zh
+    adapter: gdelt
+    tier: L2
+    language: zh
+    credibility_prior: 0.60
+    bias: mixed_aggregate
+    rate_limit_rpm: 6
+    params:
+      query: "sourcelang:chinese (央行 OR 货币政策 OR 利率 OR 中美 OR 关税)"
+      max_records: 75
+
+  # ---- FRED（宏观基线快照，L1 官方统计）----
+  - source_id: fred_cpiaucsl
+    adapter: fred
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official_statistics
+    rate_limit_rpm: 6
+    params: {series_id: CPIAUCSL}
+
+  - source_id: fred_fedfunds
+    adapter: fred
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official_statistics
+    rate_limit_rpm: 6
+    params: {series_id: FEDFUNDS}
+
+  - source_id: fred_dgs10
+    adapter: fred
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official_statistics
+    rate_limit_rpm: 6
+    params: {series_id: DGS10}
+
+  - source_id: fred_unrate
+    adapter: fred
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official_statistics
+    rate_limit_rpm: 6
+    params: {series_id: UNRATE}
