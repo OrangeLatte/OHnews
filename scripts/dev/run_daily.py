@@ -1,23 +1,28 @@
-"""日运行编排：Bronze → 事件 → Tagger → NDI → Gold（Phase 2 全链）。
+"""日运行编排：Bronze → 事件 → analysis_graph → Gold（Phase 3 全链）。
 
 用法：
     uv run python scripts/dev/run_daily.py [--days N] [--min-articles K]
-        [--min-sources K] [--min-per-source K] [--limit K]
+        [--min-sources K] [--min-per-source K] [--limit K] [--llm]
 
+默认纯统计模式（router=None，LLM 节点自动跳过）；--llm 启用官方源
+LLM 补盲 + 假设生成 + 证据解释（需 DEEPSEEK_API_KEY/ZHIPU_API_KEY）。
 开发态默认 min_per_source=2（测量效度验证与对外数字必须用 10）。
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import yaml
+from oh_agents.graph import GraphDeps, build_analysis_graph
 from oh_contracts.enums import SourceTier
+from oh_pipeline.divergence import temperature_gap
 from oh_pipeline.events import EventBuilder
-from oh_pipeline.run import run_pipeline
 from oh_storage.bronze_parquet import ParquetBronzeWriter
 from oh_storage.connection import connect
 from oh_storage.sqlite_store import SqliteStore
@@ -48,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         "--min-per-source", type=int, default=2, help="NDI 源级样本门：开发态 2 / 对外数字 10"
     )
     parser.add_argument("--limit", type=int, default=0, help="只跑前 K 个事件（0=全部）")
+    parser.add_argument("--llm", action="store_true", help="启用 LLM 补盲/假设/解释（需 API keys）")
     args = parser.parse_args(argv)
 
     bronze = ParquetBronzeWriter(ROOT / "data" / "bronze")
@@ -80,30 +86,59 @@ def main(argv: list[str] | None = None) -> int:
         store.upsert_event(b.event)
 
     tier_map = load_tier_map(SOURCES_YAML)
-    report = run_pipeline(
-        bronze,
-        store,
-        store,
-        [b.event for b in built],
-        tier_map,
-        as_of=now,
+
+    router = None
+    llm_tagger = None
+    if args.llm:
+        if not (os.getenv("DEEPSEEK_API_KEY") or os.getenv("ZHIPU_API_KEY")):
+            print("[WARN] --llm 但无 API keys——降级为纯统计模式")
+        else:
+            from oh_agents.tagger_llm import LLMTagger
+            from oh_llm.config import LLMConfig
+            from oh_llm.router import ModelRouter
+
+            cfg = LLMConfig.load_llm_config(ROOT / "packages" / "oh-llm" / "config" / "models.yaml")
+            router = ModelRouter(cfg)
+            llm_tagger = LLMTagger(router)
+            print("[llm] LLM 补盲 + 假设生成 + 证据解释已启用")
+
+    deps = GraphDeps(
+        bronze=bronze,
+        store=store,
+        gold=store,
+        tier_map=tier_map,
+        router=router,
+        llm_tagger=llm_tagger,
         lookback_days=args.days,
         min_per_source=args.min_per_source,
     )
-
-    print(
-        f"[pipeline] rows_written={report.rows_written} "
-        f"ndi_ok={report.ndi_ok} ndi_abstain={report.ndi_abstain}"
+    graph = build_analysis_graph(deps)
+    result = asyncio.run(
+        graph.ainvoke(
+            {"events_input": [b.event.model_dump() for b in built], "now": now.isoformat()}
+        )
     )
+
+    points = result.get("ndi_points", [])
+    ndi_ok = sum(1 for p in points if p.status == "ok")
+    ndi_abstain = sum(1 for p in points if p.status == "abstain")
+    hyps = result.get("hypotheses", [])
+    cards = result.get("narrative_cards", [])
+    print(
+        f"[graph] rows via stances ndi_ok={ndi_ok} ndi_abstain={ndi_abstain} "
+        f"hypotheses={len(hyps)} cards={len(cards)}"
+    )
+
     print("\n== 事件 NDI 概览（NDI=叙事分歧指数，描述性监测）==")
     print(f"{'event_id':<28} {'articles':>8} {'sources':>7} {'NDI':>8} {'ΔT':>8}")
     for b in built:
         eid = b.event.event_id
-        ndi = report.temperature_gaps.get(eid)
+        rows = [r for r in store.stances_asof(now) if r.event_id == eid]
+        gap = temperature_gap(rows, tier_map, min_per_source=args.min_per_source)
         series = store.ndi_series(eid)
         point = series[-1] if series else None
         ndi_s = f"{point.ndi:.3f}" if point and point.ndi is not None else "abstain"
-        gap_s = f"{ndi:.2f}" if isinstance(ndi, float) else "-"
+        gap_s = f"{gap:.2f}" if isinstance(gap, float) else "-"
         print(f"{eid:<28} {b.n_articles:>8} {b.n_sources:>7} {ndi_s:>8} {gap_s:>8}")
     return 0
 
