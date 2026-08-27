@@ -9,6 +9,10 @@ import json
 import sqlite3
 from collections.abc import Sequence
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlite3 import Connection
 
 from oh_contracts.enums import (
     ExtractionEngine,
@@ -50,9 +54,38 @@ CREATE TABLE IF NOT EXISTS ndi_series (
     ci_high   REAL,
     n_sources INTEGER NOT NULL,
     status    TEXT NOT NULL,
-    PRIMARY KEY (event_id, ts)
+    language  TEXT NOT NULL DEFAULT 'all',
+    PRIMARY KEY (event_id, ts, language)
 );
 """
+
+_MIGRATE_NDI_LANGUAGE = """
+CREATE TABLE IF NOT EXISTS ndi_series_new (
+    event_id  TEXT NOT NULL,
+    ts        TEXT NOT NULL,
+    ndi       REAL,
+    ci_low    REAL,
+    ci_high   REAL,
+    n_sources INTEGER NOT NULL,
+    status    TEXT NOT NULL,
+    language  TEXT NOT NULL DEFAULT 'all',
+    PRIMARY KEY (event_id, ts, language)
+);
+INSERT OR IGNORE INTO ndi_series_new
+    SELECT event_id, ts, ndi, ci_low, ci_high, n_sources, status,
+           'all' FROM ndi_series;
+DROP TABLE ndi_series;
+ALTER TABLE ndi_series_new RENAME TO ndi_series;
+"""
+
+
+def _migrate_ndi_language(conn: Connection) -> None:
+    """ndi_series 加 language 维度（老库 PK 无 language → 重建，幂等）。"""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(ndi_series)").fetchall()}
+    if not cols or "language" in cols:
+        return
+    conn.executescript(_MIGRATE_NDI_LANGUAGE)
+    conn.commit()
 
 
 def _iso(dt: datetime) -> str:
@@ -66,6 +99,7 @@ class SqliteStore:
         self._conn = conn
         self._conn.executescript(_DDL)
         self._conn.commit()
+        _migrate_ndi_language(self._conn)
 
     # -- Silver -------------------------------------------------------------
 
@@ -164,8 +198,8 @@ class SqliteStore:
     def append_ndi(self, point: NDIPoint) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO ndi_series "
-            "(event_id, ts, ndi, ci_low, ci_high, n_sources, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(event_id, ts, ndi, ci_low, ci_high, n_sources, status, language) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 point.event_id,
                 _iso(point.ts),
@@ -174,16 +208,21 @@ class SqliteStore:
                 point.ci_high,
                 point.n_sources,
                 point.status,
+                point.language,
             ),
         )
         self._conn.commit()
 
-    def ndi_series(self, event_id: str) -> list[NDIPoint]:
-        cur = self._conn.execute(
-            "SELECT event_id, ts, ndi, ci_low, ci_high, n_sources, status "
-            "FROM ndi_series WHERE event_id = ? ORDER BY ts",
-            (event_id,),
+    def ndi_series(self, event_id: str, *, language: str | None = None) -> list[NDIPoint]:
+        sql = (
+            "SELECT event_id, ts, ndi, ci_low, ci_high, n_sources, status, language "
+            "FROM ndi_series WHERE event_id = ?"
         )
+        params: list[str] = [event_id]
+        if language is not None:
+            sql += " AND language = ?"
+            params.append(language)
+        cur = self._conn.execute(sql + " ORDER BY ts", params)
         return [
             NDIPoint(
                 event_id=str(row["event_id"]),
@@ -193,6 +232,7 @@ class SqliteStore:
                 ci_high=None if row["ci_high"] is None else float(row["ci_high"]),
                 n_sources=int(row["n_sources"]),
                 status=str(row["status"]),  # type: ignore[arg-type]
+                language=str(row["language"]),
             )
             for row in cur.fetchall()
         ]
