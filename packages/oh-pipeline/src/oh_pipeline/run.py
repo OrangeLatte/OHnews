@@ -55,11 +55,15 @@ def run_pipeline(
     lookback_days: int = PIT_LOOKBACK_DAYS,
     min_per_source: int = 2,
     write_gold: bool = True,
+    lang_map: dict[str, str] | None = None,
+    languages: Sequence[str] | None = None,
 ) -> PipelineReport:
     """对一批事件跑 Tagger + 分歧统计。
 
     min_per_source 默认 2（开发态）；测量效度验证与对外数字必须用
     N_MIN_SAMPLES=10（数据科学家样本门），此处参数化以便分层使用。
+    languages（如 ["zh","en"]）时逐语言出 NDI 点（within-language，裁决 F）；
+    None = 单点混算（language="all"，向后兼容）。
     """
     reg = registry or EntityRegistry()
     tagger = RuleTagger(reg)
@@ -91,18 +95,34 @@ def run_pipeline(
     ndi_ok = 0
     ndi_abstain = 0
     gaps: dict[str, float | None] = {}
+    langs = list(languages) if languages else ["all"]
     for event in events:
         rows = [r for r in store.stances_asof(now) if r.event_id == event.event_id]
         if not rows:
             continue
-        point = ndi_for_event(rows, tier_map, now, min_per_source=min_per_source)
-        gaps[event.event_id] = temperature_gap(rows, tier_map, min_per_source=min_per_source)
-        if write_gold:
-            gold.append_ndi(point)
-        if point.status == "ok":
-            ndi_ok += 1
-        else:
-            ndi_abstain += 1
+        for lang in langs:
+            point = ndi_for_event(
+                rows,
+                tier_map,
+                now,
+                min_per_source=min_per_source,
+                event_id=event.event_id,
+                lang_map=lang_map,
+                language=lang,
+            )
+            gaps[f"{event.event_id}@{lang}"] = temperature_gap(
+                rows,
+                tier_map,
+                min_per_source=min_per_source,
+                lang_map=lang_map,
+                language=lang,
+            )
+            if write_gold:
+                gold.append_ndi(point)
+            if point.status == "ok":
+                ndi_ok += 1
+            else:
+                ndi_abstain += 1
 
     return PipelineReport(
         events_processed=len(events),

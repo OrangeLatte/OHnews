@@ -135,18 +135,25 @@ def ndi_for_event(
     tier_map: Mapping[str, SourceTier],
     as_of: datetime,
     *,
+    event_id: str | None = None,
     alpha: float = JEFFREYS_ALPHA,
     min_per_source: int = N_MIN_SAMPLES,
     clusters: Mapping[str, frozenset[SourceTier]] | None = None,
     n_boot: int = BOOTSTRAP_RESAMPLES,
     seed: int = 42,
+    lang_map: Mapping[str, str] | None = None,
+    language: str = "all",
 ) -> NDIPoint:
     """单事件 NDI 点位（官方簇 vs 市场簇框架分布 JSD 距离）。
 
     措辞纪律（裁决 B）：NDI = 叙事分歧指数，描述性监测指标；
     测量效度 ρ≥0.8 通过并预注册前，禁称"雷达信号/预测器"。
+    lang_map + language≠"all" 时只取该语言的源（within-language，裁决 F：
+    跨语言混算会产生编辑语域 artifact，须按语言分管线）。
     """
     cluster_map = clusters if clusters is not None else DEFAULT_CLUSTERS
+    if lang_map is not None and language != "all":
+        rows = [r for r in rows if lang_map.get(r.source_id) == language]
     dists = _source_distributions(rows, tier_map, alpha, min_per_source, cluster_map)
     n_sources = sum(
         1
@@ -155,11 +162,12 @@ def ndi_for_event(
     )
     if dists is None:
         return NDIPoint(
-            event_id=rows[0].event_id if rows else "",
+            event_id=event_id or (rows[0].event_id if rows else ""),
             ts=as_of,
             ndi=None,
             n_sources=n_sources,
             status="abstain",
+            language=language,
         )
     names = sorted(dists)
     p, q = dists[names[0]], dists[names[1]]
@@ -186,13 +194,14 @@ def ndi_for_event(
         ci_low, ci_high = None, None
 
     return NDIPoint(
-        event_id=rows[0].event_id,
+        event_id=event_id or (rows[0].event_id if rows else ""),
         ts=as_of,
         ndi=round(point, 6),
         ci_low=round(ci_low, 6) if ci_low is not None else None,
         ci_high=round(ci_high, 6) if ci_high is not None else None,
         n_sources=n_sources,
         status="ok",
+        language=language,
     )
 
 
@@ -203,9 +212,13 @@ def temperature_gap(
     alpha: float = JEFFREYS_ALPHA,
     min_per_source: int = N_MIN_SAMPLES,
     clusters: Mapping[str, frozenset[SourceTier]] | None = None,
+    lang_map: Mapping[str, str] | None = None,
+    language: str = "all",
 ) -> float | None:
     """官方-市场温差 ΔT；门禁不过返回 None（弃权）。"""
     cluster_map = clusters if clusters is not None else DEFAULT_CLUSTERS
+    if lang_map is not None and language != "all":
+        rows = [r for r in rows if lang_map.get(r.source_id) == language]
     dists = _source_distributions(rows, tier_map, alpha, min_per_source, cluster_map)
     if dists is None:
         return None

@@ -71,7 +71,8 @@ def test_full_chain_and_pit(tmp_path: Path) -> None:
     )
     assert report.rows_written == 24
     assert report.ndi_ok == 1
-    assert report.temperature_gaps["E01"] is not None and report.temperature_gaps["E01"] > 1.0
+    gap = report.temperature_gaps["E01@all"]
+    assert gap is not None and gap > 1.0
 
     series = store.ndi_series("E01")
     assert len(series) == 1
