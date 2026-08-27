@@ -147,3 +147,42 @@ def test_hitl_interrupt_on_low_confidence(tmp_path) -> None:
     payload = result["__interrupt__"][0].value
     assert payload["type"] == "confirm"
     # interrupt 挂起时 gate 未完成：pending_interrupt 的写回发生在 Command(resume) 之后
+
+
+def test_hitl_resume_writes_back(tmp_path) -> None:
+    """Command(resume) → gate 完成 → pending_interrupt 写回（HITL 审批闭环）。"""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    async def fake_hyp(event, ndi, rows):
+        return Hypothesis(event_id=event.event_id, text="h", cite=[])
+
+    async def fake_interp(event, hyps):
+        return NarrativeCard(
+            event_id=event.event_id,
+            confidence=0.2,
+            epistemic_status="speculative",
+            narrative="低置信解释",
+        )
+
+    now = make_now()
+    bronze = ParquetBronzeWriter(tmp_path / "bronze")
+    store = SqliteStore(connect(tmp_path / "s.sqlite"))
+    ev = seed_event(bronze, store, "E01", now)
+    deps = _deps(
+        bronze,
+        store,
+        hypothesis_fn=fake_hyp,
+        interpret_fn=fake_interp,
+        enable_hitl=True,
+        checkpointer=InMemorySaver(),
+    )
+    g = build_analysis_graph(deps)
+    config = {"configurable": {"thread_id": "t1"}}
+    state = {"events_input": [ev.model_dump()], "now": now.isoformat()}
+    suspended = asyncio.run(g.ainvoke(state, config))
+    assert "__interrupt__" in suspended
+
+    resumed = asyncio.run(g.ainvoke(Command(resume={"approved": True}), config))
+    assert "__interrupt__" not in resumed
+    assert resumed["pending_interrupt"] == [{"approved": True}]
