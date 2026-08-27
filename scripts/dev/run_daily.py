@@ -3,10 +3,13 @@
 用法：
     uv run python scripts/dev/run_daily.py [--days N] [--min-articles K]
         [--min-sources K] [--min-per-source K] [--limit K] [--llm]
+        [--language zh]
 
 默认纯统计模式（router=None，LLM 节点自动跳过）；--llm 启用官方源
 LLM 补盲 + 假设生成 + 证据解释（需 DEEPSEEK_API_KEY/ZHIPU_API_KEY）。
 开发态默认 min_per_source=2（测量效度验证与对外数字必须用 10）。
+--language 指定 within-language 计算（裁决 F），如 zh/en；缺省为混算
+（language="all"，跨语言比较未过门禁前仅作内部参考）。
 """
 
 from __future__ import annotations
@@ -44,6 +47,19 @@ def load_tier_map(path: Path) -> dict[str, SourceTier]:
     return tier_map
 
 
+def load_lang_map(path: Path) -> dict[str, str]:
+    """sources.yaml → {source_id: language}（within-language 归属，裁决 F）。"""
+    with path.open(encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+    lang_map: dict[str, str] = {}
+    for spec in doc.get("sources", []):
+        sid = spec.get("source_id")
+        lang = spec.get("language")
+        if sid and lang:
+            lang_map[sid] = str(lang)
+    return lang_map
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--days", type=int, default=7, help="事件聚合窗口（天）")
@@ -54,6 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--limit", type=int, default=0, help="只跑前 K 个事件（0=全部）")
     parser.add_argument("--llm", action="store_true", help="启用 LLM 补盲/假设/解释（需 API keys）")
+    parser.add_argument(
+        "--language",
+        default=None,
+        help="within-language 计算（zh/en，裁决 F）；缺省混算 all",
+    )
     args = parser.parse_args(argv)
 
     bronze = ParquetBronzeWriter(ROOT / "data" / "bronze")
@@ -86,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         store.upsert_event(b.event)
 
     tier_map = load_tier_map(SOURCES_YAML)
+    lang_map = load_lang_map(SOURCES_YAML)
 
     router = None
     llm_tagger = None
@@ -111,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
         llm_tagger=llm_tagger,
         lookback_days=args.days,
         min_per_source=args.min_per_source,
+        lang_map=lang_map,
+        languages=(args.language,) if args.language else None,
     )
     graph = build_analysis_graph(deps)
     result = asyncio.run(
@@ -129,13 +153,20 @@ def main(argv: list[str] | None = None) -> int:
         f"hypotheses={len(hyps)} cards={len(cards)}"
     )
 
-    print("\n== 事件 NDI 概览（NDI=叙事分歧指数，描述性监测）==")
+    lang_label = args.language or "all"
+    print(f"\n== 事件 NDI 概览（NDI=叙事分歧指数，描述性监测；language={lang_label}）==")
     print(f"{'event_id':<28} {'articles':>8} {'sources':>7} {'NDI':>8} {'ΔT':>8}")
     for b in built:
         eid = b.event.event_id
         rows = [r for r in store.stances_asof(now) if r.event_id == eid]
-        gap = temperature_gap(rows, tier_map, min_per_source=args.min_per_source)
-        series = store.ndi_series(eid)
+        gap = temperature_gap(
+            rows,
+            tier_map,
+            min_per_source=args.min_per_source,
+            lang_map=lang_map,
+            language=lang_label,
+        )
+        series = store.ndi_series(eid, language=lang_label)
         point = series[-1] if series else None
         ndi_s = f"{point.ndi:.3f}" if point and point.ndi is not None else "abstain"
         gap_s = f"{gap:.2f}" if isinstance(gap, float) else "-"
