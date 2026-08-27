@@ -1,0 +1,286 @@
+"""FastAPI 应用：只读数据端点 + 问诊 + 决策日志 + SSE 总线 v0。
+
+依赖注入：create_app(paths) 传数据路径；连接惰性创建。
+SSE v0：进程内 asyncio 总线（裁决 D：单进程零 Redis），
+其他模块经 publish_sse() 推流；Last-Event-ID 语义 Phase 5b 完善。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import yaml
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from oh_agents.decision_log import DecisionLog
+from oh_agents.morning_brief import build_brief
+from oh_agents.research import run_research
+from oh_contracts.enums import SourceTier
+from oh_pipeline.entities import EntityRegistry
+from oh_storage.bronze_parquet import ParquetBronzeWriter
+from oh_storage.connection import connect
+from oh_storage.sqlite_store import SqliteStore
+
+# --- SSE 总线 v0 ------------------------------------------------------------
+
+_SUBSCRIBERS: set[asyncio.Queue[str]] = set()
+_SSE_SEQ = 0
+
+
+async def publish_sse(event: str, payload: dict[str, Any]) -> None:
+    """向所有订阅者推送 SSE 消息（无人订阅时零开销）。"""
+    global _SSE_SEQ
+    if not _SUBSCRIBERS:
+        return
+    _SSE_SEQ += 1
+    msg = f"id: {_SSE_SEQ}\nevent: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    for q in list(_SUBSCRIBERS):
+        try:
+            q.put_nowait(msg)
+        except asyncio.QueueFull:
+            _SUBSCRIBERS.discard(q)
+
+
+@dataclass
+class AppPaths:
+    """运行时数据路径（默认 data/ 布局）+ 可注入时钟（测试 PIT 控制）。"""
+
+    root: Path = Path("data")
+    sources_yaml: Path = Path("config/sources.yaml")
+    now_fn: Any = None  # () -> datetime；None = datetime.now(UTC)
+
+
+def _load_tier_map(path: Path) -> dict[str, SourceTier]:
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+    return {
+        s["source_id"]: SourceTier(s["tier"])
+        for s in doc.get("sources", [])
+        if s.get("source_id") and s.get("tier")
+    }
+
+
+def create_app(paths: AppPaths | None = None) -> FastAPI:
+    paths = paths or AppPaths()
+    app = FastAPI(title="OH!News API", version="0.1.0")
+
+    # 惰性单例（lifespan 不持有 IO）
+    state: dict[str, Any] = {}
+
+    def _now() -> datetime:
+        return paths.now_fn() if paths.now_fn else datetime.now(UTC)
+
+    def _store() -> SqliteStore:
+        if "store" not in state:
+            state["store"] = SqliteStore(connect(paths.root / "silver.sqlite"))
+        return state["store"]  # type: ignore[return-value]
+
+    def _bronze() -> ParquetBronzeWriter:
+        if "bronze" not in state:
+            state["bronze"] = ParquetBronzeWriter(paths.root / "bronze")
+        return state["bronze"]  # type: ignore[return-value]
+
+    def _decisions() -> DecisionLog:
+        if "decisions" not in state:
+            state["decisions"] = DecisionLog(paths.root / "decisions.sqlite")
+        return state["decisions"]  # type: ignore[return-value]
+
+    def _tier_map() -> dict[str, SourceTier]:
+        if "tier_map" not in state:
+            state["tier_map"] = _load_tier_map(paths.sources_yaml)
+        return state["tier_map"]  # type: ignore[return-value]
+
+    @app.get("/api/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok", "time": datetime.now(UTC).isoformat()}
+
+    @app.get("/api/status")
+    def status() -> dict[str, Any]:
+        store = _store()
+        now = _now()
+        events = store.events_asof(now)
+        stances = store.stances_asof(now)
+        points = [p for e in events for p in store.ndi_series(e.event_id)]
+        ok = sum(1 for p in points if p.status == "ok")
+        return {
+            "events": len(events),
+            "stances": len(stances),
+            "ndi_points": len(points),
+            "ndi_ok": ok,
+            "ndi_abstain": len(points) - ok,
+            "bronze_records": sum(1 for _ in _bronze().iter_records()),
+        }
+
+    @app.get("/api/events")
+    def events(days: int = 7) -> list[dict[str, Any]]:
+        store = _store()
+        now = _now()
+        cutoff = now - timedelta(days=days)
+        out = []
+        for e in store.events_asof(now):
+            if e.as_of < cutoff:
+                continue
+            series = store.ndi_series(e.event_id)
+            latest = series[-1] if series else None
+            out.append(
+                {
+                    "event_id": e.event_id,
+                    "title": e.title,
+                    "entities": e.entities,
+                    "as_of": e.as_of.isoformat(),
+                    "ndi": latest.ndi if latest else None,
+                    "ndi_status": latest.status if latest else "none",
+                    "n_sources": latest.n_sources if latest else 0,
+                }
+            )
+        return out
+
+    @app.get("/api/events/{event_id}/ndi")
+    def event_ndi(event_id: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "ts": p.ts.isoformat(),
+                "ndi": p.ndi,
+                "ci_low": p.ci_low,
+                "ci_high": p.ci_high,
+                "n_sources": p.n_sources,
+                "status": p.status,
+            }
+            for p in _store().ndi_series(event_id)
+        ]
+
+    @app.get("/api/events/{event_id}/evidence")
+    def event_evidence(event_id: str) -> list[dict[str, Any]]:
+        """证据链：claim → 原文摘录（一键引用格式，裁决/研究员提案）。"""
+        store = _store()
+        now = _now()
+        rows = [r for r in store.stances_asof(now) if r.event_id == event_id]
+        if not rows:
+            raise HTTPException(404, "no stances for event")
+        quotes: dict[str, str] = {}
+        for rec in _bronze().iter_records():
+            quotes[rec.item_key] = str(
+                rec.normalized.get("body") or rec.normalized.get("title") or ""
+            )
+        return [
+            {
+                "source_id": r.source_id,
+                "entity_id": r.entity_id,
+                "frame": str(r.frame),
+                "stance": str(r.stance),
+                "confidence": r.confidence,
+                "engine": str(r.engine),
+                "ts": r.ts.isoformat(),
+                "item_key": r.item_key,
+                "quote": quotes.get(r.item_key, "")[:160],
+            }
+            for r in sorted(rows, key=lambda x: -x.confidence)
+        ]
+
+    @app.get("/api/brief")
+    def brief(watchlist: str = "fed,trump,ecb", top: int = 5) -> dict[str, Any]:
+        b = build_brief(
+            _bronze(),
+            _store(),
+            _store(),
+            [w.strip() for w in watchlist.split(",") if w.strip()],
+            now=_now(),
+            top_n=top,
+        )
+        return {"text": b.render_text(), "items": len(b.items)}
+
+    @app.post("/api/research")
+    async def research(body: dict[str, str]) -> dict[str, Any]:
+        question = body.get("question", "").strip()
+        if not question:
+            raise HTTPException(422, "question required")
+        result = await run_research(
+            question,
+            bronze=_bronze(),
+            store=_store(),
+            gold=_store(),
+            registry=EntityRegistry(),
+            now=_now(),
+        )
+        await publish_sse("research_done", {"question": question, "confidence": result.confidence})
+        return {
+            "answer": result.answer,
+            "confidence": result.confidence,
+            "citations": list(result.citations),
+            "tool_calls": list(result.tool_calls),
+        }
+
+    @app.get("/api/decisions")
+    def list_decisions(entity_id: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "decision_id": d.decision_id,
+                "event_id": d.event_id,
+                "ndi_at_decision": d.ndi_at_decision,
+                "decision": d.decision,
+                "created_at": d.created_at.isoformat(),
+                "outcome": d.outcome,
+            }
+            for d in _decisions().list_for(entity_id)
+        ]
+
+    @app.post("/api/decisions")
+    def add_decision(body: dict[str, Any]) -> dict[str, Any]:
+        entity_id = str(body.get("entity_id", "")).strip()
+        decision = str(body.get("decision", "")).strip()
+        if not entity_id or not decision:
+            raise HTTPException(422, "entity_id and decision required")
+        import uuid
+
+        d = _decisions().log(
+            decision_id=uuid.uuid4().hex[:12],
+            entity_id=entity_id,
+            decision=decision,
+            event_id=body.get("event_id"),
+            ndi_at_decision=body.get("ndi_at_decision"),
+        )
+        return {"decision_id": d.decision_id}
+
+    @app.post("/api/decisions/{decision_id}/resolve")
+    def resolve_decision(decision_id: str, body: dict[str, str]) -> dict[str, str]:
+        outcome = body.get("outcome", "").strip()
+        if not outcome:
+            raise HTTPException(422, "outcome required")
+        _decisions().resolve(decision_id, outcome)
+        return {"decision_id": decision_id, "resolved": "true"}
+
+    @app.get("/api/stream")
+    async def stream() -> StreamingResponse:
+        """SSE 订阅（agent 运行事件/NDI 更新/研究完成推送）。"""
+        q: asyncio.Queue[str] = asyncio.Queue(maxsize=256)
+        _SUBSCRIBERS.add(q)
+
+        async def gen():
+            try:
+                yield ": connected\n\n"
+                while True:
+                    try:
+                        msg = await asyncio.wait_for(q.get(), timeout=15)
+                        yield msg
+                    except TimeoutError:
+                        yield ": keepalive\n\n"
+            finally:
+                _SUBSCRIBERS.discard(q)
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    # --- dashboard 路由（懒导入避免循环） ---
+    from oh_api.dashboard import register_dashboard
+
+    register_dashboard(app, _store, _bronze, _decisions, _tier_map)
+    return app
+
+
+__all__ = ["AppPaths", "create_app", "publish_sse"]

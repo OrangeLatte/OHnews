@@ -1,0 +1,99 @@
+"""oh-api 测试：TestClient 冒烟（种子 1 事件全链数据）。"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from conftest import TIER_MAP, make_now, seed_event
+from fastapi.testclient import TestClient
+from oh_api.app import AppPaths, create_app
+from oh_pipeline.run import run_pipeline
+from oh_storage.bronze_parquet import ParquetBronzeWriter
+from oh_storage.connection import connect
+from oh_storage.sqlite_store import SqliteStore
+
+
+@pytest.fixture()
+def client(tmp_path: Path) -> TestClient:
+    bronze = ParquetBronzeWriter(tmp_path / "bronze")
+    # 文件名必须对齐 AppPaths 默认布局（root/silver.sqlite），否则 API 读到空库
+    store = SqliteStore(connect(tmp_path / "silver.sqlite"))
+    now = make_now()
+    ev = seed_event(bronze, store, "E01", now)
+    run_pipeline(
+        bronze, store, store, [ev], TIER_MAP, as_of=now, lookback_days=1, min_per_source=10
+    )
+    app = create_app(AppPaths(root=tmp_path, sources_yaml=tmp_path / "none.yaml", now_fn=make_now))
+    return TestClient(app)
+
+
+def test_health(client: TestClient) -> None:
+    r = client.get("/api/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
+def test_status_and_events(client: TestClient) -> None:
+    s = client.get("/api/status").json()
+    assert s["events"] == 1 and s["ndi_ok"] == 1
+    evs = client.get("/api/events?days=7").json()
+    assert evs[0]["event_id"] == "E01"
+    assert evs[0]["ndi_status"] == "ok"
+
+
+def test_event_ndi_and_evidence(client: TestClient) -> None:
+    ndi = client.get("/api/events/E01/ndi").json()
+    assert len(ndi) == 1 and ndi[0]["status"] == "ok"
+    ev = client.get("/api/events/E01/evidence").json()
+    assert len(ev) == 24
+    assert all(e["quote"] for e in ev)
+    assert {"gov", "wscn"} <= {e["source_id"] for e in ev}
+
+
+def test_evidence_404(client: TestClient) -> None:
+    assert client.get("/api/events/NOPE/evidence").status_code == 404
+
+
+def test_brief_endpoint(client: TestClient) -> None:
+    r = client.get("/api/brief?watchlist=fed").json()
+    assert "NDI" in r["text"] and r["items"] == 1
+
+
+def test_research_endpoint(client: TestClient) -> None:
+    r = client.post("/api/research", json={"question": "美联储的叙事分歧怎么样？"})
+    assert r.status_code == 200
+    body = r.json()
+    assert "E01" in body["answer"] and body["confidence"] == 0.3
+    assert client.post("/api/research", json={"question": ""}).status_code == 422
+
+
+def test_decision_endpoints(client: TestClient) -> None:
+    r = client.post("/api/decisions", json={"entity_id": "fed", "decision": "判断叙事将转向"})
+    assert r.status_code == 200
+    did = r.json()["decision_id"]
+    assert client.get("/api/decisions?entity_id=fed").json()[0]["decision"] == "判断叙事将转向"
+    assert client.post(f"/api/decisions/{did}/resolve", json={"outcome": "正确"}).status_code == 200
+
+
+def test_dashboard_pages(client: TestClient) -> None:
+    for path in ("/", "/brief", "/research", "/decisions"):
+        r = client.get(path)
+        assert r.status_code == 200
+        assert "OH!News" in r.text
+    assert "叙事分歧概览" in client.get("/").text
+
+
+def test_sse_route_registered(client: TestClient) -> None:
+    """SSE 流测试改为路由级：长驻流在 TestClient 中不消费（keepalive 会挂）。
+    实际连通性由 scripts/dev/serve.py 手动冒烟。"""
+    paths = [r.path for r in client.app.routes]  # type: ignore[attr-defined]
+    assert "/api/stream" in paths
+
+
+def test_publish_sse_no_subscriber_zero_cost() -> None:
+    import asyncio
+
+    from oh_api.app import publish_sse
+
+    asyncio.run(publish_sse("tick", {"x": 1}))  # 无订阅者：静默返回

@@ -5,6 +5,7 @@ description = "OH!News — Agent 原生的市场叙事情报台（非商业）"
 requires-python = ">=3.11"
 dependencies = [
     "oh-agents",
+    "oh-api",
     "oh-contracts",
     "oh-llm",
     "oh-pipeline",
@@ -20,6 +21,7 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 oh-agents = { workspace = true }
+oh-api = { workspace = true }
 oh-contracts = { workspace = true }
 oh-llm = { workspace = true }
 oh-pipeline = { workspace = true }
