@@ -8,28 +8,13 @@
 version: 1
 
 sources:
-  # ---- L2 通讯社/官方媒体（中文）----
-  - source_id: people_politics
-    adapter: rss
-    tier: L2
-    language: zh
-    credibility_prior: 0.85
-    bias: state_media
-    rate_limit_rpm: 10
-    params:
-      url: "http://www.people.com.cn/rss/politics.xml"
+  # ---- 2026-08-27 首次真实运行存活验证（详见 git log fix commit）----
+  # 已淘汰（健康度台账留档）：people_politics（RSS 停更 15 个月）、
+  # people_economy（404）、yicai/36kr（返回 HTML 假 feed，0 entries）、
+  # jiemian/stcn/cnstock/gelonghui/china5e（404/403——主流中文媒体 RSS 生态已死）。
+  # 中文源扩展路径：RSSHub 自建（Phase 6）或 API 型适配器（Phase 2）。
 
-  - source_id: people_economy
-    adapter: rss
-    tier: L2
-    language: zh
-    credibility_prior: 0.85
-    bias: state_media
-    rate_limit_rpm: 10
-    params:
-      url: "http://www.people.com.cn/rss/economy.xml"
-
-  # ---- L3 财经媒体（中文，市场化）----
+  # ---- L3 财经媒体（中文，市场化）——已验证 62 条/2d ----
   - source_id: wallstreetcn
     adapter: rss
     tier: L3
@@ -40,27 +25,7 @@ sources:
     params:
       url: "https://dedicated.wallstreetcn.com/rss.xml"
 
-  - source_id: yicai
-    adapter: rss
-    tier: L3
-    language: zh
-    credibility_prior: 0.75
-    bias: financial_press
-    rate_limit_rpm: 10
-    params:
-      url: "https://www.yicai.com/feed/"
-
-  - source_id: "36kr"
-    adapter: rss
-    tier: L3
-    language: zh
-    credibility_prior: 0.70
-    bias: commercial
-    rate_limit_rpm: 10
-    params:
-      url: "https://36kr.com/feed"
-
-  # ---- GDELT（回填主通道；仅覆盖度信号）----
+  # ---- GDELT（回填主通道；仅覆盖度信号；代理间歇可达→健康度自动处置）----
   - source_id: gdelt_zh
     adapter: gdelt
     tier: L2
