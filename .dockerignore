@@ -1,0 +1,14 @@
+# 构建上下文瘦身（api.Dockerfile/web.Dockerfile 共用，context=仓库根）
+.venv/
+.git/
+.playwright-mcp/
+**/__pycache__/
+**/*.pyc
+data/
+.opencode/
+web/node_modules/
+web/.next/
+.specify/
+docs/
+*.md
+!packages/**/pyproject.toml

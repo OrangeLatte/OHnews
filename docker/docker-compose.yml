@@ -1,0 +1,30 @@
+# OH!News 单进程部署态（裁决 D）。生产扩容（worker+Redis+PG profile）见蓝图 §11。
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    ports:
+      - "8787:8787"
+    volumes:
+      - ../data:/app/data          # Silver/Gold/Bronze/decisions/alerts
+      - ../config:/app/config      # sources.yaml / gold_set / codebook
+      - ../.opencode/logs:/app/.opencode/logs  # dev/monitor 只读镜像
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+      args:
+        OHNEWS_API_ORIGIN: http://api  # next.config 拼 :OHNEWS_API_PORT，勿带端口
+    ports:
+      - "${WEB_PORT:-3100}:3000"  # 3000/3001 常被本机 Dify/Finkg 栈占用
+    environment:
+      - OHNEWS_API_PORT=8787  # 运行时兜底（rewrites 已 build 期固定 origin）
+    depends_on:
+      - api
+    restart: unless-stopped
