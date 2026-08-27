@@ -40,11 +40,23 @@ class ProviderSpec:
 
 @dataclass(frozen=True)
 class LLMConfig:
-    """全局模型配置：供应商注册表 + 三级路由链（顺序即优先级）。"""
+    """全局模型配置：供应商注册表 + 三级路由链（顺序即优先级）+ 运行时护栏。
+
+    并发安全（Send 并行多事件同时打同一 provider 的教训）：
+    - max_concurrency：Router 全局信号量，限制同时在途的 LLM 调用数；
+    - timeout_s / max_retries：透传 ChatOpenAI（连接级）；
+    - retry_attempts / retry_delay_s：应用级重试（限流/超时退避），
+      每候选最多尝试 1 + retry_attempts 次，全部失败才降级下一候选。
+    """
 
     providers: dict[str, ProviderSpec]
     routing: dict[Tier, list[ModelRef]]
     strategy: str = "function_calling"
+    timeout_s: int = 60
+    max_retries: int = 1
+    max_concurrency: int = 4
+    retry_attempts: int = 2
+    retry_delay_s: float = 1.0
 
     def chain(self, tier: Tier) -> list[ModelRef]:
         return self.routing.get(tier, [])
@@ -74,8 +86,14 @@ def load_llm_config(path: str | Path) -> LLMConfig:
     unknown = {r.provider for refs in routing.values() for r in refs} - set(providers)
     if unknown:
         raise ValueError(f"routing 引用了未定义的 provider: {sorted(unknown)}")
+    defaults = raw.get("defaults", {})
     return LLMConfig(
         providers=providers,
         routing=routing,
-        strategy=raw.get("defaults", {}).get("strategy", "function_calling"),
+        strategy=defaults.get("strategy", "function_calling"),
+        timeout_s=int(defaults.get("timeout_s", 60)),
+        max_retries=int(defaults.get("max_retries", 1)),
+        max_concurrency=int(defaults.get("max_concurrency", 4)),
+        retry_attempts=int(defaults.get("retry_attempts", 2)),
+        retry_delay_s=float(defaults.get("retry_delay_s", 1.0)),
     )

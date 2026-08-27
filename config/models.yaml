@@ -8,6 +8,12 @@
 defaults:
   strategy: function_calling
   max_retries: 1
+  # 并发护栏：Send 并行多事件共用 Router，全局信号量限制在途调用峰值，
+  # 候选级退避重试（限流/超时），全部失败才降级下一候选。
+  timeout_s: 120
+  max_concurrency: 3
+  retry_attempts: 2
+  retry_delay_s: 1.0
 
 providers:
   deepseek:

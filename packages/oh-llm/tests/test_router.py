@@ -42,6 +42,9 @@ class RecordingRouter(ModelRouter):
     async def _invoke_candidate(self, ref, schema, system, user):
         key = f"{ref.provider}/{ref.model_id}"
         self.calls.append(key)
+        if not self.script[key]:
+            # 脚本耗尽 = 候选不可再服务（不参与应用级重试）
+            raise CandidateUnavailable(f"{key} script exhausted")
         action = self.script[key].pop(0)
         if isinstance(action, Exception):
             raise action
@@ -55,14 +58,15 @@ def test_validation_failure_falls_back() -> None:
         router = RecordingRouter(
             _cfg(),
             script={
-                "deepseek/m1": [{"wrong_field": 1}],  # 校验失败 → 下一候选
+                # 校验失败 × 3（1 原始 + 2 重试）耗尽 → 下一候选
+                "deepseek/m1": [{"wrong_field": 1}] * 3,
                 "zhipu/m2": [{"value": 2}],
             },
         )
         result, ref = await router.invoke(Tier.IO, "s", "u", Out)
         assert result.value == 2
         assert ref.model_id == "m2"
-        assert router.calls == ["deepseek/m1", "zhipu/m2"]
+        assert router.calls == ["deepseek/m1"] * 3 + ["zhipu/m2"]
 
     asyncio.run(case())
 
@@ -109,7 +113,7 @@ def test_all_candidates_fail_raises_with_causes() -> None:
             _cfg(),
             script={
                 "deepseek/m1": [CandidateUnavailable("no key")],
-                "zhipu/m2": [TimeoutError("t/o")],
+                "zhipu/m2": [TimeoutError("t/o")] * 3,  # 重试耗尽
             },
         )
         with pytest.raises(RuntimeError, match="全部候选失败") as excinfo:
@@ -149,3 +153,104 @@ def test_model_ref_parse() -> None:
     assert ModelRef.parse("zhipu/glm-5.3") == ModelRef("zhipu", "glm-5.3")
     with pytest.raises(ValueError):
         ModelRef.parse("no-slash")
+
+
+def test_retry_then_fallback(monkeypatch) -> None:
+    """候选级重试：首候选 2 次失败后第 3 次成功，不触发降级。"""
+    import oh_llm.router as router_mod
+
+    async def _nosleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(router_mod.asyncio, "sleep", _nosleep)
+
+    async def case():
+        cfg = LLMConfig(
+            providers={
+                "deepseek": ProviderSpec("deepseek", None, "DEEPSEEK_API_KEY", ("m1",)),
+                "zhipu": ProviderSpec("zhipu", None, "ZHIPU_API_KEY", ("m2",)),
+            },
+            routing={Tier.IO: [ModelRef("deepseek", "m1"), ModelRef("zhipu", "m2")]},
+            retry_attempts=2,
+            retry_delay_s=0.0,
+        )
+        router = RecordingRouter(
+            cfg,
+            {
+                "deepseek/m1": [RuntimeError("boom"), RuntimeError("boom"), {"value": 1}],
+                "zhipu/m2": [{"value": 2}],
+            },
+        )
+        result, ref = await router.invoke(Tier.IO, "s", "u", Out)
+        assert result.value == 1 and ref.model_id == "m1"
+        assert router.calls.count("deepseek/m1") == 3  # 1 次原始 + 2 次重试
+        assert router.calls.count("zhipu/m2") == 0
+
+    asyncio.run(case())
+
+
+def test_retry_exhausted_falls_to_next_candidate(monkeypatch) -> None:
+    """重试耗尽 → 记录根因 → 下一候选成功。"""
+    import oh_llm.router as router_mod
+
+    async def _nosleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(router_mod.asyncio, "sleep", _nosleep)
+
+    async def case():
+        cfg = LLMConfig(
+            providers={
+                "deepseek": ProviderSpec("deepseek", None, "DEEPSEEK_API_KEY", ("m1",)),
+                "zhipu": ProviderSpec("zhipu", None, "ZHIPU_API_KEY", ("m2",)),
+            },
+            routing={Tier.IO: [ModelRef("deepseek", "m1"), ModelRef("zhipu", "m2")]},
+            retry_attempts=1,
+        )
+        router = RecordingRouter(
+            cfg,
+            {
+                "deepseek/m1": [RuntimeError("t1"), RuntimeError("t2")],
+                "zhipu/m2": [{"value": 9}],
+            },
+        )
+        result, ref = await router.invoke(Tier.IO, "s", "u", Out)
+        assert result.value == 9 and ref.provider == "zhipu"
+        assert router.calls.count("deepseek/m1") == 2
+
+    asyncio.run(case())
+
+
+def test_global_concurrency_cap() -> None:
+    """全局 Semaphore：10 个并发 invoke 的在途峰值 ≤ max_concurrency。"""
+
+    async def case():
+        cfg = LLMConfig(
+            providers={
+                "zhipu": ProviderSpec("zhipu", None, None, ("m2",)),
+            },
+            routing={Tier.EXECUTE: [ModelRef("zhipu", "m2")]},
+            max_concurrency=3,
+        )
+        router = ModelRouter(cfg)
+        state = {"cur": 0, "peak": 0}
+
+        async def fake_candidate(ref, schema, system, user):
+            state["cur"] += 1
+            state["peak"] = max(state["peak"], state["cur"])
+            await asyncio.sleep(0.05)
+            state["cur"] -= 1
+            return schema.model_validate({"value": 1})
+
+        router._invoke_candidate = fake_candidate  # type: ignore[method-assign]
+        await asyncio.gather(*(router.invoke(Tier.EXECUTE, "s", "u", Out) for _ in range(10)))
+        assert state["peak"] <= 3
+
+    asyncio.run(case())
+
+
+def test_yaml_loads_runtime_guards() -> None:
+    cfg = load_llm_config(ROOT / "config" / "models.yaml")
+    assert cfg.max_concurrency == 3
+    assert cfg.retry_attempts == 2
+    assert cfg.timeout_s == 120
