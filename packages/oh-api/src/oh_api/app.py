@@ -52,6 +52,7 @@ class AppPaths:
 
     root: Path = Path("data")
     sources_yaml: Path = Path("config/sources.yaml")
+    logs_dir: Path = Path(".opencode/logs/opencode")
     now_fn: Any = None  # () -> datetime；None = datetime.now(UTC)
 
 
@@ -255,6 +256,40 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             raise HTTPException(422, "outcome required")
         _decisions().resolve(decision_id, outcome)
         return {"decision_id": decision_id, "resolved": "true"}
+
+    # --- dev 日志监控（opencode 会话镜像，只读） -----------------------------
+
+    @app.get("/api/dev/logs")
+    def dev_logs() -> dict[str, Any]:
+        d = paths.logs_dir
+        files: list[dict[str, Any]] = []
+        if d.is_dir():
+            for p in d.iterdir():
+                if p.is_file() and p.suffix in {".json", ".jsonl", ".txt", ".log"}:
+                    st = p.stat()
+                    files.append(
+                        {
+                            "file": p.name,
+                            "mtime": datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat(),
+                            "size": st.st_size,
+                        }
+                    )
+        files.sort(key=lambda x: x["mtime"], reverse=True)
+        return {"logs_dir": str(d), "files": files[:50]}
+
+    @app.get("/api/dev/logs/{name}")
+    def dev_log_preview(name: str) -> dict[str, Any]:
+        if "/" in name or ".." in name:
+            raise HTTPException(400, "invalid name")
+        p = paths.logs_dir / name
+        if p.suffix not in {".json", ".jsonl", ".txt", ".log"}:
+            raise HTTPException(404, "log not found")
+        if not p.is_file():
+            raise HTTPException(404, "log not found")
+        with p.open(encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        tail = [ln.rstrip("\n") for ln in lines[-200:]]
+        return {"file": name, "lines": tail}
 
     @app.get("/api/stream")
     async def stream() -> StreamingResponse:

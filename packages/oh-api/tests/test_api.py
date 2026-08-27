@@ -97,3 +97,28 @@ def test_publish_sse_no_subscriber_zero_cost() -> None:
     from oh_api.app import publish_sse
 
     asyncio.run(publish_sse("tick", {"x": 1}))  # 无订阅者：静默返回
+
+
+def test_dev_logs(tmp_path: Path) -> None:
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "s1.json").write_text('{"a": 1}\n', encoding="utf-8")
+    (logs / "s2.jsonl").write_text('{"b": 2}\n{"c": 3}\n', encoding="utf-8")
+    (logs / "skip.xyz").write_text("x", encoding="utf-8")
+    app = create_app(AppPaths(root=tmp_path, sources_yaml=tmp_path / "none.yaml", logs_dir=logs))
+    c = TestClient(app)
+    r = c.get("/api/dev/logs").json()
+    assert r["logs_dir"] == str(logs)
+    assert {f["file"] for f in r["files"]} == {"s1.json", "s2.jsonl"}
+    preview = c.get("/api/dev/logs/s2.jsonl").json()
+    assert len(preview["lines"]) == 2
+    assert c.get("/api/dev/logs/skip.xyz").status_code == 404
+    assert c.get("/api/dev/logs/..%2Fescape").status_code in {400, 404}
+    assert c.get("/api/dev/logs").status_code == 200
+
+
+def test_dev_logs_empty_dir(tmp_path: Path) -> None:
+    app = create_app(AppPaths(root=tmp_path, sources_yaml=tmp_path / "none.yaml"))
+    c = TestClient(app)
+    r = c.get("/api/dev/logs").json()
+    assert r["files"] == []  # 默认 logs_dir 不存在 → 空列表不报错
