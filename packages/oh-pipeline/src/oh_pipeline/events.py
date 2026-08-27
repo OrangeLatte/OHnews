@@ -61,10 +61,7 @@ class EventBuilder:
             published = rec.published_at
             if published is None:
                 continue  # PIT 锚缺失：不进事件（裁决 C 语义）
-            text = " ".join(
-                str(rec.normalized.get(k) or "")
-                for k in ("title", "body")
-            )
+            text = " ".join(str(rec.normalized.get(k) or "") for k in ("title", "body"))
             for entity_id in self._registry.match(text):
                 bucket = groups[(_utc_day(published), entity_id)]
                 bucket.setdefault(rec.item_key, (published, str(rec.normalized.get("title") or "")))

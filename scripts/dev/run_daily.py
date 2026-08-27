@@ -44,8 +44,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--days", type=int, default=7, help="事件聚合窗口（天）")
     parser.add_argument("--min-articles", type=int, default=3)
     parser.add_argument("--min-sources", type=int, default=2)
-    parser.add_argument("--min-per-source", type=int, default=2,
-                        help="NDI 源级样本门：开发态 2 / 对外数字 10")
+    parser.add_argument(
+        "--min-per-source", type=int, default=2, help="NDI 源级样本门：开发态 2 / 对外数字 10"
+    )
     parser.add_argument("--limit", type=int, default=0, help="只跑前 K 个事件（0=全部）")
     args = parser.parse_args(argv)
 
@@ -57,10 +58,7 @@ def main(argv: list[str] | None = None) -> int:
 
     now = datetime.now(UTC)
     window_start = now - timedelta(days=args.days)
-    records = [
-        r for r in records
-        if r.published_at is not None and r.published_at >= window_start
-    ]
+    records = [r for r in records if r.published_at is not None and r.published_at >= window_start]
     print(f"[bronze] 窗口内 {len(records)} 条（{args.days} 天）")
 
     built = EventBuilder().build(
@@ -74,8 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         print("[EMPTY] 无合格事件（提高窗口或放宽 --min-articles/--min-sources）")
         return 0
     print(
-        f"[events] 合格事件 {len(built)} 个"
-        f"（门：≥{args.min_articles} 篇 × ≥{args.min_sources} 源）"
+        f"[events] 合格事件 {len(built)} 个（门：≥{args.min_articles} 篇 × ≥{args.min_sources} 源）"
     )
 
     store = SqliteStore(connect(ROOT / "data" / "silver.sqlite"))

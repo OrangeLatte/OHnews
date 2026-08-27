@@ -33,9 +33,7 @@ def _rec(
 
 
 def test_aggregates_entity_day_window() -> None:
-    records = [
-        _rec("gov", i, f"美联储声明 {i}", "关税制裁争端风险") for i in range(3)
-    ] + [
+    records = [_rec("gov", i, f"美联储声明 {i}", "关税制裁争端风险") for i in range(3)] + [
         _rec("wscn", 100 + i, f"市场解读美联储 {i}", "衰退风险与损失") for i in range(2)
     ]
     built = EventBuilder().build(records)
@@ -77,24 +75,16 @@ def test_days_split_into_separate_events() -> None:
     next_day = DAY + timedelta(days=1)
     records = [_rec("gov", i, "美联储", "关税") for i in range(3)]
     records += [_rec("wscn", 10 + i, "美联储", "关税") for i in range(3)]
-    records += [
-        _rec("gov", 100 + i, "美联储", "关税", ts=next_day) for i in range(3)
-    ]
-    records += [
-        _rec("wscn", 200 + i, "美联储", "关税", ts=next_day) for i in range(3)
-    ]
+    records += [_rec("gov", 100 + i, "美联储", "关税", ts=next_day) for i in range(3)]
+    records += [_rec("wscn", 200 + i, "美联储", "关税", ts=next_day) for i in range(3)]
     built = EventBuilder().build(records)
     ids = {b.event.event_id for b in built}
     assert ids == {"ev-fed-20260826", "ev-fed-20260827"}
 
 
 def test_multi_entity_articles_counted_per_entity() -> None:
-    records = [
-        _rec("gov", i, "美联储与特朗普在关税问题上冲突", "制裁争端") for i in range(3)
-    ]
-    records += [
-        _rec("wscn", 10 + i, "市场关注美联储与特朗普", "关税摩擦") for i in range(2)
-    ]
+    records = [_rec("gov", i, "美联储与特朗普在关税问题上冲突", "制裁争端") for i in range(3)]
+    records += [_rec("wscn", 10 + i, "市场关注美联储与特朗普", "关税摩擦") for i in range(2)]
     built = EventBuilder().build(records)
     entities = {b.event.entities[0] for b in built}
     assert entities == {"fed", "trump"}
@@ -104,9 +94,7 @@ def test_multi_entity_articles_counted_per_entity() -> None:
 def test_output_deterministic_order() -> None:
     records = [_rec("gov", i, "美联储", "关税") for i in range(3)]
     records += [_rec("wscn", 10 + i, "美联储", "关税") for i in range(2)]
-    records += [
-        _rec("gov", 50 + i, "欧洲央行", "关税") for i in range(3)
-    ]
+    records += [_rec("gov", 50 + i, "欧洲央行", "关税") for i in range(3)]
     records += [_rec("wscn", 60 + i, "欧洲央行", "关税") for i in range(2)]
     built = EventBuilder().build(records)
     keys = [(b.event.as_of, b.event.entities[0]) for b in built]
