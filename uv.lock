@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 [manifest]
 members = [
     "oh-contracts",
+    "oh-pipeline",
     "oh-sources",
     "oh-storage",
     "ohnews",
@@ -283,6 +284,21 @@ dependencies = [
 requires-dist = [{ name = "pydantic", specifier = ">=2.7" }]
 
 [[package]]
+name = "oh-pipeline"
+version = "0.1.0"
+source = { editable = "packages/oh-pipeline" }
+dependencies = [
+    { name = "oh-contracts" },
+    { name = "oh-storage" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "oh-contracts", editable = "packages/oh-contracts" },
+    { name = "oh-storage", editable = "packages/oh-storage" },
+]
+
+[[package]]
 name = "oh-sources"
 version = "0.1.0"
 source = { editable = "packages/oh-sources" }
@@ -326,6 +342,7 @@ version = "0.0.1"
 source = { virtual = "." }
 dependencies = [
     { name = "oh-contracts" },
+    { name = "oh-pipeline" },
     { name = "oh-sources" },
     { name = "oh-storage" },
 ]
@@ -339,6 +356,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "oh-contracts", editable = "packages/oh-contracts" },
+    { name = "oh-pipeline", editable = "packages/oh-pipeline" },
     { name = "oh-sources", editable = "packages/oh-sources" },
     { name = "oh-storage", editable = "packages/oh-storage" },
 ]
