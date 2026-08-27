@@ -1,0 +1,83 @@
+"""OH!News 共享契约包。
+
+架构约束（docs/BLUEPRINT.md §10）：
+- 零内部依赖：禁止 import 任何 oh_* 业务包（CI purity 测试强制）。
+- 零 IO：禁止 open()/pathlib/os 等（CI purity 测试强制）。
+- 仅存放 Pydantic schema、StrEnum 枚举与常量。
+"""
+
+from oh_contracts.constants import (
+    BOOTSTRAP_RESAMPLES,
+    CONF_TAU_RULE,
+    CONF_TAU_SMALL,
+    JEFFREYS_ALPHA,
+    N_MIN_SAMPLES,
+    PIT_LOOKBACK_DAYS,
+    PSI_ALERT_THRESHOLD,
+    TYPE_FACTOR,
+    VERIFY_BONUS_CORROBORATED,
+    VERIFY_PENALTY_SINGLE,
+    VERIFY_PENALTY_UNVERIFIED,
+)
+from oh_contracts.enums import (
+    ArticleType,
+    ClaimKind,
+    EpistemicStatus,
+    ExtractionEngine,
+    FrameLabel,
+    SOStrategy,
+    SourceTier,
+    SSEEvent,
+    StanceLabel,
+    Tier,
+)
+from oh_contracts.ids import content_hash, make_item_key, url_hash
+from oh_contracts.schemas import (
+    BronzeRecord,
+    Claim,
+    EventRecord,
+    Evidence,
+    Hypothesis,
+    NarrativeCard,
+    NDIPoint,
+    SourceMeta,
+    SSEMessage,
+    StanceRow,
+)
+
+__all__ = [
+    "BOOTSTRAP_RESAMPLES",
+    "CONF_TAU_RULE",
+    "CONF_TAU_SMALL",
+    "JEFFREYS_ALPHA",
+    "N_MIN_SAMPLES",
+    "PIT_LOOKBACK_DAYS",
+    "PSI_ALERT_THRESHOLD",
+    "TYPE_FACTOR",
+    "VERIFY_BONUS_CORROBORATED",
+    "VERIFY_PENALTY_SINGLE",
+    "VERIFY_PENALTY_UNVERIFIED",
+    "ArticleType",
+    "BronzeRecord",
+    "Claim",
+    "ClaimKind",
+    "EpistemicStatus",
+    "EventRecord",
+    "Evidence",
+    "ExtractionEngine",
+    "FrameLabel",
+    "Hypothesis",
+    "NDIPoint",
+    "NarrativeCard",
+    "SOStrategy",
+    "SSEEvent",
+    "SSEMessage",
+    "SourceMeta",
+    "SourceTier",
+    "StanceLabel",
+    "StanceRow",
+    "Tier",
+    "content_hash",
+    "make_item_key",
+    "url_hash",
+]

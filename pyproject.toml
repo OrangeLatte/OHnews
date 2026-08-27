@@ -1,0 +1,41 @@
+[project]
+name = "ohnews"
+version = "0.0.1"
+description = "OH!News — Agent 原生的市场叙事情报台（非商业）"
+requires-python = ">=3.11"
+dependencies = [
+    "oh-contracts",
+    "oh-storage",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+oh-contracts = { workspace = true }
+oh-storage = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
+addopts = "-m 'not sensitive'"
+markers = [
+    "sanity: 10 合成事件 Bronze→Silver→Gold 端到端 sanity（Phase 0 门禁）",
+    "integration: 跨包集成测试",
+    "sensitive: 需本地敏感配置（默认跳过，--override-ini 或 -m sensitive 显式开启）",
+]
