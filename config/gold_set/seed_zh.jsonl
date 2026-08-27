@@ -1,0 +1,30 @@
+{"text": "出口企业二季度利润缩水三成，订单流失至东南亚。", "frames": {"loss": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "减税政策为中小企业释放千亿红利，市场活力显著回升。", "frames": {"gain": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "审计报告指出三部门专项资金使用失范，相关负责人被问责。", "frames": {"responsibility": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "中美就关税清单再度交锋，双方各亮反制筹码。", "frames": {"conflict": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "一位做了二十年外贸的老板：这次真的撑不住了。", "frames": {"human_interest": 0.85, "loss": 0.15}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "关税上调使下游制造业成本承压，中小企业面临倒闭风险。", "frames": {"loss": 0.7, "responsibility": 0.2, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "降准落地后流动性充裕，机构普遍上调增长预期。", "frames": {"gain": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "欧盟对华电动车反补贴调查升级，中企拟提起诉讼。", "frames": {"conflict": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "房贷利率下调后，一个三口之家每月少还八百元。", "frames": {"human_interest": 0.7, "gain": 0.3}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "房企债务违约蔓延，供应链上游供应商货款回收困难。", "frames": {"loss": 0.85, "conflict": 0.15}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "自贸协定生效，区域贸易成本大幅下降。", "frames": {"gain": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "学界呼吁央行对资金空转问题承担监管责任。", "frames": {"responsibility": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "劳资谈判破裂，港口工人宣布下周起罢工。", "frames": {"conflict": 0.85, "loss": 0.15}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "快递站点关闭后，五十六岁分拣员的再就业之路。", "frames": {"human_interest": 0.8, "loss": 0.2}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "消费券拉动效应显现，节假日零售额超预期。", "frames": {"gain": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "利润缩水的同时，海外市场份额反而提升。", "frames": {"loss": 0.5, "gain": 0.5}, "engine": "seed_v0", "status": "pending_review", "notes": "codebook 反例 1.1"}
+{"text": "明天上午将公布上月制造业 PMI 数据。", "frames": {"other": 1.0}, "engine": "seed_v0", "status": "pending_review", "notes": "程序性公告"}
+{"text": "事故调查组认定企业安全投入不足是主因。", "frames": {"responsibility": 0.85, "loss": 0.15}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "两国在汇率问题上相互指责，摩擦面扩大。", "frames": {"conflict": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "小店店主账本上的三年：从日流水八千到一千二。", "frames": {"human_interest": 0.85, "loss": 0.15}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "新能源出口同比增长四成，成为外贸最大亮点。", "frames": {"gain": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "地方财政缺口预计扩大至千亿级，专项债额度告急。", "frames": {"loss": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "平台与商家费率之争激化，多家商户宣布下架。", "frames": {"conflict": 0.8, "human_interest": 0.1, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "代表委员建议地方政府对烂尾楼处置负起兜底责任。", "frames": {"responsibility": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "留存老人如何跨越数字鸿沟领取养老金。", "frames": {"human_interest": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "消费者信心指数连续三月下滑，耐用品销售明显萎缩。", "frames": {"loss": 0.9, "other": 0.1}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
+{"text": "增长主要靠低基数效应，内生动力仍待观察。", "frames": {"responsibility": 0.4, "other": 0.4, "gain": 0.2}, "engine": "seed_v0", "status": "pending_review", "notes": "codebook 反例 1.2 归因"}
+{"text": "双方同意继续磋商，关税争端暂获喘息窗口。", "frames": {"conflict": 0.4, "gain": 0.4, "other": 0.2}, "engine": "seed_v0", "status": "pending_review", "notes": "缓和+收益混合"}
+{"text": "上半年财政收支数据公布，收入进度符合预算安排。", "frames": {"other": 1.0}, "engine": "seed_v0", "status": "pending_review", "notes": "中性数据播报"}
+{"text": "小微企业主联名致信，恳请延续纾困贷款政策。", "frames": {"human_interest": 0.5, "responsibility": 0.3, "gain": 0.2}, "engine": "seed_v0", "status": "pending_review", "notes": ""}
