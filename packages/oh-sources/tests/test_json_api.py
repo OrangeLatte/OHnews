@@ -193,3 +193,47 @@ def test_registry_skips_disabled_sources():
     assert [a.source_id for a in reg.all()] == ["on"]
     with pytest.raises(ValueError, match="未注册"):
         reg.get("off")
+
+
+# ---- queries 多词轮询（gov_policy 型；MockTransport 离线）----
+
+
+def test_queries_rotation_merges_and_dedupes(monkeypatch):
+    """两轮检索词合并 + 跨词按 external_id 去重只留首见。"""
+    import asyncio
+
+    import httpx
+    from oh_sources import base as base_mod
+
+    now = datetime.now(UTC)
+    fmt = (now + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        q = request.url.params.get("q")
+        items = (
+            [{"id": "b1", "rich_text": "利率决议全文内容足够长", "create_time": fmt}]
+            if q == "利率"
+            else [
+                {"id": "a1", "rich_text": "货币政策执行报告发布", "create_time": fmt},
+                {"id": "b1", "rich_text": "利率决议跨词重复命中", "create_time": fmt},
+            ]
+        )
+        return httpx.Response(200, json={"data": {"list": items}})
+
+    ad = _adapter(params={"q": "货币政策"}, queries=["货币政策", "利率"])
+
+    async def _instant(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(base_mod.asyncio, "sleep", _instant)
+
+    class _Client(httpx.AsyncClient):
+        def __init__(self, **kw):
+            kw["transport"] = httpx.MockTransport(handler)
+            kw.pop("proxy", None)
+            super().__init__(**kw)
+
+    monkeypatch.setattr(ad, "make_client", lambda **kw: _Client(**kw))
+
+    drafts = asyncio.run(ad.fetch(now - timedelta(hours=1), now + timedelta(hours=1)))
+    assert sorted(d.external_id for d in drafts) == ["a1", "b1"]

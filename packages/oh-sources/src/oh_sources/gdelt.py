@@ -11,7 +11,6 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 from oh_contracts.enums import ArticleType
 from oh_contracts.schemas import SourceMeta
 
@@ -59,12 +58,25 @@ def _parse_articles(payload: dict[str, Any], *, lang: str = "zh") -> list[Draft]
 
 
 class GDELTDocAdapter(SourceAdapter):
-    """GDELT DOC 2.0 ArtList：query 例 "sourcelang:chinese (央行 OR 货币政策)"。"""
+    """GDELT DOC 2.0 ArtList：query 例 "sourcelang:chinese (央行 OR 货币政策)"。
 
-    def __init__(self, meta: SourceMeta, *, query: str, max_records: int = 75) -> None:
-        super().__init__(meta)
+    网络回退（2026-08-27 探测：直连 SSL 握手被阻断，代理间歇可达）：
+    先直连 → 失败且配置 proxy_url 时经代理重试一次；两段皆败抛最后异常。
+    """
+
+    def __init__(
+        self,
+        meta: SourceMeta,
+        *,
+        query: str,
+        max_records: int = 75,
+        proxy_fallback: bool = False,
+        **base_kwargs: Any,
+    ) -> None:
+        super().__init__(meta, **base_kwargs)
         self._query = query
         self._max_records = max_records
+        self._proxy_fallback = proxy_fallback
 
     async def fetch(self, since: datetime, until: datetime) -> list[Draft]:
         params = {
@@ -76,6 +88,19 @@ class GDELTDocAdapter(SourceAdapter):
             "startdatetime": since.strftime("%Y%m%d%H%M%S"),
             "enddatetime": until.strftime("%Y%m%d%H%M%S"),
         }
-        async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}) as client:
-            text = await self.get_text(client, GDELT_DOC_URL, params=params)
-        return _parse_articles(json.loads(text), lang=self.meta.language)
+        # 回退链：直连 → 代理（proxy_fallback 且配置了 proxy_url 时）
+        routes: list[str | None] = [None]
+        if self._proxy_fallback and self.proxy_url:
+            routes.append(self.proxy_url)
+        last_exc: Exception | None = None
+        for route in routes:
+            try:
+                async with self.make_client(
+                    proxy=route, headers={"User-Agent": USER_AGENT}
+                ) as client:
+                    text = await self.get_text(client, GDELT_DOC_URL, params=params)
+                return _parse_articles(json.loads(text), lang=self.meta.language)
+            except Exception as exc:  # noqa: BLE001 —— 回退链逐段尝试
+                last_exc = exc
+        assert last_exc is not None
+        raise last_exc

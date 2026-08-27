@@ -16,7 +16,6 @@ import time
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
-import httpx
 from oh_contracts.enums import ArticleType
 from oh_contracts.schemas import SourceMeta
 
@@ -106,8 +105,10 @@ class JsonApiAdapter(SourceAdapter):
         date_formats: list[str] | None = None,
         tz_offset_hours: int = 0,
         article_type: ArticleType = ArticleType.WIRE,
+        queries: list[str] | None = None,
+        **base_kwargs: Any,
     ) -> None:
-        super().__init__(meta)
+        super().__init__(meta, **base_kwargs)
         self._url = url
         self._params = params
         self._headers = headers
@@ -121,18 +122,49 @@ class JsonApiAdapter(SourceAdapter):
         self._date_formats = date_formats
         self._tz_offset_hours = tz_offset_hours
         self._article_type = article_type
+        # 多检索词轮询（gov_policy："货币政策/利率/金融"各查一轮合并去重）
+        self._queries = [str(q) for q in queries] if queries else None
 
     async def fetch(self, since: datetime, until: datetime) -> list[Draft]:
-        async with httpx.AsyncClient(
+        since = self.effective_since(since, until)
+        async with self.make_client(
             headers={"User-Agent": "OHNews/0.1"}, follow_redirects=True
         ) as client:
-            params = {
-                k: v.replace("{now_ms}", str(int(time.time() * 1000))) if isinstance(v, str) else v
-                for k, v in (self._params or {}).items()
-            }
-            payload = await self.get_json(client, self._url, params=params, headers=self._headers)
-        items = dot_get(payload, self._items_path, []) or []
-        return self.entries_to_drafts(items, since, until)
+            terms = self._queries or [None]
+            merged: list[Any] = []
+            seen_keys: set[str] = set()
+            for term in terms:
+                params = {
+                    k: v.replace("{now_ms}", str(int(time.time() * 1000)))
+                    if isinstance(v, str)
+                    else v
+                    for k, v in (self._params or {}).items()
+                }
+                if term is not None:
+                    # 轮询替换检索词参数（gov.cn 用 q，通用兜底 query）
+                    key = "q" if "q" in params else ("query" if "query" in params else None)
+                    if key is None:
+                        raise ValueError(
+                            f"{self.source_id}: queries 轮询需要 params 中存在 q/query"
+                        )
+                    params[key] = term
+                payload = await self.get_json(
+                    client, self._url, params=params, headers=self._headers
+                )
+                for item in dot_get(payload, self._items_path, []) or []:
+                    # 跨词去重：external_id 优先，回落 title（同文多词命中只留首见）
+                    raw_key = (
+                        dot_get(item, self._external_id_path, "") or ""
+                        if self._external_id_path
+                        else dot_get(item, self._title_path, "")
+                    )
+                    key = str(raw_key or "")
+                    if key and key in seen_keys:
+                        continue
+                    if key:
+                        seen_keys.add(key)
+                    merged.append(item)
+        return self.entries_to_drafts(merged, since, until)
 
     def entries_to_drafts(
         self,

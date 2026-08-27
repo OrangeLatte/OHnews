@@ -49,7 +49,10 @@ class FetchLogSink(Protocol):
 
 @dataclass(frozen=True)
 class FetchResult:
-    """单源一次采集的结果（回填报告/SSE 的最小单元）。"""
+    """单源一次采集的结果（回填报告/SSE 的最小单元）。
+
+    attempts: 主源失败后实际尝试过的备用 source_id 链（报错可溯）。
+    """
 
     source_id: str
     ok: bool
@@ -57,6 +60,7 @@ class FetchResult:
     n_written: int = 0
     error: str | None = None
     duration_ms: int = 0
+    attempts: tuple[str, ...] = ()
 
 
 def _log(
@@ -157,10 +161,15 @@ async def collect_all(
 ) -> list[FetchResult]:
     """顺序采集全部注册源（确定性顺序；健康度低于阈值自动降级跳过）。
 
+    备用链：主源硬失败（异常）时按 registry.fallbacks(source_id) 顺序尝试
+    备用源（各自写 Bronze / 记健康度）；attempts 记录实际尝试过的备用 id。
+    降级跳过（degraded）与 only 白名单场景不触发备用链。
+
     Args:
-        registry: CollectorRegistry（鸭子类型，避免循环依赖）。
+        registry: CollectorRegistry（鸭子类型，避免循环依赖；可选支持 fallbacks()）。
         only: source_id 白名单；显式指定时跳过健康度降级检查（人工强制）。
     """
+    resolve_fallbacks = getattr(registry, "fallbacks", None) or (lambda sid: [])
     results: list[FetchResult] = []
     for adapter in registry.all():
         if only is not None and adapter.source_id not in only:
@@ -176,13 +185,25 @@ async def collect_all(
                     )
                 )
                 continue
-        results.append(
-            await run_collector(
-                adapter,
-                writer,
-                since=since,
-                until=until,
-                tracker=tracker,
+        result = await run_collector(adapter, writer, since=since, until=until, tracker=tracker)
+        if not result.ok:
+            tried: list[str] = []
+            last = result
+            for fb in resolve_fallbacks(adapter.source_id):
+                tried.append(fb.source_id)
+                last = await run_collector(fb, writer, since=since, until=until, tracker=tracker)
+                if last.ok:
+                    break
+            result = FetchResult(
+                source_id=result.source_id,
+                ok=last.ok,
+                n_items=last.n_items,
+                n_written=last.n_written,
+                error=last.error or result.error if not last.ok else None,
+                duration_ms=result.duration_ms,
+                attempts=tuple(tried),
             )
-        )
+            if last.source_id != adapter.source_id:
+                results.append(last)
+        results.append(result)
     return results

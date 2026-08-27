@@ -131,6 +131,51 @@ def test_collect_all_only_whitelist():
     assert adapter_a.calls == 0 and adapter_b.calls == 1
 
 
+def test_collect_all_fallback_chain_recovers():
+    """主源硬失败 → 备用链逐个尝试 → 备用成功：attempts 留痕 + 备用结果入列。"""
+    bad = FakeAdapter("primary", failures=99)
+    good = FakeAdapter("fb1")
+    registry = type(
+        "R",
+        (),
+        {
+            "all": staticmethod(lambda: [bad]),
+            "fallbacks": lambda self, sid: [good],
+        },
+    )()
+    results = asyncio.run(collect_all(registry, MemWriter(), since=SINCE, until=UNTIL))
+    primary = [r for r in results if r.source_id == "primary"][0]
+    assert primary.ok and primary.attempts == ("fb1",)
+    fb_res = [r for r in results if r.source_id == "fb1"][0]
+    assert fb_res.ok and fb_res.n_written == 1
+
+
+def test_collect_all_fallback_chain_all_fail():
+    """主源与备用源皆败：主源 ok=False + attempts 留痕 + 报备用链失败。"""
+    bad = FakeAdapter("primary", failures=99)
+    fb = FakeAdapter("fb_dead", failures=99)
+    registry = type(
+        "R",
+        (),
+        {
+            "all": staticmethod(lambda: [bad]),
+            "fallbacks": lambda self, sid: [fb],
+        },
+    )()
+    results = asyncio.run(collect_all(registry, MemWriter(), since=SINCE, until=UNTIL))
+    primary = [r for r in results if r.source_id == "primary"][0]
+    assert not primary.ok
+    assert primary.attempts == ("fb_dead",)
+    assert "RuntimeError: boom" in (primary.error or "")
+
+
+def test_collect_all_no_fallbacks_attribute_still_works():
+    """registry 无 fallbacks()（鸭子类型兼容旧用法）→ 正常采集。"""
+    registry = type("R", (), {"all": staticmethod(lambda: [FakeAdapter("solo")])})()
+    results = asyncio.run(collect_all(registry, MemWriter(), since=SINCE, until=UNTIL))
+    assert results[0].ok and results[0].attempts == ()
+
+
 def test_fetch_result_is_json_serializable():
     payload = json.dumps(FetchResult("s", ok=True, n_items=1, n_written=1).__dict__)
     assert '"ok": true' in payload

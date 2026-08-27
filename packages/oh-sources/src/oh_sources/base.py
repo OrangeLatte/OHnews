@@ -10,7 +10,7 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -47,10 +47,31 @@ class SourceAdapter(ABC):
         meta: describe() 契约面（ccxt describe 模式）。
     """
 
-    def __init__(self, meta: SourceMeta) -> None:
+    def __init__(
+        self,
+        meta: SourceMeta,
+        *,
+        window_days: int | None = None,
+        proxy_url: str | None = None,
+    ) -> None:
         self.meta = meta
         self.source_id = meta.source_id
         self._last_request: float = 0.0
+        # 稀疏源窗口放大（如 gov_policy 30 天）；None = 跟随全局 --days
+        self.window_days = window_days
+        # 显式代理（如 GDELT 直连被阻断时走本机代理）；None = 直连
+        self.proxy_url = proxy_url
+
+    def effective_since(self, since: datetime, until: datetime) -> datetime:
+        """窗口下界按源放大：max(since, until - window_days)（稀疏源防 0 条误判）。"""
+        if self.window_days is None:
+            return since
+        return max(since, until - timedelta(days=self.window_days))
+
+    def make_client(self, **kwargs: Any) -> httpx.AsyncClient:
+        """统一 AsyncClient 工厂：默认注入 per-source 代理（proxy_url），可显式覆盖。"""
+        kwargs.setdefault("proxy", self.proxy_url)
+        return httpx.AsyncClient(**kwargs)
 
     def describe(self) -> SourceMeta:
         """返回信源元数据（裁决 C：describe 元数据驱动）。"""

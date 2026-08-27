@@ -19,21 +19,30 @@ from oh_sources.rss import RssAdapter
 
 
 class CollectorRegistry:
-    """source_id → SourceAdapter 注册表（裁决 C）。"""
+    """source_id → SourceAdapter 注册表（裁决 C）+ 备用源链（fallbacks）。"""
 
     def __init__(self) -> None:
         self._adapters: dict[str, SourceAdapter] = {}
+        self._fallbacks: dict[str, list[SourceAdapter]] = {}
 
     def register(self, adapter: SourceAdapter) -> None:
         if adapter.source_id in self._adapters:
             raise ValueError(f"source_id 重复注册: {adapter.source_id}")
         self._adapters[adapter.source_id] = adapter
 
+    def set_fallbacks(self, source_id: str, adapters: list[SourceAdapter]) -> None:
+        """注册主源失败时的备用源采集链（按序尝试，全部失败才报错）。"""
+        if adapters:
+            self._fallbacks[source_id] = adapters
+
     def get(self, source_id: str) -> SourceAdapter:
         try:
             return self._adapters[source_id]
         except KeyError as exc:
             raise ValueError(f"未注册的 source_id: {source_id}") from exc
+
+    def fallbacks(self, source_id: str) -> list[SourceAdapter]:
+        return list(self._fallbacks.get(source_id, []))
 
     def all(self) -> list[SourceAdapter]:
         return list(self._adapters.values())
@@ -56,18 +65,32 @@ def _article_type(spec: dict) -> ArticleType:
     return ArticleType(spec.get("article_type", "wire"))
 
 
+def _base_kwargs(params: dict) -> dict:
+    """透传 base 通用回退参数：window_days（稀疏源窗口放大）/ proxy_url（显式代理）。"""
+    kwargs: dict = {}
+    if params.get("window_days") is not None:
+        kwargs["window_days"] = int(params["window_days"])
+    if params.get("proxy_url"):
+        kwargs["proxy_url"] = str(params["proxy_url"])
+    return kwargs
+
+
 def _build_adapter(kind: str, meta: SourceMeta, params: dict) -> SourceAdapter:
     if kind == "rss":
         return RssAdapter(
             meta,
             url=str(params["url"]),
             article_type=_article_type(params),
+            date_fallback=bool(params.get("date_fallback", False)),
+            **_base_kwargs(params),
         )
     if kind == "gdelt":
         return GDELTDocAdapter(
             meta,
             query=str(params["query"]),
             max_records=int(params.get("max_records", 75)),
+            proxy_fallback=bool(params.get("proxy_fallback", False)),
+            **_base_kwargs(params),
         )
     if kind == "fred":
         return FredSeriesAdapter(meta, series_id=str(params["series_id"]))
@@ -87,6 +110,8 @@ def _build_adapter(kind: str, meta: SourceMeta, params: dict) -> SourceAdapter:
             date_formats=params.get("date_formats"),
             tz_offset_hours=int(params.get("tz_offset_hours", 0)),
             article_type=_article_type(params),
+            queries=[str(q) for q in params["queries"]] if params.get("queries") else None,
+            **_base_kwargs(params),
         )
     if kind == "html":
         return HtmlAdapter(
@@ -104,6 +129,7 @@ def _build_adapter(kind: str, meta: SourceMeta, params: dict) -> SourceAdapter:
             max_items=int(params.get("max_items", 30)),
             detail=params.get("detail"),
             article_type=_article_type(params),
+            **_base_kwargs(params),
         )
     if kind == "reddit_cdp":
         return RedditCdpAdapter(
@@ -112,6 +138,7 @@ def _build_adapter(kind: str, meta: SourceMeta, params: dict) -> SourceAdapter:
             cookies_file=str(params.get("cookies_file", ".opencode/cookies/reddit.json")),
             limit=int(params.get("limit", 25)),
             article_type=_article_type(params),
+            **_base_kwargs(params),
         )
     raise ValueError(f"未知适配器类型: {kind} (source_id={meta.source_id})")
 
@@ -122,18 +149,34 @@ def build_registry(config: dict) -> CollectorRegistry:
     enabled=false 的源直接跳过（不注册、零开销）；
     needs_browser=true 且源未被显式启用时同样注册（登录门源由用户开）。
 
+    fallbacks 解析（两遍扫描）：
+    - 条目为 source_id 字符串 → 引用其他已启用源（被禁用/不存在则跳过，降级不报错）
+    - 条目为完整 spec dict → 内联备用源（不注册进主表，仅作 fallback 采集，
+      以其自身 source_id 写 Bronze / 记健康度）
+
     Args:
-        config: {"sources": [{source_id, adapter, tier, language, enabled?, params}]}。
+        config: {"sources": [{source_id, adapter, tier, language, enabled?, params}]}
 
     Raises:
         ValueError: 未知 adapter 类型或缺必填参数。
     """
     registry = CollectorRegistry()
-    for spec in config.get("sources", []):
-        if not bool(spec.get("enabled", True)):
-            continue
-        meta = _build_meta(spec)
-        kind = str(spec["adapter"])
-        params: dict = spec.get("params", {})
-        registry.register(_build_adapter(kind, meta, params))
+    specs = [s for s in config.get("sources", []) if bool(s.get("enabled", True))]
+    by_id = {str(s["source_id"]): s for s in specs}
+    for spec in specs:
+        registry.register(
+            _build_adapter(str(spec["adapter"]), _build_meta(spec), spec.get("params", {}))
+        )
+    for spec in specs:
+        adapters: list[SourceAdapter] = []
+        for fb in spec.get("fallbacks") or []:
+            if isinstance(fb, str):
+                if fb in by_id:
+                    adapters.append(registry.get(fb))
+            elif isinstance(fb, dict):
+                adapters.append(
+                    _build_adapter(str(fb["adapter"]), _build_meta(fb), fb.get("params", {}))
+                )
+        if adapters:
+            registry.set_fallbacks(str(spec["source_id"]), adapters)
     return registry

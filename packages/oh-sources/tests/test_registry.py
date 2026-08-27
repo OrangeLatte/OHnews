@@ -55,3 +55,62 @@ def test_register_duplicate_rejected():
     registry.register(adapter)
     with pytest.raises(ValueError, match="重复注册"):
         registry.register(adapter)
+
+
+def _spec(source_id: str, **extra) -> dict:
+    spec = {
+        "source_id": source_id,
+        "adapter": "rss",
+        "tier": "L3",
+        "rate_limit_rpm": 30,
+        "params": {"url": f"http://example.com/{source_id}.xml"},
+    }
+    spec.update(extra)
+    return spec
+
+
+def test_fallbacks_reference_inline_and_disabled():
+    """备用链解析：引用源 / 内联 spec / 禁用引用跳过（降级不报错）。"""
+    cfg = {
+        "sources": [
+            _spec(
+                "a",
+                fallbacks=[
+                    "b",
+                    {
+                        "source_id": "c_inline",
+                        "adapter": "rss",
+                        "tier": "L4",
+                        "params": {"url": "http://example.com/c.xml"},
+                    },
+                    "dead_ref",
+                ],
+            ),
+            _spec("b"),
+            _spec("dead_ref", enabled=False),
+        ]
+    }
+    reg = build_registry(cfg)
+    assert [f.source_id for f in reg.fallbacks("a")] == ["b", "c_inline"]
+    assert reg.fallbacks("b") == []
+    assert reg.fallbacks("不存在") == []
+
+
+def test_registry_passthrough_window_proxy_and_date_fallback():
+    cfg = {
+        "sources": [
+            _spec(
+                "a",
+                params={
+                    "url": "http://example.com/a.xml",
+                    "window_days": 30,
+                    "proxy_url": "http://127.0.0.1:9674",
+                    "date_fallback": True,
+                },
+            )
+        ]
+    }
+    ad = build_registry(cfg).get("a")
+    assert ad.window_days == 30
+    assert ad.proxy_url == "http://127.0.0.1:9674"
+    assert ad._date_fallback is True

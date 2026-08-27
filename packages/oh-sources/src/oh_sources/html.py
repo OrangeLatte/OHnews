@@ -49,8 +49,9 @@ class HtmlAdapter(SourceAdapter):
         max_items: int = 30,
         detail: dict[str, Any] | None = None,
         article_type: ArticleType = ArticleType.WIRE,
+        **base_kwargs: Any,
     ) -> None:
-        super().__init__(meta)
+        super().__init__(meta, **base_kwargs)
         self._list_url = list_url
         self._item_selector = item_selector
         self._params = params
@@ -66,7 +67,8 @@ class HtmlAdapter(SourceAdapter):
         self._article_type = article_type
 
     async def fetch(self, since: datetime, until: datetime) -> list[Draft]:
-        async with httpx.AsyncClient(
+        since = self.effective_since(since, until)
+        async with self.make_client(
             headers={"User-Agent": "OHNews/0.1"}, follow_redirects=True
         ) as client:
             text = await self.get_text(

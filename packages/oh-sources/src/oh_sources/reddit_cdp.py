@@ -12,8 +12,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-import httpx
 from oh_contracts.enums import ArticleType
 from oh_contracts.schemas import SourceMeta
 
@@ -43,8 +43,9 @@ class RedditCdpAdapter(SourceAdapter):
         cookies_file: str = DEFAULT_COOKIES_FILE,
         limit: int = 25,
         article_type: ArticleType = ArticleType.OPINION,
+        **base_kwargs: Any,
     ) -> None:
-        super().__init__(meta)
+        super().__init__(meta, **base_kwargs)
         self._subreddits = subreddits
         self._cookies_file = cookies_file
         self._limit = limit
@@ -65,7 +66,7 @@ class RedditCdpAdapter(SourceAdapter):
     async def fetch(self, since: datetime, until: datetime) -> list[Draft]:
         headers = {"User-Agent": BROWSER_UA, "Cookie": self._cookie_header()}
         out: list[Draft] = []
-        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+        async with self.make_client(headers=headers, follow_redirects=True) as client:
             for sub in self._subreddits:
                 text = await self.get_text(
                     client,
