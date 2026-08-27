@@ -67,6 +67,8 @@ class GraphDeps:
     enable_hitl: bool = False
     low_confidence_threshold: float = 0.5
     checkpointer: Any = None
+    lang_map: Mapping[str, str] | None = None  # source_id → language（within-language）
+    languages: tuple[str, ...] | None = None  # None=混算单点 "all"
 
 
 class EventState(TypedDict, total=False):
@@ -200,10 +202,31 @@ def make_divergence_node(deps: GraphDeps):
         rows = [r for r in deps.store.stances_asof(as_of) if r.event_id == event.event_id]
         if not rows:
             return {}
-        point = ndi_for_event(rows, deps.tier_map, as_of, min_per_source=deps.min_per_source)
-        deps.gold.append_ndi(point)
-        gap = temperature_gap(rows, deps.tier_map, min_per_source=deps.min_per_source)
-        return {"ndi_points": [point], "gaps": [gap]}
+        langs = deps.languages or ("all",)
+        points: list[NDIPoint] = []
+        gaps: list[float | None] = []
+        for lang in langs:
+            point = ndi_for_event(
+                rows,
+                deps.tier_map,
+                as_of,
+                min_per_source=deps.min_per_source,
+                event_id=event.event_id,
+                lang_map=deps.lang_map,
+                language=lang,
+            )
+            deps.gold.append_ndi(point)
+            points.append(point)
+            gaps.append(
+                temperature_gap(
+                    rows,
+                    deps.tier_map,
+                    min_per_source=deps.min_per_source,
+                    lang_map=deps.lang_map,
+                    language=lang,
+                )
+            )
+        return {"ndi_points": points, "gaps": gaps}
 
     return divergence_node
 
