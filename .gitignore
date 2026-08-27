@@ -28,3 +28,6 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+# 标注委员会生成物
+config/gold_set/annotated_*.jsonl
