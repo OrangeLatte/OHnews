@@ -116,10 +116,10 @@ def main(argv: list[str] | None = None) -> int:
             print("[WARN] --llm 但无 API keys——降级为纯统计模式")
         else:
             from oh_agents.tagger_llm import LLMTagger
-            from oh_llm.config import LLMConfig
+            from oh_llm.config import load_llm_config
             from oh_llm.router import ModelRouter
 
-            cfg = LLMConfig.load_llm_config(ROOT / "packages" / "oh-llm" / "config" / "models.yaml")
+            cfg = load_llm_config(ROOT / "config" / "models.yaml")
             router = ModelRouter(cfg)
             llm_tagger = LLMTagger(router)
             print("[llm] LLM 补盲 + 假设生成 + 证据解释已启用")
