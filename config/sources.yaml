@@ -31,6 +31,7 @@ sources:
     bias: financial_press
     rate_limit_rpm: 10
     enabled: true
+    fallbacks: [sina_7x24, eastmoney_724]
     params:
       url: "https://api-one-wscn.awtmt.com/apiv1/content/lives"
       params: {channel: "global-channel", limit: "40"}
@@ -48,6 +49,7 @@ sources:
     bias: financial_press
     rate_limit_rpm: 10
     enabled: true
+    fallbacks: [eastmoney_724, wscn_lives]
     params:
       url: "https://zhibo.sina.com.cn/api/zhibo/feed"
       params: {page: "1", page_size: "40", zhibo_id: "152", tag_id: "0", dire: "f", dpc: "1"}
@@ -67,6 +69,7 @@ sources:
     bias: financial_press
     rate_limit_rpm: 10
     enabled: true
+    fallbacks: [sina_7x24, wscn_lives]
     params:
       url: "https://np-listapi.eastmoney.com/comm/web/getFastNewsList"
       params: {client: "web", biz: "web_724", fastColumn: "102", sortEnd: "", pageSize: "40", req_trace: "{now_ms}"}
@@ -99,6 +102,8 @@ sources:
       article_type: opinion
 
   # ---- L1 官方（政策库检索 API）----
+  # 2026-08-27 诊断：q=货币政策 最新 2022（国务院库不含央行文件）；q=金融 有 2025 条。
+  # 回退方案：queries 多词轮询 + window_days=30（政策文档稀疏，1 天窗必 0 条）。
   - source_id: gov_policy
     adapter: json_api
     tier: L1
@@ -110,14 +115,17 @@ sources:
     params:
       url: "https://sousuo.www.gov.cn/search-gov/data"
       params: {t: "zhengcelibrary_gw", q: "货币政策", timetype: "timeqb", sort: "pubtime", sortType: "1", searchfield: "title", p: "1", n: "40"}
+      queries: [货币政策, 利率, 金融, 财政, 央行]
+      window_days: 30
       items_path: "searchVO.listVO"
       external_id_path: "id"
       title_path: "title"
       body_path: "summary"
       published_path: "ptime"
-      # 检索词 v1 固定"货币政策"；Phase 2 换词轮询/多词注册
 
   # ---- L2 聚合（覆盖度信号）----
+  # 2026-08-27：直连 SSL 握手超时；本机代理 127.0.0.1:9674 间歇可达。
+  # 回退方案：直连失败 → 经 proxy_url 重试；仍败由 runner 退避 + 健康度自动降级。
   - source_id: gdelt_zh
     adapter: gdelt
     tier: L2
@@ -129,6 +137,8 @@ sources:
     params:
       query: "sourcelang:chinese (央行 OR 货币政策 OR 利率 OR 中美 OR 关税)"
       max_records: 75
+      proxy_url: "http://127.0.0.1:9674"
+      proxy_fallback: true
 
   # ---- L1 官方统计（宏观基线快照）----
   - source_id: fred_cpiaucsl
@@ -305,6 +315,7 @@ sources:
     bias: financial_press
     rate_limit_rpm: 6
     enabled: true
+    fallbacks: [marketwatch, cnbc_top]
     params:
       url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain"
 
@@ -316,6 +327,7 @@ sources:
     bias: financial_press
     rate_limit_rpm: 6
     enabled: true
+    fallbacks: [wsj_markets, cnbc_top]
     params:
       url: "https://feeds.content.dowjones.io/public/rss/mw_topstories"
 
@@ -327,6 +339,7 @@ sources:
     bias: financial_press
     rate_limit_rpm: 6
     enabled: true
+    fallbacks: [marketwatch, wsj_markets]
     params:
       url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"
 
@@ -362,6 +375,10 @@ sources:
     enabled: true
     params:
       url: "https://asia.nikkei.com/rss/feed/nar"
+      # 2026-08-27 诊断：RDF feed 50 条但无任何日期字段 → 窗口过滤全灭。
+      # 回退方案：date_fallback 以抓取时刻作 PIT 锚（raw.date_anchor=fetched 可审计）；
+      # item_key 不含时间戳保证幂等。
+      date_fallback: true
 
   - source_id: japan_times
     adapter: rss
@@ -426,6 +443,264 @@ sources:
       url_path: "url"
       published_path: "created_at"
 
+  # ==================== Phase 1.5b 覆盖审计新增（2026-08-27 wave4 探测存活） ====================
+
+  # ---- L1 官方统计 ----
+  # BEA feed 最新条目 ~28h（发布周期稀疏）→ window_days=3 保证命中
+  - source_id: bea_rss
+    adapter: rss
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official_statistics
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://apps.bea.gov/rss/rss.xml"
+      window_days: 3
+
+  # ---- L2 官方媒体/主流媒体 ----
+  # china_daily_world：feed 仍返回 100 条但日期冻结在 2017-12（假 feed）→ 停用留档
+  - source_id: china_daily_world
+    adapter: rss
+    tier: L2
+    language: en
+    credibility_prior: 0.80
+    bias: state_media
+    rate_limit_rpm: 6
+    enabled: false
+    params:
+      url: "https://www.chinadaily.com.cn/rss/world_rss.xml"
+
+  # globaltimes 最新 ~113h → window_days=7
+  - source_id: globaltimes
+    adapter: rss
+    tier: L2
+    language: en
+    credibility_prior: 0.65
+    bias: state_media
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.globaltimes.cn/rss/outbrain.xml"
+      window_days: 7
+
+  - source_id: tass
+    adapter: rss
+    tier: L2
+    language: en
+    credibility_prior: 0.65
+    bias: state_media
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://tass.com/rss/v2.xml"
+
+  - source_id: cbc_biz
+    adapter: rss
+    tier: L2
+    language: en
+    credibility_prior: 0.80
+    bias: western_mainstream
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.cbc.ca/webfeed/rss/rss-business"
+
+  - source_id: abc_au
+    adapter: rss
+    tier: L2
+    language: en
+    credibility_prior: 0.80
+    bias: western_mainstream
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.abc.net.au/news/feed/51120/rss.xml"
+
+  # ---- L3 财经媒体（全球补面：美/印/加/澳/德/法/意）----
+  - source_id: ft_markets
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.85
+    bias: financial_press
+    rate_limit_rpm: 6
+    paywall: true
+    enabled: true
+    fallbacks: [wsj_markets]
+    params:
+      url: "https://www.ft.com/rss/markets"
+
+  - source_id: fortune
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.70
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://fortune.com/feed/"
+
+  - source_id: seekingalpha
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.60
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://seekingalpha.com/feed.xml"
+
+  - source_id: investing_com
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.65
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.investing.com/rss/news.rss"
+
+  - source_id: fxstreet
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.60
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.fxstreet.com/rss/news"
+
+  - source_id: oilprice
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.55
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://oilprice.com/rss/main"
+
+  - source_id: biz_standard
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.70
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    fallbacks: [econ_times, livemint]
+    params:
+      url: "https://www.business-standard.com/rss/markets-106.rss"
+
+  # moneycontrol：feed 日期冻结在 2024-04（假 feed）→ 停用留档
+  - source_id: moneycontrol
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.65
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: false
+    params:
+      url: "https://www.moneycontrol.com/rss/latestnews.xml"
+
+  - source_id: globe_mail
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.80
+    bias: financial_press
+    rate_limit_rpm: 6
+    paywall: true
+    enabled: true
+    fallbacks: [cbc_biz]
+    params:
+      url: "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/business/?outputType=xml"
+
+  - source_id: faz_wirt
+    adapter: rss
+    tier: L3
+    language: de
+    credibility_prior: 0.80
+    bias: western_mainstream
+    rate_limit_rpm: 6
+    enabled: true
+    fallbacks: [handelsblatt]
+    params:
+      url: "https://www.faz.net/rss/aktuell/wirtschaft/"
+
+  - source_id: handelsblatt
+    adapter: rss
+    tier: L3
+    language: de
+    credibility_prior: 0.75
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    fallbacks: [faz_wirt]
+    params:
+      url: "https://www.handelsblatt.com/contentexport/feed/wirtschaft"
+
+  - source_id: lemonde_eco
+    adapter: rss
+    tier: L3
+    language: fr
+    credibility_prior: 0.80
+    bias: western_mainstream
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.lemonde.fr/economie/rss_full.xml"
+
+  - source_id: il_sole
+    adapter: rss
+    tier: L3
+    language: it
+    credibility_prior: 0.75
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    fallbacks: [ansa_eco]
+    params:
+      url: "https://www.ilsole24ore.com/rss/economia.xml"
+
+  - source_id: ansa_eco
+    adapter: rss
+    tier: L3
+    language: it
+    credibility_prior: 0.75
+    bias: western_mainstream
+    rate_limit_rpm: 6
+    enabled: true
+    fallbacks: [il_sole]
+    params:
+      url: "https://www.ansa.it/sito/notizie/economia/economia_rss.xml"
+
+  # ---- L4 社媒（讨论度轴 D；StockTwits 公开 JSON 已验证 30 msgs/请求）----
+  - source_id: stocktwits_spx
+    adapter: json_api
+    tier: L4
+    language: en
+    credibility_prior: 0.45
+    bias: social_media
+    rate_limit_rpm: 10
+    enabled: true
+    params:
+      url: "https://api.stocktwits.com/api/2/streams/symbol/SPX.json"
+      items_path: "messages"
+      external_id_path: "id"
+      title_path: "body"
+      body_path: "body"
+      published_path: "created_at"
+      article_type: opinion
+
   # ---- 登录门源（默认停用；用户导出 cookies 后改 enabled: true）----
   - source_id: reddit_cdp
     adapter: reddit_cdp
@@ -440,14 +715,18 @@ sources:
       subreddits: [Economics, wallstreetbets, investing]
       limit: 25
 
-  # ==================== 死源台账（2026-08-27 全球探测，留档防重复踩坑） ====================
+  # ==================== 死源台账（2026-08-27 全球探测 wave4 更新，留档防重复踩坑） ====================
   # scmp：直连 SSL EOF + 代理 ConnectError（双重失败）
   # imf：403 Access Denied（UA/地域双重拒绝）
-  # boj：英文站无 RSS，HTML 列表 343KB（HtmlAdapter 候选，待 agent 维护 selector）
-  # bundesbank/eurostat/bis：RSS 路径 404（需逐站重寻）
-  # stats.gov.cn / csrc / treasury.gov / nyfed：列表页 JS 渲染，静态抓取 0 命中
-  #   （Phase 6 playwright 壳接管；HtmlAdapter 机制已就绪+离线测试保底）
+  # boj：whatsnew 路径重构 404（en 首页 200 但列表页失效；Phase 6 playwright 壳重探）
+  # bundesbank/eurostat/bis/ons/worldbank：RSS 路径 404
+  # us_treasury：/news/press-releases 无服务端渲染条目（JS/极简 DOM）；feed 路径 404
+  # rbi：列表页 JS 渲染 0 命中；snb/rbnz/bok 404/403
+  # stats.gov.cn / csrc / nyfed：列表页 JS 渲染，静态抓取 0 命中（Phase 6 playwright 壳接管）
   # jin10 502；weibo 热搜 403（cookie 结构复杂待 CDP 扩展）；pbc.gov.cn WAF
   # people_politics（RSS 停更 15 个月）/people_economy(404)/yicai/36kr（HTML 假 feed）
   # jiemian/stcn/cnstock/gelonghui/china5e（404/403——主流中文媒体 RSS 生态已死）
-  # AP 401；BLS 403；Reuters RSS 404；Nikkei 日文站 404（英文站已入）
+  # xinhua_en/cgtn 404；axios/les_echos 403；barrons_dj 404；mastodon trends 非财经可用
+  # china_daily_world：HTTP 200 但 feed 日期冻结 2017-12（假 feed，停用）
+  # moneycontrol：HTTP 200 但 feed 日期冻结 2024-04（假 feed，停用）
+  # AP 401；BLS 403；Reuters RSS 404；Nikkei 日文站 404（英文站已入+date_fallback）
