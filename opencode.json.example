@@ -1,0 +1,29 @@
+// OH!News 项目级 opencode 配置模板（蓝图 §15）。
+// 启用步骤：
+//   1. `opencode models` 核对 zhipu/openrouter/deepseek 的确切 model ID；
+//   2. 复制本文件为项目根 opencode.json，改掉不一致的 ID；
+//   3. 项目级配置向上遍历合并（project 覆盖 global），无需改动全局配置。
+//
+// 三级模型调度（裁决 E 默认路由；任意供应商模型可换入任意层级）：
+//   io        = DeepSeek V4 Flash        —— 批量 I/O / 确定性输出 / 格式化
+//   execute   = GLM-5.3-Flash (OpenRouter) —— 分析步骤 / 常规编码 / 例程抽取
+//   strategic = GLM-5.3 (Zhipu)          —— 战略构思 / 综合推理 / 最复杂编码
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "zhipu/glm-5.3",
+  "small_model": "deepseek/deepseek-v4-flash",
+  "agent": {
+    "plan": { "model": "zhipu/glm-5.3" },
+    "architect": { "model": "zhipu/glm-5.3" },
+    "code-reviewer": { "model": "zhipu/glm-5.3" },
+    "security-reviewer": { "model": "zhipu/glm-5.3" },
+    "agent-evaluator": { "model": "zhipu/glm-5.3" },
+    "general": { "model": "openrouter/glm-5.3-flash" },
+    "build-error-resolver": { "model": "openrouter/glm-5.3-flash" },
+    "debugger": { "model": "openrouter/glm-5.3-flash" },
+    "tdd-guide": { "model": "openrouter/glm-5.3-flash" },
+    "explore": { "model": "deepseek/deepseek-v4-flash" },
+    "docs-lookup": { "model": "deepseek/deepseek-v4-flash" },
+    "doc-updater": { "model": "deepseek/deepseek-v4-flash" }
+  }
+}

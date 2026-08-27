@@ -1,5 +1,8 @@
-# opencode 会话与凭据（specify 安全提示：防凭据泄漏）
-.opencode/
+# opencode：会话日志与本地凭据忽略；commands（speckit 工作流）随库版本化
+.opencode/logs/
+.opencode/*
+!.opencode/commands/
+.opencode/auth*
 
 # 数据与运行期产物
 data/

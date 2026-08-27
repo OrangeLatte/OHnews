@@ -1,0 +1,12 @@
+# 本地私有配置示例 —— 永不提交（.gitignore 已含 sources.bpc.yaml）
+#
+# 蓝图裁决 G（代码与数据分离）：仓库只包含"接受配置的抓取壳"；
+# 绕过规则 / 站点清单一律由本地自备、责任自担，公开仓库零绕过特征。
+#
+# 用法：复制为 config/sources.bpc.yaml 并按需填写；缺失时抓取壳静默降级为仅合法源。
+sources: []
+#  - source_id: example-paywalled
+#    enabled: false
+#    needs_browser: true
+#    login_profile: local-only
+#    notes: 仅为字段示意；实际站点清单与规则不写入任何版本库

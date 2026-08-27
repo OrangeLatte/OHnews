@@ -1,50 +1,18 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# OH!News 项目宪法 v1.0
 
-## Core Principles
+> 完整架构依据：`docs/BLUEPRINT.md`（蓝图 v2，五专家辩论裁决 A-H）。
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+## 原则
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+1. **Spec-First**：任何功能先过 `/speckit.specify → clarify → plan → tasks`，无 spec 不实现。
+2. **Idempotent**：采集与分析全链路幂等——双 hash（url_hash + content_hash）+ item_key 唯一主键；重复执行零副作用。
+3. **Compliance-First**：非商业用途；公开仓库零 zlibrary/BPC 关联；敏感规则仅本地注入（`config/sources.bpc.yaml`，gitignored）；尊重 robots 与限速；绝不静默换源。
+4. **Verification**：三效度分离——测量效度（ρ≥0.8 硬门禁）/ 方向性（软门禁）/ 认知价值（UX）；NDI 措辞纪律：**永不使用"预测器/择时"**。
+5. **Modularity**：`packages/*` 单向依赖；oh-contracts 零内部依赖、零 IO（CI purity 测试强制）；模块 = commit 边界（conventional commits + scope）。
+6. **Non-Commercial**：输出为分析与风险信号，不构成投资建议，不输出买卖指令。
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+## 工程约定
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
-
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
-
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
-
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
-
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
-
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
-
-## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
-
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
-
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+- Python 工具链：**uv workspace**（本仓库唯一工具链）；QA Gate = `uv run ruff check packages && uv run ruff format packages && uv run pytest -v`。
+- PIT 纪律：一切指标只用 t-1 及更早信息。
+- 敏感测试 marker `sensitive` 默认跳过。
