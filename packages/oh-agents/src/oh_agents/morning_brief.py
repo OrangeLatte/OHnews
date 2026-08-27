@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from oh_contracts.schemas import NDIPoint
+from oh_contracts.text import strip_html
 from oh_storage.protocols import BronzeWriter, GoldReader, SilverStore
 
 EVIDENCE_COUNT = 3
@@ -68,7 +69,7 @@ def _evidence_for(
             continue
         source_id, quote_src = hit
         body = str(rec.normalized.get("body") or "")
-        quote = (body or quote_src)[:120].replace("\n", " ")
+        quote = strip_html(body or quote_src)[:120].replace("\n", " ")
         out.append(f"[{source_id}] {quote}")
         if len(out) >= EVIDENCE_COUNT:
             break
