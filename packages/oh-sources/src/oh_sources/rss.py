@@ -36,7 +36,9 @@ class RssAdapter(SourceAdapter):
         self._article_type = article_type
 
     async def fetch(self, since: datetime, until: datetime) -> list[Draft]:
-        async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}) as client:
+        async with httpx.AsyncClient(
+            headers={"User-Agent": USER_AGENT}, follow_redirects=True
+        ) as client:
             text = await self.get_text(client, self._url)
         feed = feedparser.parse(text)
         return self.entries_to_drafts(feed.get("entries", []), since, until)

@@ -89,6 +89,8 @@ class SourceAdapter(ABC):
         url: str,
         *,
         params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+        encoding: str | None = None,
     ) -> str:
         """限速 GET 文本；非 2xx 抛 httpx.HTTPStatusError（由 runner 退避重试）。"""
         interval = 60.0 / self.meta.rate_limit_rpm
@@ -96,6 +98,21 @@ class SourceAdapter(ABC):
         if wait > 0:
             await asyncio.sleep(wait)
         self._last_request = time.monotonic()
-        resp = await client.get(url, params=params, timeout=DEFAULT_TIMEOUT_S)
+        resp = await client.get(url, params=params, headers=headers, timeout=DEFAULT_TIMEOUT_S)
         resp.raise_for_status()
+        if encoding:
+            return resp.content.decode(encoding, errors="replace")
         return resp.text
+
+    async def get_json(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        """限速 GET 并解析 JSON（get_text 之上的便捷层）。"""
+        import json
+
+        return json.loads(await self.get_text(client, url, params=params, headers=headers))
