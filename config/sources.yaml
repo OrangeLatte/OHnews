@@ -1,20 +1,17 @@
-# OH!News 采集源注册表（Phase 1：中文 within-language + 宏观基线回填）
+# OH!News 采集源注册表（Phase 1.5：全球主要经济体全覆盖）
 #
 # 纪律（蓝图 §6 图3）：
 # - credibility_prior 为信源先验（裁决 H SourcePrior 输入）
 # - GDELT 仅覆盖度信号，不作 tone/frame（研究员/数据科学家共识）
 # - rate_limit_rpm 令牌桶限速；needs_browser/paywall=true 的源走敏感壳（裁决 G）
-# - URL 存活以首次真实运行验证为准；失败计入 source_fetch_logs → 自动降级
-version: 1
+# - enabled=false 的源零开销（不建适配器、不调度、不发请求）——用户选择性激活
+# - URL 存活以 2026-08-27 全球探测为准；失败计入 source_fetch_logs → 自动降级
+version: 2
 
 sources:
-  # ---- 2026-08-27 首次真实运行存活验证（详见 git log fix commit）----
-  # 已淘汰（健康度台账留档）：people_politics（RSS 停更 15 个月）、
-  # people_economy（404）、yicai/36kr（返回 HTML 假 feed，0 entries）、
-  # jiemian/stcn/cnstock/gelonghui/china5e（404/403——主流中文媒体 RSS 生态已死）。
-  # 中文源扩展路径：RSSHub 自建（Phase 6）或 API 型适配器（Phase 2）。
+  # ==================== 中文（within-language Phase 1 主战场） ====================
 
-  # ---- L3 财经媒体（中文，市场化）——已验证 62 条/2d ----
+  # ---- L3 财经媒体（市场化）----
   - source_id: wallstreetcn
     adapter: rss
     tier: L3
@@ -22,10 +19,105 @@ sources:
     credibility_prior: 0.75
     bias: financial_press
     rate_limit_rpm: 10
+    enabled: true
     params:
       url: "https://dedicated.wallstreetcn.com/rss.xml"
 
-  # ---- GDELT（回填主通道；仅覆盖度信号；代理间歇可达→健康度自动处置）----
+  - source_id: wscn_lives
+    adapter: json_api
+    tier: L3
+    language: zh
+    credibility_prior: 0.75
+    bias: financial_press
+    rate_limit_rpm: 10
+    enabled: true
+    params:
+      url: "https://api-one-wscn.awtmt.com/apiv1/content/lives"
+      params: {channel: "global-channel", limit: "40"}
+      items_path: "data.items"
+      external_id_path: "display_time"
+      title_path: "content_text"
+      body_path: "content_text"
+      published_path: "display_time"
+
+  - source_id: sina_7x24
+    adapter: json_api
+    tier: L3
+    language: zh
+    credibility_prior: 0.70
+    bias: financial_press
+    rate_limit_rpm: 10
+    enabled: true
+    params:
+      url: "https://zhibo.sina.com.cn/api/zhibo/feed"
+      params: {page: "1", page_size: "40", zhibo_id: "152", tag_id: "0", dire: "f", dpc: "1"}
+      items_path: "result.data.feed.list"
+      external_id_path: "id"
+      title_path: "rich_text"
+      body_path: "rich_text"
+      published_path: "create_time"
+      date_formats: ["%Y-%m-%d %H:%M:%S"]
+      tz_offset_hours: 8
+
+  - source_id: eastmoney_724
+    adapter: json_api
+    tier: L3
+    language: zh
+    credibility_prior: 0.70
+    bias: financial_press
+    rate_limit_rpm: 10
+    enabled: true
+    params:
+      url: "https://np-listapi.eastmoney.com/comm/web/getFastNewsList"
+      params: {client: "web", biz: "web_724", fastColumn: "102", sortEnd: "", pageSize: "40", req_trace: "{now_ms}"}
+      items_path: "data.fastNewsList"
+      external_id_path: "code"
+      title_path: "title"
+      body_path: "summary"
+      published_path: "showTime"
+      date_formats: ["%Y-%m-%d %H:%M:%S"]
+      tz_offset_hours: 8
+
+  # ---- L4 社媒（讨论度轴 D）----
+  - source_id: zhihu_hotlist
+    adapter: json_api
+    tier: L4
+    language: zh
+    credibility_prior: 0.45
+    bias: social_media
+    rate_limit_rpm: 10
+    enabled: true
+    params:
+      url: "https://api.zhihu.com/topstory/hot-list"
+      params: {limit: "40"}
+      items_path: "data"
+      external_id_path: "target.id"
+      title_path: "target.title"
+      body_path: "target.excerpt"
+      published_path: "target.created"
+      url_template: "https://www.zhihu.com/question/{external_id}"
+      article_type: opinion
+
+  # ---- L1 官方（政策库检索 API）----
+  - source_id: gov_policy
+    adapter: json_api
+    tier: L1
+    language: zh
+    credibility_prior: 0.95
+    bias: state_media
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://sousuo.www.gov.cn/search-gov/data"
+      params: {t: "zhengcelibrary_gw", q: "货币政策", timetype: "timeqb", sort: "pubtime", sortType: "1", searchfield: "title", p: "1", n: "40"}
+      items_path: "searchVO.listVO"
+      external_id_path: "id"
+      title_path: "title"
+      body_path: "summary"
+      published_path: "ptime"
+      # 检索词 v1 固定"货币政策"；Phase 2 换词轮询/多词注册
+
+  # ---- L2 聚合（覆盖度信号）----
   - source_id: gdelt_zh
     adapter: gdelt
     tier: L2
@@ -33,11 +125,12 @@ sources:
     credibility_prior: 0.60
     bias: mixed_aggregate
     rate_limit_rpm: 6
+    enabled: true
     params:
       query: "sourcelang:chinese (央行 OR 货币政策 OR 利率 OR 中美 OR 关税)"
       max_records: 75
 
-  # ---- FRED（宏观基线快照，L1 官方统计）----
+  # ---- L1 官方统计（宏观基线快照）----
   - source_id: fred_cpiaucsl
     adapter: fred
     tier: L1
@@ -45,6 +138,7 @@ sources:
     credibility_prior: 0.95
     bias: official_statistics
     rate_limit_rpm: 6
+    enabled: true
     params: {series_id: CPIAUCSL}
 
   - source_id: fred_fedfunds
@@ -54,6 +148,7 @@ sources:
     credibility_prior: 0.95
     bias: official_statistics
     rate_limit_rpm: 6
+    enabled: true
     params: {series_id: FEDFUNDS}
 
   - source_id: fred_dgs10
@@ -63,6 +158,7 @@ sources:
     credibility_prior: 0.95
     bias: official_statistics
     rate_limit_rpm: 6
+    enabled: true
     params: {series_id: DGS10}
 
   - source_id: fred_unrate
@@ -72,4 +168,286 @@ sources:
     credibility_prior: 0.95
     bias: official_statistics
     rate_limit_rpm: 6
+    enabled: true
     params: {series_id: UNRATE}
+
+  # ==================== 英文/国际（Phase 6 within-language 预铺） ====================
+
+  # ---- L1 央行/财政部/官方 ----
+  - source_id: fed_press
+    adapter: rss
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.federalreserve.gov/feeds/press_all.xml"
+
+  - source_id: ecb_press
+    adapter: rss
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.ecb.europa.eu/rss/press.html"
+
+  - source_id: boe_news
+    adapter: rss
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.bankofengland.co.uk/rss/news"
+
+  - source_id: uk_hmt
+    adapter: rss
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.gov.uk/government/organisations/hm-treasury.atom"
+
+  - source_id: boc_ca
+    adapter: rss
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.bankofcanada.ca/feed/"
+
+  - source_id: rba_au
+    adapter: rss
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.rba.gov.au/rss/rss-cb-media-releases.xml"
+
+  # ---- L2 通讯社/国际媒体 ----
+  - source_id: bbc_world
+    adapter: rss
+    tier: L2
+    language: en
+    credibility_prior: 0.85
+    bias: western_mainstream
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://feeds.bbci.co.uk/news/world/rss.xml"
+
+  - source_id: bbc_business
+    adapter: rss
+    tier: L2
+    language: en
+    credibility_prior: 0.85
+    bias: western_mainstream
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://feeds.bbci.co.uk/news/business/rss.xml"
+
+  - source_id: guardian_world
+    adapter: rss
+    tier: L2
+    language: en
+    credibility_prior: 0.80
+    bias: western_mainstream
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.theguardian.com/world/rss"
+
+  - source_id: aljazeera
+    adapter: rss
+    tier: L2
+    language: en
+    credibility_prior: 0.75
+    bias: international
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.aljazeera.com/xml/rss/all.xml"
+
+  - source_id: dw_world
+    adapter: rss
+    tier: L2
+    language: en
+    credibility_prior: 0.75
+    bias: western_mainstream
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://rss.dw.com/rdf/rss-en-world"
+
+  # ---- L3 财经/区域媒体 ----
+  - source_id: wsj_markets
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.80
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain"
+
+  - source_id: marketwatch
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.75
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://feeds.content.dowjones.io/public/rss/mw_topstories"
+
+  - source_id: cnbc_top
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.75
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"
+
+  - source_id: yahoo_finance
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.65
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://finance.yahoo.com/news/rssindex"
+
+  - source_id: coindesk
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.60
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.coindesk.com/arc/outboundfeeds/rss/"
+
+  - source_id: nikkei_asia
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.80
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://asia.nikkei.com/rss/feed/nar"
+
+  - source_id: japan_times
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.70
+    bias: western_mainstream
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.japantimes.co.jp/feed/"
+
+  - source_id: yonhap_en
+    adapter: rss
+    tier: L2
+    language: en
+    credibility_prior: 0.80
+    bias: international
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://en.yna.co.kr/RSS/news.xml"
+
+  - source_id: econ_times
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.70
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://economictimes.indiatimes.com/rssfeedsdefault.cms"
+
+  - source_id: livemint
+    adapter: rss
+    tier: L3
+    language: en
+    credibility_prior: 0.70
+    bias: financial_press
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      url: "https://www.livemint.com/rss/news"
+
+  # ---- L4 社媒/聚合 ----
+  - source_id: hn_algolia
+    adapter: json_api
+    tier: L4
+    language: en
+    credibility_prior: 0.50
+    bias: social_media
+    rate_limit_rpm: 10
+    enabled: true
+    params:
+      url: "https://hn.algolia.com/api/v1/search_by_date"
+      params: {query: "federal reserve", tags: "story", hitsPerPage: "30"}
+      items_path: "hits"
+      external_id_path: "objectID"
+      title_path: "title"
+      body_path: "story_text"
+      url_path: "url"
+      published_path: "created_at"
+
+  # ---- 登录门源（默认停用；用户导出 cookies 后改 enabled: true）----
+  - source_id: reddit_cdp
+    adapter: reddit_cdp
+    tier: L4
+    language: en
+    credibility_prior: 0.40
+    bias: social_media
+    rate_limit_rpm: 10
+    needs_browser: true
+    enabled: false
+    params:
+      subreddits: [Economics, wallstreetbets, investing]
+      limit: 25
+
+  # ==================== 死源台账（2026-08-27 全球探测，留档防重复踩坑） ====================
+  # scmp：直连 SSL EOF + 代理 ConnectError（双重失败）
+  # imf：403 Access Denied（UA/地域双重拒绝）
+  # boj：英文站无 RSS，HTML 列表 343KB（HtmlAdapter 候选，待 agent 维护 selector）
+  # bundesbank/eurostat/bis：RSS 路径 404（需逐站重寻）
+  # stats.gov.cn / csrc / treasury.gov / nyfed：列表页 JS 渲染，静态抓取 0 命中
+  #   （Phase 6 playwright 壳接管；HtmlAdapter 机制已就绪+离线测试保底）
+  # jin10 502；weibo 热搜 403（cookie 结构复杂待 CDP 扩展）；pbc.gov.cn WAF
+  # people_politics（RSS 停更 15 个月）/people_economy(404)/yicai/36kr（HTML 假 feed）
+  # jiemian/stcn/cnstock/gelonghui/china5e（404/403——主流中文媒体 RSS 生态已死）
+  # AP 401；BLS 403；Reuters RSS 404；Nikkei 日文站 404（英文站已入）
