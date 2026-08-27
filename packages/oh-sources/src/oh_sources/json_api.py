@@ -28,9 +28,10 @@ MIN_BODY_CHARS = 8
 
 
 def strip_html(text: str | None) -> str:
-    """剥掉 JSON 内嵌 HTML 标签与常见实体（gov.cn <em>、wscn <p> 等）。"""
-    cleaned = _TAG_RE.sub(" ", text or "")
-    return cleaned.replace("&nbsp;", " ").replace("&amp;", "&").strip()
+    """剥掉 JSON 内嵌 HTML（re-export 自 oh-contracts.text，兼容旧 import 路径）。"""
+    from oh_contracts.text import strip_html as _strip
+
+    return _strip(text)
 
 
 def dot_get(obj: Any, path: str, default: Any = None) -> Any:

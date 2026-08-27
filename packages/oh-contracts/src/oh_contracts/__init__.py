@@ -44,8 +44,10 @@ from oh_contracts.schemas import (
     SSEMessage,
     StanceRow,
 )
+from oh_contracts.text import strip_html
 
 __all__ = [
+    "strip_html",
     "BOOTSTRAP_RESAMPLES",
     "CONF_TAU_RULE",
     "CONF_TAU_SMALL",
