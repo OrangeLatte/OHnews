@@ -122,3 +122,19 @@ def test_dev_logs_empty_dir(tmp_path: Path) -> None:
     c = TestClient(app)
     r = c.get("/api/dev/logs").json()
     assert r["files"] == []  # 默认 logs_dir 不存在 → 空列表不报错
+
+
+def test_alert_endpoints(client: TestClient) -> None:
+    r = client.post("/api/alerts/rules", json={"entity_id": "fed", "percentile": 0.9})
+    assert r.status_code == 200 and r.json()["rule_id"]
+    rules = client.get("/api/alerts/rules").json()
+    assert len(rules) == 1 and rules[0]["entity_id"] == "fed"
+    # 历史样本不足 → 样本门弃权，0 触发但不报错
+    chk = client.post("/api/alerts/check").json()
+    assert chk["triggered"] == 0
+    assert client.get("/api/alerts/hits").json() == []
+    bad = client.post("/api/alerts/rules", json={"entity_id": "fed", "percentile": 1.5})
+    assert bad.status_code == 422
+    rid = rules[0]["rule_id"]
+    assert client.delete(f"/api/alerts/rules/{rid}").json()["deleted"] == "true"
+    assert client.delete(f"/api/alerts/rules/{rid}").status_code == 404

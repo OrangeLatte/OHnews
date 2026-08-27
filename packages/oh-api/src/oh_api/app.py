@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -17,10 +19,12 @@ from typing import Any
 import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from oh_agents.alerts import check_alerts
 from oh_agents.decision_log import DecisionLog
 from oh_agents.morning_brief import build_brief
 from oh_agents.research import run_research
 from oh_contracts.enums import SourceTier
+from oh_contracts.text import strip_html
 from oh_pipeline.entities import EntityRegistry
 from oh_storage.bronze_parquet import ParquetBronzeWriter
 from oh_storage.connection import connect
@@ -53,6 +57,7 @@ class AppPaths:
     root: Path = Path("data")
     sources_yaml: Path = Path("config/sources.yaml")
     logs_dir: Path = Path(".opencode/logs/opencode")
+    alerts_db: Path | None = None  # None → root/alerts.sqlite（跟随测试 tmp_path 隔离）
     now_fn: Any = None  # () -> datetime；None = datetime.now(UTC)
 
 
@@ -72,31 +77,37 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
     paths = paths or AppPaths()
     app = FastAPI(title="OH!News API", version="0.1.0")
 
-    # 惰性单例（lifespan 不持有 IO）
-    state: dict[str, Any] = {}
+    # 惰性单例（lifespan 不持有 IO）。
+    # thread-local：FastAPI sync 端点在线程池执行，sqlite 连接禁止跨线程复用
+    # （ProgrammingError）；每线程各建一套实例（DDL 幂等，WAL 多连接并发读安全）。
+    state: dict[tuple[int, str], Any] = {}
+
+    def _lazy(name: str, factory: Callable[[], Any]) -> Any:
+        key = (threading.get_ident(), name)
+        if key not in state:
+            state[key] = factory()
+        return state[key]
 
     def _now() -> datetime:
         return paths.now_fn() if paths.now_fn else datetime.now(UTC)
 
     def _store() -> SqliteStore:
-        if "store" not in state:
-            state["store"] = SqliteStore(connect(paths.root / "silver.sqlite"))
-        return state["store"]  # type: ignore[return-value]
+        return _lazy("store", lambda: SqliteStore(connect(paths.root / "silver.sqlite")))
 
     def _bronze() -> ParquetBronzeWriter:
-        if "bronze" not in state:
-            state["bronze"] = ParquetBronzeWriter(paths.root / "bronze")
-        return state["bronze"]  # type: ignore[return-value]
+        return _lazy("bronze", lambda: ParquetBronzeWriter(paths.root / "bronze"))
 
     def _decisions() -> DecisionLog:
-        if "decisions" not in state:
-            state["decisions"] = DecisionLog(paths.root / "decisions.sqlite")
-        return state["decisions"]  # type: ignore[return-value]
+        return _lazy("decisions", lambda: DecisionLog(paths.root / "decisions.sqlite"))
 
     def _tier_map() -> dict[str, SourceTier]:
-        if "tier_map" not in state:
-            state["tier_map"] = _load_tier_map(paths.sources_yaml)
-        return state["tier_map"]  # type: ignore[return-value]
+        return _lazy("tier_map", lambda: _load_tier_map(paths.sources_yaml))
+
+    def _alerts() -> Any:
+        from oh_agents.alerts import AlertStore
+
+        db = paths.alerts_db or (paths.root / "alerts.sqlite")
+        return _lazy("alerts", lambda: AlertStore(db))
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -167,8 +178,8 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             raise HTTPException(404, "no stances for event")
         quotes: dict[str, str] = {}
         for rec in _bronze().iter_records():
-            quotes[rec.item_key] = str(
-                rec.normalized.get("body") or rec.normalized.get("title") or ""
+            quotes[rec.item_key] = strip_html(
+                str(rec.normalized.get("body") or rec.normalized.get("title") or "")
             )
         return [
             {
@@ -290,6 +301,77 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             lines = f.readlines()
         tail = [ln.rstrip("\n") for ln in lines[-200:]]
         return {"file": name, "lines": tail}
+
+    # --- 预警订阅（Phase 6：规则阈值触发，NDI 历史分位数，同实体每日 1 次） ---
+
+    @app.get("/api/alerts/rules")
+    def alert_rules() -> list[dict[str, Any]]:
+        return [
+            {
+                "rule_id": r.rule_id,
+                "entity_id": r.entity_id,
+                "percentile": r.percentile,
+                "window_days": r.window_days,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in _alerts().list_rules()
+        ]
+
+    @app.post("/api/alerts/rules")
+    def add_alert_rule(body: dict[str, Any]) -> dict[str, Any]:
+        entity_id = str(body.get("entity_id", "")).strip()
+        percentile = float(body.get("percentile", 0.9))
+        window_days = int(body.get("window_days", 90))
+        if not entity_id:
+            raise HTTPException(422, "entity_id required")
+        import uuid
+
+        try:
+            r = _alerts().add_rule(
+                uuid.uuid4().hex[:8], entity_id, percentile, window_days=window_days
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        return {"rule_id": r.rule_id}
+
+    @app.delete("/api/alerts/rules/{rule_id}")
+    def delete_alert_rule(rule_id: str) -> dict[str, str]:
+        if not _alerts().remove_rule(rule_id):
+            raise HTTPException(404, "rule not found")
+        return {"rule_id": rule_id, "deleted": "true"}
+
+    @app.get("/api/alerts/hits")
+    def alert_hits(limit: int = 50) -> list[dict[str, Any]]:
+        return [
+            {
+                "rule_id": h.rule_id,
+                "entity_id": h.entity_id,
+                "event_id": h.event_id,
+                "event_title": h.event_title,
+                "ndi": h.ndi,
+                "baseline": h.baseline,
+                "triggered_at": h.triggered_at.isoformat(),
+            }
+            for h in _alerts().list_hits(limit)
+        ]
+
+    @app.post("/api/alerts/check")
+    def run_alert_check() -> dict[str, Any]:
+        hits = check_alerts(_store(), _store(), _alerts(), now=_now())
+        return {
+            "triggered": len(hits),
+            "hits": [
+                {
+                    "rule_id": h.rule_id,
+                    "entity_id": h.entity_id,
+                    "event_id": h.event_id,
+                    "event_title": h.event_title,
+                    "ndi": h.ndi,
+                    "baseline": h.baseline,
+                }
+                for h in hits
+            ],
+        }
 
     @app.get("/api/stream")
     async def stream() -> StreamingResponse:
