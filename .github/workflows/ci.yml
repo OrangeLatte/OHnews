@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    name: ${{ matrix.os }} / ${{ matrix.tier }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 三级矩阵（蓝图 §12）：Linux 全量 / macOS 单元+核心集成 / Windows 冒烟
+          - { os: ubuntu-latest, tier: full }
+          - { os: macos-latest, tier: core }
+          - { os: windows-latest, tier: smoke }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync workspace
+        run: uv sync --frozen
+
+      - name: Lint
+        run: |
+          uv run ruff check packages
+          uv run ruff format --check packages
+
+      # sensitive marker 默认排除（pyproject addopts）；浏览器/敏感源用例 Phase 1+ 仅 ubuntu full 跑
+      - name: Tests
+        run: uv run pytest -v
