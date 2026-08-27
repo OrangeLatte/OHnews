@@ -52,6 +52,7 @@ class ModelRouter:
             temperature=0,
             timeout=60,
             max_retries=1,
+            extra_body=spec.extra_body,
         )
 
     def _ensure(self, ref: ModelRef):

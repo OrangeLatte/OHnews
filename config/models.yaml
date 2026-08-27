@@ -13,6 +13,10 @@ providers:
   deepseek:
     base_url: https://api.deepseek.com/v1
     api_key_env: DEEPSEEK_API_KEY
+    # DeepSeek V4 默认思考模式不支持强制 tool_choice，结构化输出须关闭思考
+    extra_body:
+      thinking:
+        type: disabled
     models:
       deepseek-v4-flash:
         context_window: 128000

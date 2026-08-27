@@ -27,12 +27,15 @@ class ModelRef:
 
 @dataclass(frozen=True)
 class ProviderSpec:
-    """供应商：OpenAI 兼容 base_url + 密钥环境变量 + 模型清单。"""
+    """供应商：OpenAI 兼容 base_url + 密钥环境变量 + 模型清单 + extra_body。"""
 
     name: str
     base_url: str | None
     api_key_env: str | None
     models: tuple[str, ...]
+    # 透传 ChatOpenAI extra_body（如 DeepSeek V4 需 {"thinking": {"type": "disabled"}}
+    # 关闭思考模式，否则不支持强制 tool_choice 的 function_calling）
+    extra_body: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,7 @@ def load_llm_config(path: str | Path) -> LLMConfig:
             base_url=spec.get("base_url"),
             api_key_env=spec.get("api_key_env"),
             models=tuple(spec.get("models", {})),
+            extra_body=spec.get("extra_body"),
         )
         for name, spec in raw.get("providers", {}).items()
     }
