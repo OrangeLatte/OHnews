@@ -122,7 +122,11 @@ class NarrativeCard(_Strict):
 
 
 class NDIPoint(_Strict):
-    """Gold 层叙事分歧指数点位（status=abstain 时 ndi/ci 必为 None）。"""
+    """Gold 层叙事分歧指数点位（status=abstain 时 ndi/ci 必为 None）。
+
+    language：within-language 管线标识（裁决 F：Phase 1 zh / Phase 2 en，
+    跨语言二级叠加属 Phase 7 门禁；"all" = 未分语言的历史混算，向后兼容）。
+    """
 
     event_id: str
     ts: datetime
@@ -131,6 +135,7 @@ class NDIPoint(_Strict):
     ci_high: float | None = None
     n_sources: int = Field(ge=0)
     status: Literal["ok", "abstain"]
+    language: str = "all"
 
     def model_post_init(self, __context: Any) -> None:
         if self.status == "abstain" and self.ndi is not None:
