@@ -112,8 +112,9 @@ async def run(args: argparse.Namespace) -> int:
     items = load_seed_texts(seeds_path)
     if args.expand:
         items += expand_from_bronze(ROOT / "data" / "bronze", args.expand)
-    if args.limit:
-        items = items[: args.limit]
+    if args.skip or args.limit:
+        end = args.skip + args.limit if args.limit else None
+        items = items[args.skip : end]
     if not items:
         print("句池为空", file=sys.stderr)
         return 1
@@ -185,6 +186,7 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="离线演练（确定性伪输出）")
     ap.add_argument("--live", action="store_true", help="真实调用（需 API keys）")
     ap.add_argument("--limit", type=int, default=0, help="限制标注条数（0=全部）")
+    ap.add_argument("--skip", type=int, default=0, help="跳过前 N 条（分批断点跑）")
     ap.add_argument("--expand", type=int, default=0, help="从 Bronze 扩充句子数")
     ap.add_argument("--out", default="config/gold_set/annotated_zh.jsonl")
     args = ap.parse_args()
