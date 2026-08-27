@@ -339,10 +339,18 @@ async def _plan_batch(state: AnalysisState) -> dict[str, Any]:
 
 
 def _fanout_events(state: AnalysisState) -> list[Send]:
-    now = state.get("now") or datetime.now(UTC).isoformat()
-    return [
-        Send("event_pipeline", {"event": ev, "as_of": now}) for ev in state.get("events_input", [])
-    ]
+    default_now = state.get("now") or datetime.now(UTC).isoformat()
+    sends: list[Send] = []
+    for ev in state.get("events_input", []):
+        raw = ev.get("as_of")
+        if isinstance(raw, datetime):
+            as_of = raw.isoformat()
+        elif raw:
+            as_of = str(raw)
+        else:
+            as_of = default_now
+        sends.append(Send("event_pipeline", {"event": ev, "as_of": as_of}))
+    return sends
 
 
 def build_analysis_graph(deps: GraphDeps):

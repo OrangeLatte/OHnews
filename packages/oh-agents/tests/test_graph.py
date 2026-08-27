@@ -75,6 +75,28 @@ def test_pit_future_articles_ignored(tmp_path) -> None:
     assert first["ndi_points"][0].ndi == second["ndi_points"][0].ndi
 
 
+def test_fanout_uses_event_own_asof(tmp_path) -> None:
+    """Send 并行时各事件用自身 as_of：早事件不得看到晚事件窗口的文章。
+
+    回归：_fanout_events 曾把 state['now'] 传给所有事件，导致所有事件共享同一
+    滚动窗口——同一文章 stance 重复计入多个事件（PIT 违规 + NDI 跨日同值）。
+    """
+    from datetime import timedelta
+
+    now = make_now()
+    day1 = now - timedelta(days=1)
+    bronze = ParquetBronzeWriter(tmp_path / "bronze")
+    store = SqliteStore(connect(tmp_path / "s.sqlite"))
+    ev1 = seed_event(bronze, store, "E01", day1)
+    ev2 = seed_event(bronze, store, "E02", now)
+    _invoke(_deps(bronze, store), [ev1, ev2], now)
+    k1 = {r.item_key for r in store.stances_asof(now) if r.event_id == "E01"}
+    k2 = {r.item_key for r in store.stances_asof(now) if r.event_id == "E02"}
+    assert k1, "早事件应有自己窗口内的 stance 行"
+    assert k2, "晚事件应有自己窗口内的 stance 行"
+    assert not (k1 & k2), "两事件文章窗口不得重叠（PIT）"
+
+
 def test_rerun_idempotent(tmp_path) -> None:
     now = make_now()
     bronze = ParquetBronzeWriter(tmp_path / "bronze")
