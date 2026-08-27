@@ -1,0 +1,27 @@
+# opencode 会话与凭据（specify 安全提示：防凭据泄漏）
+.opencode/
+
+# 数据与运行期产物
+data/
+*.db
+*.sqlite3
+*.log
+.env
+.env.*
+sources.bpc.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+
+# OS
+.DS_Store
+Thumbs.db
