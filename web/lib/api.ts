@@ -51,6 +51,24 @@ export type StatusInfo = {
 
 export type LogFile = { file: string; mtime: string; size: number };
 
+export type AlertRule = {
+  rule_id: string;
+  entity_id: string;
+  percentile: number;
+  window_days: number;
+  created_at: string;
+};
+
+export type AlertHit = {
+  rule_id: string;
+  entity_id: string;
+  event_id: string;
+  event_title: string;
+  ndi: number;
+  baseline: number;
+  triggered_at: string;
+};
+
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(`/api${path}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
@@ -100,4 +118,21 @@ export const api = {
     get<{ file: string; lines: string[] }>(
       `/dev/logs/${encodeURIComponent(name)}`
     ),
+  alertRules: () => get<AlertRule[]>("/alerts/rules"),
+  addAlertRule: (entityId: string, percentile: number, windowDays = 90) =>
+    post<{ rule_id: string }>("/alerts/rules", {
+      entity_id: entityId,
+      percentile,
+      window_days: windowDays,
+    }),
+  deleteAlertRule: (ruleId: string) =>
+    fetch(`/api/alerts/rules/${encodeURIComponent(ruleId)}`, {
+      method: "DELETE",
+    }).then((r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<{ deleted: string }>;
+    }),
+  alertHits: (limit = 50) => get<AlertHit[]>(`/alerts/hits?limit=${limit}`),
+  alertCheck: () =>
+    post<{ triggered: number; hits: AlertHit[] }>("/alerts/check", {}),
 };
