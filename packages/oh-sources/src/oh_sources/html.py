@@ -29,6 +29,34 @@ _DEFAULT_DATE_RE = r"\d{4}-\d{2}-\d{2}"
 _DEFAULT_DATE_FMTS = ["%Y-%m-%d"]
 
 
+def apply_detail(page_html: str, cfg: dict[str, Any], draft: Draft) -> Draft:
+    """详情页 HTML → 替换正文后的 Draft（纯函数，Rss/Html 两适配器共用）。
+
+    cfg: content_selector（必填生效）/ drop_selectors / max_chars（默认 8000）。
+    未命中选择器时保留原 body（降级不丢数据）。
+    """
+    content_sel = str(cfg.get("content_selector", ""))
+    if not content_sel:
+        return draft
+    max_chars = int(cfg.get("max_chars", 8000))
+    soup = BeautifulSoup(page_html, "lxml")
+    for sel in cfg.get("drop_selectors", []):
+        for node in soup.select(sel):
+            node.decompose()
+    node = soup.select_one(content_sel)
+    body = node.get_text(" ", strip=True)[:max_chars] if node else draft.body
+    return Draft(
+        external_id=draft.external_id,
+        title=draft.title,
+        url=draft.url,
+        published_at=draft.published_at,
+        body=body,
+        lang=draft.lang,
+        article_type=draft.article_type,
+        raw=draft.raw,
+    )
+
+
 class HtmlAdapter(SourceAdapter):
     """静态列表页 → Draft；可选 detail 抓正文。"""
 
@@ -132,8 +160,6 @@ class HtmlAdapter(SourceAdapter):
     ) -> list[Draft]:
         """逐条抓正文（走 get_text 令牌桶限速；detail.max_items 上限）。"""
         cfg = self._detail or {}
-        content_sel = str(cfg.get("content_selector", ""))
-        drop_sels = list(cfg.get("drop_selectors", []))
         max_detail = int(cfg.get("max_items", 10))
         out: list[Draft] = []
         for draft in drafts[:max_detail]:
@@ -147,22 +173,5 @@ class HtmlAdapter(SourceAdapter):
             except httpx.HTTPError:
                 out.append(draft)
                 continue
-            soup = BeautifulSoup(page, "lxml")
-            for sel in drop_sels:
-                for node in soup.select(sel):
-                    node.decompose()
-            node = soup.select_one(content_sel) if content_sel else None
-            body = node.get_text(" ", strip=True)[:8000] if node else draft.body
-            out.append(
-                Draft(
-                    external_id=draft.external_id,
-                    title=draft.title,
-                    url=draft.url,
-                    published_at=draft.published_at,
-                    body=body,
-                    lang=draft.lang,
-                    article_type=draft.article_type,
-                    raw=draft.raw,
-                )
-            )
+            out.append(apply_detail(page, cfg, draft))
         return out

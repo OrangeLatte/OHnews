@@ -32,6 +32,7 @@ class RssAdapter(SourceAdapter):
         article_type: ArticleType = ArticleType.WIRE,
         *,
         date_fallback: bool = False,
+        detail: dict[str, Any] | None = None,
         **base_kwargs: Any,
     ) -> None:
         super().__init__(meta, **base_kwargs)
@@ -39,6 +40,8 @@ class RssAdapter(SourceAdapter):
         self._article_type = article_type
         # 无日期 feed（如 nikkei_asia RDF）：以抓取时刻作 PIT 锚并打标（可审计）
         self._date_fallback = date_fallback
+        # 详情页正文抓取（央行演讲稿等长文本源）：content_selector/drop_selectors/max_items
+        self._detail = detail
 
     async def fetch(self, since: datetime, until: datetime) -> list[Draft]:
         since = self.effective_since(since, until)
@@ -46,10 +49,34 @@ class RssAdapter(SourceAdapter):
             headers={"User-Agent": USER_AGENT}, follow_redirects=True
         ) as client:
             text = await self.get_text(client, self._url)
-        feed = feedparser.parse(text)
-        # 锚点=until（本次采集窗末端）：fallback_dt 若取实时 now 会晚于 until 被窗口过滤
-        fallback_dt = until if self._date_fallback else None
-        return self.entries_to_drafts(feed.get("entries", []), since, until, fallback_dt)
+            feed = feedparser.parse(text)
+            # 锚点=until（本次采集窗末端）：fallback_dt 若取实时 now 会晚于 until 被窗口过滤
+            fallback_dt = until if self._date_fallback else None
+            drafts = self.entries_to_drafts(feed.get("entries", []), since, until, fallback_dt)
+            if self._detail:
+                drafts = await self._fetch_details(client, drafts)
+        return drafts
+
+    async def _fetch_details(self, client: Any, drafts: list[Draft]) -> list[Draft]:
+        """逐条抓正文（html.apply_detail 共享逻辑；失败保留摘要不丢数据）。"""
+        from httpx import HTTPError
+
+        from oh_sources.html import apply_detail
+
+        cfg = self._detail or {}
+        max_detail = int(cfg.get("max_items", 5))
+        out: list[Draft] = []
+        for draft in drafts[:max_detail]:
+            if not draft.url:
+                out.append(draft)
+                continue
+            try:
+                page = await self.get_text(client, draft.url)
+            except HTTPError:
+                out.append(draft)
+                continue
+            out.append(apply_detail(page, cfg, draft))
+        return out
 
     def to_bronze(self, draft: Draft, fetched_at: datetime) -> BronzeRecord:
         """date_anchor=fetched 的条目 item_key 不含抓取时间戳（幂等：同条目跨次采集去重）。"""

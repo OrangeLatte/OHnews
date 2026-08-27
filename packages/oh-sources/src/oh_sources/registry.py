@@ -82,6 +82,7 @@ def _build_adapter(kind: str, meta: SourceMeta, params: dict) -> SourceAdapter:
             url=str(params["url"]),
             article_type=_article_type(params),
             date_fallback=bool(params.get("date_fallback", False)),
+            detail=params.get("detail"),
             **_base_kwargs(params),
         )
     if kind == "gdelt":
