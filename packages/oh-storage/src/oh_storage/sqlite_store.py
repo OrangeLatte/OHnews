@@ -57,6 +57,15 @@ CREATE TABLE IF NOT EXISTS ndi_series (
     language  TEXT NOT NULL DEFAULT 'all',
     PRIMARY KEY (event_id, ts, language)
 );
+
+CREATE TABLE IF NOT EXISTS null_events (
+    event_id      TEXT PRIMARY KEY,
+    entity_id     TEXT NOT NULL,
+    reason        TEXT NOT NULL,
+    notes         TEXT NOT NULL DEFAULT '',
+    distance      REAL,
+    registered_at TEXT NOT NULL
+);
 """
 
 _MIGRATE_NDI_LANGUAGE = """
@@ -236,3 +245,64 @@ class SqliteStore:
             )
             for row in cur.fetchall()
         ]
+
+    def ndi_first_ts(self, language: str) -> datetime | None:
+        """某 within-language 管线首个 ok 点位时间（裁决 F gate 条件 1/2 的稳定天数起点）。"""
+        row = self._conn.execute(
+            "SELECT MIN(ts) FROM ndi_series WHERE language = ? AND status = 'ok'",
+            (language,),
+        ).fetchone()
+        ts = row[0] if row else None
+        return datetime.fromisoformat(str(ts)) if ts else None
+
+    # -- Phase 7 跨语言门禁：null 集 -----------------------------------------
+
+    def register_null_event(
+        self,
+        event_id: str,
+        entity_id: str,
+        reason: str,
+        registered_at: datetime,
+        *,
+        notes: str = "",
+    ) -> None:
+        """登记 null 事件（无实质分歧的常规事件，裁决 F 语域基线样本）。"""
+        self._conn.execute(
+            "INSERT INTO null_events (event_id, entity_id, reason, notes, registered_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(event_id) DO UPDATE SET entity_id = excluded.entity_id, "
+            "reason = excluded.reason, notes = excluded.notes",
+            (event_id, entity_id, reason, notes, _iso(registered_at)),
+        )
+        self._conn.commit()
+
+    def set_null_distance(self, event_id: str, distance: float) -> None:
+        """回写 null 事件的跨语言原始距离（供 D₀ 估计）。"""
+        cur = self._conn.execute(
+            "UPDATE null_events SET distance = ? WHERE event_id = ?",
+            (distance, event_id),
+        )
+        self._conn.commit()
+        if cur.rowcount == 0:
+            raise KeyError(f"null 事件未登记: {event_id}")
+
+    def null_events(self) -> list[dict[str, object]]:
+        cur = self._conn.execute(
+            "SELECT event_id, entity_id, reason, notes, distance, registered_at "
+            "FROM null_events ORDER BY registered_at"
+        )
+        return [
+            {
+                "event_id": str(r["event_id"]),
+                "entity_id": str(r["entity_id"]),
+                "reason": str(r["reason"]),
+                "notes": str(r["notes"]),
+                "distance": None if r["distance"] is None else float(r["distance"]),
+                "registered_at": str(r["registered_at"]),
+            }
+            for r in cur.fetchall()
+        ]
+
+    def null_distances(self) -> list[float]:
+        cur = self._conn.execute("SELECT distance FROM null_events WHERE distance IS NOT NULL")
+        return [float(r["distance"]) for r in cur.fetchall()]
