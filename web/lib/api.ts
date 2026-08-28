@@ -100,6 +100,21 @@ export const api = {
       "/research",
       { question }
     ),
+  chat: (message: string, threadId?: string) =>
+    post<{
+      thread_id: string;
+      reply: string;
+      citations: string[];
+      tools_used: string[];
+      rounds: number;
+      offline: boolean;
+    }>("/chat", { message, thread_id: threadId }),
+  chatThreads: () =>
+    get<{ thread_id: string; n: number; last: string }[]>("/chat/threads"),
+  chatMessages: (threadId: string) =>
+    get<{ role: string; content: string; ts: string }[]>(
+      `/chat/${encodeURIComponent(threadId)}/messages`
+    ),
   decisions: (entityId: string) =>
     get<DecisionRow[]>(`/decisions?entity_id=${encodeURIComponent(entityId)}`),
   addDecision: (entityId: string, decision: string, eventId?: string) =>

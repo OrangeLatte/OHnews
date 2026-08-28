@@ -13,6 +13,7 @@ const NAV = [
   { href: "/alerts", label: "预警" },
   { href: "/brief", label: "晨报" },
   { href: "/research", label: "问诊" },
+  { href: "/chat", label: "情报对话" },
   { href: "/decisions", label: "决策日志" },
   { href: "/dev/monitor", label: "Dev 监控" },
 ];
