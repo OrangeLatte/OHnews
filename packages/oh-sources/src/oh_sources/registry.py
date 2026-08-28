@@ -1,7 +1,8 @@
 """采集器注册表 + YAML 配置装配（config/sources.yaml → adapters）。
 
 Phase 1.5：支持 enabled 开关（用户选择性激活，未激活零开销——不建适配器、
-不调度、不发请求）；新增 json_api/html/reddit_cdp 三种适配器分发。
+不调度、不发请求）；json_api/html/reddit_cdp 三种适配器分发。
+Phase 6：browser 分发（playwright 渲染壳，接管 JS 列表页站点，如 BoE speeches）。
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from oh_contracts.enums import ArticleType, SourceTier
 from oh_contracts.schemas import SourceMeta
 
 from oh_sources.base import SourceAdapter
+from oh_sources.browser import BrowserAdapter
 from oh_sources.fred import FredSeriesAdapter
 from oh_sources.gdelt import GDELTDocAdapter
 from oh_sources.html import HtmlAdapter
@@ -128,6 +130,24 @@ def _build_adapter(kind: str, meta: SourceMeta, params: dict) -> SourceAdapter:
             tz_offset_hours=int(params.get("tz_offset_hours", 8)),
             date_scope=str(params.get("date_scope", "parent")),
             max_items=int(params.get("max_items", 30)),
+            detail=params.get("detail"),
+            article_type=_article_type(params),
+            **_base_kwargs(params),
+        )
+    if kind == "browser":
+        return BrowserAdapter(
+            meta,
+            list_url=str(params["list_url"]),
+            item_selector=str(params["item_selector"]),
+            link_attr=str(params.get("link_attr", "href")),
+            title_selector=params.get("title_selector"),
+            date_selector=params.get("date_selector"),
+            date_attr=str(params.get("date_attr", "datetime")),
+            date_formats=params.get("date_formats"),
+            tz_offset_hours=int(params.get("tz_offset_hours", 0)),
+            max_items=int(params.get("max_items", 30)),
+            wait_ms=int(params.get("wait_ms", 3000)),
+            scroll_rounds=int(params.get("scroll_rounds", 0)),
             detail=params.get("detail"),
             article_type=_article_type(params),
             **_base_kwargs(params),
