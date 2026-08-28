@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS ndi_series (
     n_sources INTEGER NOT NULL,
     status    TEXT NOT NULL,
     language  TEXT NOT NULL DEFAULT 'all',
+    low_confidence INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (event_id, ts, language)
 );
 
@@ -78,11 +79,12 @@ CREATE TABLE IF NOT EXISTS ndi_series_new (
     n_sources INTEGER NOT NULL,
     status    TEXT NOT NULL,
     language  TEXT NOT NULL DEFAULT 'all',
+    low_confidence INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (event_id, ts, language)
 );
 INSERT OR IGNORE INTO ndi_series_new
     SELECT event_id, ts, ndi, ci_low, ci_high, n_sources, status,
-           'all' FROM ndi_series;
+           'all', 0 FROM ndi_series;
 DROP TABLE ndi_series;
 ALTER TABLE ndi_series_new RENAME TO ndi_series;
 """
@@ -97,8 +99,31 @@ def _migrate_ndi_language(conn: Connection) -> None:
     conn.commit()
 
 
+def _migrate_ndi_low_confidence(conn: Connection) -> None:
+    """ndi_series 加 low_confidence 列（早期 language 迁移产物缺列，幂等 ALTER）。"""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(ndi_series)").fetchall()}
+    if not cols or "low_confidence" in cols:
+        return
+    conn.execute("ALTER TABLE ndi_series ADD COLUMN low_confidence INTEGER NOT NULL DEFAULT 0")
+    conn.commit()
+
+
 def _iso(dt: datetime) -> str:
     return dt.isoformat()
+
+
+def _ndi_from_row(row: sqlite3.Row) -> NDIPoint:
+    return NDIPoint(
+        event_id=str(row["event_id"]),
+        ts=datetime.fromisoformat(str(row["ts"])),
+        ndi=None if row["ndi"] is None else float(row["ndi"]),
+        ci_low=None if row["ci_low"] is None else float(row["ci_low"]),
+        ci_high=None if row["ci_high"] is None else float(row["ci_high"]),
+        n_sources=int(row["n_sources"]),
+        status=str(row["status"]),  # type: ignore[arg-type]
+        language=str(row["language"]),
+        low_confidence=bool(row["low_confidence"]),
+    )
 
 
 class SqliteStore:
@@ -109,6 +134,7 @@ class SqliteStore:
         self._conn.executescript(_DDL)
         self._conn.commit()
         _migrate_ndi_language(self._conn)
+        _migrate_ndi_low_confidence(self._conn)
 
     # -- Silver -------------------------------------------------------------
 
@@ -207,8 +233,8 @@ class SqliteStore:
     def append_ndi(self, point: NDIPoint) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO ndi_series "
-            "(event_id, ts, ndi, ci_low, ci_high, n_sources, status, language) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(event_id, ts, ndi, ci_low, ci_high, n_sources, status, language, low_confidence) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 point.event_id,
                 _iso(point.ts),
@@ -218,33 +244,22 @@ class SqliteStore:
                 point.n_sources,
                 point.status,
                 point.language,
+                int(point.low_confidence),
             ),
         )
         self._conn.commit()
 
     def ndi_series(self, event_id: str, *, language: str | None = None) -> list[NDIPoint]:
         sql = (
-            "SELECT event_id, ts, ndi, ci_low, ci_high, n_sources, status, language "
-            "FROM ndi_series WHERE event_id = ?"
+            "SELECT event_id, ts, ndi, ci_low, ci_high, n_sources, status, language, "
+            "low_confidence FROM ndi_series WHERE event_id = ?"
         )
         params: list[str] = [event_id]
         if language is not None:
             sql += " AND language = ?"
             params.append(language)
         cur = self._conn.execute(sql + " ORDER BY ts", params)
-        return [
-            NDIPoint(
-                event_id=str(row["event_id"]),
-                ts=datetime.fromisoformat(str(row["ts"])),
-                ndi=None if row["ndi"] is None else float(row["ndi"]),
-                ci_low=None if row["ci_low"] is None else float(row["ci_low"]),
-                ci_high=None if row["ci_high"] is None else float(row["ci_high"]),
-                n_sources=int(row["n_sources"]),
-                status=str(row["status"]),  # type: ignore[arg-type]
-                language=str(row["language"]),
-            )
-            for row in cur.fetchall()
-        ]
+        return [_ndi_from_row(row) for row in cur.fetchall()]
 
     def ndi_first_ts(self, language: str) -> datetime | None:
         """某 within-language 管线首个 ok 点位时间（裁决 F gate 条件 1/2 的稳定天数起点）。"""
@@ -306,3 +321,24 @@ class SqliteStore:
     def null_distances(self) -> list[float]:
         cur = self._conn.execute("SELECT distance FROM null_events WHERE distance IS NOT NULL")
         return [float(r["distance"]) for r in cur.fetchall()]
+
+    # -- 信息流可视化（/api/flow 聚合面） ---------------------------------------
+
+    def flow_frames(self) -> list[dict[str, object]]:
+        """全部 stance 按 日期×框架 聚合流量（主题河流图数据面）。"""
+        cur = self._conn.execute(
+            "SELECT substr(ts, 1, 10) AS day, frame, COUNT(*) AS n "
+            "FROM stances GROUP BY day, frame ORDER BY day, frame"
+        )
+        return [
+            {"date": str(r["day"]), "frame": str(r["frame"]), "n": int(r["n"])}
+            for r in cur.fetchall()
+        ]
+
+    def ndi_all(self) -> list[NDIPoint]:
+        """全部 NDI 点位（时间正序，跨事件；情报大屏总览数据面）。"""
+        cur = self._conn.execute(
+            "SELECT event_id, ts, ndi, ci_low, ci_high, n_sources, status, language, "
+            "low_confidence FROM ndi_series ORDER BY ts"
+        )
+        return [_ndi_from_row(row) for row in cur.fetchall()]
