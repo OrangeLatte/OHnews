@@ -9,17 +9,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from oh_agents.alerts import check_alerts
+from oh_agents.chat import ChatStore, run_chat
 from oh_agents.decision_log import DecisionLog
 from oh_agents.morning_brief import build_brief
 from oh_agents.research import run_research
@@ -58,6 +61,8 @@ class AppPaths:
     sources_yaml: Path = Path("config/sources.yaml")
     logs_dir: Path = Path(".opencode/logs/opencode")
     alerts_db: Path | None = None  # None → root/alerts.sqlite（跟随测试 tmp_path 隔离）
+    chat_db: Path | None = None  # None → root/chat.sqlite
+    models_yaml: Path | None = None  # None → config/models.yaml（不存在则 chat 降级离线）
     now_fn: Any = None  # () -> datetime；None = datetime.now(UTC)
 
 
@@ -108,6 +113,31 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
         db = paths.alerts_db or (paths.root / "alerts.sqlite")
         return _lazy("alerts", lambda: AlertStore(db))
+
+    def _chat_store() -> ChatStore:
+        db = paths.chat_db or (paths.root / "chat.sqlite")
+        return _lazy("chat_store", lambda: ChatStore(db))
+
+    def _chat_router() -> Any:
+        """chat_graph 的 ModelRouter（keys 缺失/配置不存在 → None 降级离线）。"""
+        my = paths.models_yaml or Path("config/models.yaml")
+        if not my.exists():
+            return None
+        import os
+
+        if not (os.getenv("DEEPSEEK_API_KEY") or os.getenv("ZHIPU_API_KEY")):
+            return None
+
+        def _build() -> Any:
+            from oh_llm.config import load_llm_config
+            from oh_llm.router import ModelRouter
+
+            return ModelRouter(load_llm_config(my))
+
+        return _lazy("chat_router", _build)
+
+    def _registry() -> EntityRegistry:
+        return _lazy("registry", lambda: EntityRegistry())
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -311,6 +341,55 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             "citations": list(result.citations),
             "tool_calls": list(result.tool_calls),
         }
+
+    @app.post("/api/chat")
+    async def chat(body: dict[str, str]) -> dict[str, Any]:
+        """多轮会话情报 Agent（chat_graph；无 keys/config 降级离线聚合）。"""
+        message = body.get("message", "").strip()
+        if not message:
+            raise HTTPException(422, "message required")
+        thread_id = body.get("thread_id") or uuid4().hex[:12]
+        cs = _chat_store()
+        now = _now()
+        ts = now.isoformat()
+        history = [{"role": m["role"], "content": m["content"]} for m in cs.messages(thread_id)]
+        cs.append(thread_id, "user", message, ts)
+        result = await run_chat(
+            message,
+            history,
+            bronze=_bronze(),
+            store=_store(),
+            gold=_store(),
+            registry=_registry(),
+            router=_chat_router(),
+            gdelt_proxy=os.getenv("OHNEWS_GDELT_PROXY"),
+            now=now,
+        )
+        cs.append(thread_id, "assistant", result["reply"], now.isoformat())
+        await publish_sse(
+            "chat_done",
+            {
+                "thread_id": thread_id,
+                "rounds": result["rounds"],
+                "tools": list(result["tools_used"]),
+            },
+        )
+        return {
+            "thread_id": thread_id,
+            "reply": result["reply"],
+            "citations": list(result["citations"]),
+            "tools_used": list(result["tools_used"]),
+            "rounds": result["rounds"],
+            "offline": _chat_router() is None,
+        }
+
+    @app.get("/api/chat/threads")
+    def chat_threads() -> list[dict[str, Any]]:
+        return _chat_store().threads()
+
+    @app.get("/api/chat/{thread_id}/messages")
+    def chat_messages(thread_id: str) -> list[dict[str, Any]]:
+        return _chat_store().messages(thread_id)
 
     @app.get("/api/decisions")
     def list_decisions(entity_id: str) -> list[dict[str, Any]]:

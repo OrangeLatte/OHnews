@@ -145,3 +145,21 @@ def test_alert_endpoints(client: TestClient) -> None:
     rid = rules[0]["rule_id"]
     assert client.delete(f"/api/alerts/rules/{rid}").json()["deleted"] == "true"
     assert client.delete(f"/api/alerts/rules/{rid}").status_code == 404
+
+
+def test_chat_endpoints(client: TestClient) -> None:
+    """chat：无 keys/config → 离线聚合降级；历史持久化 + 线程列表。"""
+    r = client.post("/api/chat", json={"message": "美联储最近怎么样？"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["thread_id"] and body["offline"] is True
+    assert "E01" in body["reply"]
+    tid = body["thread_id"]
+    # 多轮：同一 thread 追加历史
+    r2 = client.post("/api/chat", json={"message": "继续", "thread_id": tid}).json()
+    assert r2["thread_id"] == tid
+    msgs = client.get(f"/api/chat/{tid}/messages").json()
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
+    threads = client.get("/api/chat/threads").json()
+    assert threads[0]["thread_id"] == tid and threads[0]["n"] == 4
+    assert client.post("/api/chat", json={}).status_code == 422
