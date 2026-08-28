@@ -88,10 +88,12 @@ def _build_adapter(kind: str, meta: SourceMeta, params: dict) -> SourceAdapter:
             **_base_kwargs(params),
         )
     if kind == "gdelt":
+        raw_slice = params.get("slice_days")
         return GDELTDocAdapter(
             meta,
             query=str(params["query"]),
             max_records=int(params.get("max_records", 75)),
+            slice_days=int(raw_slice) if raw_slice is not None else None,
             proxy_fallback=bool(params.get("proxy_fallback", False)),
             **_base_kwargs(params),
         )

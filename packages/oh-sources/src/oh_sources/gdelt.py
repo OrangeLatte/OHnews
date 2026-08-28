@@ -8,9 +8,10 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 from oh_contracts.enums import ArticleType
 from oh_contracts.schemas import SourceMeta
 
@@ -57,11 +58,30 @@ def _parse_articles(payload: dict[str, Any], *, lang: str = "zh") -> list[Draft]
     return out
 
 
+def _slice_ranges(
+    since: datetime, until: datetime, slice_days: int
+) -> list[tuple[datetime, datetime]]:
+    """[since, until) 按 slice_days 切片（纯函数；末片不足 slice_days 取余量）。"""
+    step = timedelta(days=slice_days)
+    out: list[tuple[datetime, datetime]] = []
+    cur = since
+    while cur < until:
+        nxt = min(cur + step, until)
+        out.append((cur, nxt))
+        cur = nxt
+    return out
+
+
 class GDELTDocAdapter(SourceAdapter):
     """GDELT DOC 2.0 ArtList：query 例 "sourcelang:chinese (央行 OR 货币政策)"。
 
     网络回退（2026-08-27 探测：直连 SSL 握手被阻断，代理间歇可达）：
     先直连 → 失败且配置 proxy_url 时经代理重试一次；两段皆败抛最后异常。
+
+    历史回填（2026-08-28）：DOC API 单请求上限 maxrecords（≤250）且 sort=DateDesc，
+    长窗口单请求只回最新一页——slice_days=N 时把 [since, until] 切成 N 天片逐片
+    请求再按 external_id 去重合并；任一片失败即抛出（严格语义，交由
+    run_collector 退避重试），不做部分静默。
     """
 
     def __init__(
@@ -70,15 +90,33 @@ class GDELTDocAdapter(SourceAdapter):
         *,
         query: str,
         max_records: int = 75,
+        slice_days: int | None = None,
         proxy_fallback: bool = False,
         **base_kwargs: Any,
     ) -> None:
         super().__init__(meta, **base_kwargs)
         self._query = query
         self._max_records = max_records
+        self._slice_days = slice_days
         self._proxy_fallback = proxy_fallback
 
     async def fetch(self, since: datetime, until: datetime) -> list[Draft]:
+        ranges = (
+            _slice_ranges(since, until, self._slice_days) if self._slice_days else [(since, until)]
+        )
+        seen: set[str] = set()
+        out: list[Draft] = []
+        for start, end in ranges:
+            for draft in await self._fetch_range(start, end):
+                if draft.external_id not in seen:
+                    seen.add(draft.external_id)
+                    out.append(draft)
+        return out
+
+    # 连接被墙时 TCP SYN 黑洞会吃满默认 30s——connect 收紧让回退链快速失败
+    _TIMEOUT = httpx.Timeout(connect=8.0, read=20.0, write=10.0, pool=5.0)
+
+    async def _fetch_range(self, since: datetime, until: datetime) -> list[Draft]:
         params = {
             "query": self._query,
             "mode": "ArtList",
@@ -96,7 +134,7 @@ class GDELTDocAdapter(SourceAdapter):
         for route in routes:
             try:
                 async with self.make_client(
-                    proxy=route, headers={"User-Agent": USER_AGENT}
+                    proxy=route, headers={"User-Agent": USER_AGENT}, timeout=self._TIMEOUT
                 ) as client:
                     text = await self.get_text(client, GDELT_DOC_URL, params=params)
                 return _parse_articles(json.loads(text), lang=self.meta.language)
