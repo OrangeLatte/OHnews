@@ -31,6 +31,17 @@ export type EvidenceRow = {
   quote: string;
 };
 
+export type SpectrumSpan = {
+  start: number;
+  end: number;
+  // entity span
+  entity_id?: string;
+  text?: string;
+  // action span
+  domain?: string;
+  direction?: string;
+};
+
 export type SpectrumSentence = {
   i: number;
   text: string;
@@ -38,6 +49,7 @@ export type SpectrumSentence = {
   stance: string | null;
   hits: Record<string, number>;
   keywords: string[];
+  spans?: SpectrumSpan[];
 };
 
 export type SpectrumDoc = {
@@ -46,6 +58,28 @@ export type SpectrumDoc = {
   title: string;
   published_at: string;
   sentences: SpectrumSentence[];
+};
+
+export type AnatomyData = {
+  event_id: string;
+  ndi: { ndi: number | null; ts: string; n_sources: number } | null;
+  clusters: Record<string, Record<string, number>>;
+  cluster_pairs: {
+    a: string;
+    b: string;
+    jsd: number;
+    n_a: number;
+    n_b: number;
+    official_vs_market: boolean;
+  }[];
+  entity_opposition: {
+    entity_id: string;
+    official: Record<string, number>;
+    market: Record<string, number>;
+    n_official: number;
+    n_market: number;
+    gap: number;
+  }[];
 };
 
 export type DecisionRow = {
@@ -143,6 +177,8 @@ export const api = {
     get<EvidenceRow[]>(`/events/${encodeURIComponent(id)}/evidence`),
   eventSpectrum: (id: string) =>
     get<SpectrumDoc[]>(`/events/${encodeURIComponent(id)}/spectrum`),
+  eventAnatomy: (id: string) =>
+    get<AnatomyData>(`/events/${encodeURIComponent(id)}/anatomy`),
   intelRun: () =>
     post<IntelReport>("/intel/run", {}),
   intelLatest: () => get<IntelReport>("/intel/latest"),
