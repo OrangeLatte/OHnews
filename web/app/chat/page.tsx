@@ -19,7 +19,7 @@ type ChatResp = {
   offline: boolean;
 };
 
-export default function ChatPage() {
+export function ChatPanel() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
   const [input, setInput] = useState("");
@@ -139,3 +139,5 @@ export default function ChatPage() {
     </div>
   );
 }
+
+export default ChatPanel;

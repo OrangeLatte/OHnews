@@ -123,7 +123,7 @@ function AchMatrixTable({ report }: { report: IntelReport }) {
   );
 }
 
-export default function IntelPage() {
+export function IntelPanel() {
   const [report, setReport] = useState<IntelReport | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -286,3 +286,5 @@ export default function IntelPage() {
     </div>
   );
 }
+
+export default IntelPanel;

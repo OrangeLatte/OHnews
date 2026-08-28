@@ -7,32 +7,55 @@ export const metadata: Metadata = {
   description: "Agent 原生市场叙事情报台（非商业研究）",
 };
 
-const NAV = [
-  { href: "/", label: "仪表盘" },
-  { href: "/command", label: "指挥舱" },
-  { href: "/intel", label: "情报巡逻" },
-  { href: "/alerts", label: "预警" },
-  { href: "/brief", label: "晨报" },
-  { href: "/research", label: "问诊" },
-  { href: "/chat", label: "情报对话" },
-  { href: "/decisions", label: "决策日志" },
-  { href: "/dev/monitor", label: "Dev 监控" },
+const NAV: { group: string; items: { href: string; label: string }[] }[] = [
+  {
+    group: "监测",
+    items: [
+      { href: "/", label: "总览" },
+      { href: "/command", label: "动态大屏" },
+      { href: "/alerts", label: "预警" },
+    ],
+  },
+  {
+    group: "分析",
+    items: [
+      { href: "/analyze", label: "工作台" },
+      { href: "/brief", label: "晨报" },
+      { href: "/decisions", label: "决策日志" },
+    ],
+  },
+  {
+    group: "研究 Agent",
+    items: [
+      { href: "/agent", label: "研究台" },
+      { href: "/dev/monitor", label: "Dev 监控" },
+    ],
+  },
 ];
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="zh" className="dark h-full antialiased">
       <body className="min-h-full flex flex-col">
-        <nav className="flex items-center gap-4 border-b px-6 py-3">
-          <span className="text-lg font-bold">OH!News</span>
-          {NAV.map((n) => (
-            <Link
-              key={n.href}
-              href={n.href}
-              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-            >
-              {n.label}
-            </Link>
+        <nav className="flex items-center gap-6 border-b px-6 py-3">
+          <Link href="/" className="text-lg font-bold">
+            OH!News
+          </Link>
+          {NAV.map((g) => (
+            <div key={g.group} className="flex items-center gap-3">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                {g.group}
+              </span>
+              {g.items.map((n) => (
+                <Link
+                  key={n.href}
+                  href={n.href}
+                  className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {n.label}
+                </Link>
+              ))}
+            </div>
           ))}
           <span className="ml-auto text-xs text-muted-foreground">
             NDI = EPU 式条件变量，非收益预测器
