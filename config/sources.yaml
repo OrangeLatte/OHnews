@@ -140,6 +140,24 @@ sources:
       proxy_url: "http://127.0.0.1:9674"
       proxy_fallback: true
 
+  # 英文覆盖度回填（历史断代治理：7 月官方演讲稿需同日新闻凑事件门）
+  - source_id: gdelt_en
+    adapter: gdelt
+    tier: L2
+    language: en
+    credibility_prior: 0.60
+    bias: mixed_aggregate
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      query: >-
+        sourcelang:english (central bank OR "monetary policy" OR "interest rate"
+        OR "federal reserve" OR "bank of england" OR "european central bank" OR tariff)
+      max_records: 250
+      slice_days: 7
+      proxy_url: "http://127.0.0.1:9674"
+      proxy_fallback: true
+
   # ---- L1 官方统计（宏观基线快照）----
   - source_id: fred_cpiaucsl
     adapter: fred
