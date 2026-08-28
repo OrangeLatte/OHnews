@@ -68,6 +68,39 @@ export type StatusInfo = {
 
 export type LogFile = { file: string; mtime: string; size: number };
 
+export type IntelReport = {
+  report_id: string;
+  created_at: string;
+  scope: string;
+  engine: string;
+  summary: string;
+  scout_findings: {
+    kind: string;
+    target: string;
+    score: number;
+    detail: string;
+  }[];
+  network: {
+    nodes: { id: string; strength: number; degree: number; top_neighbors: string[] }[];
+    edges: { source: string; target: string; weight: number; latest_event_at: string }[];
+  };
+  ach: {
+    evidence: string[];
+    hypotheses: {
+      hypothesis: string;
+      note: string | null;
+      cells: { evidence: string; score: number | null }[];
+    }[];
+    conclusion_index: number;
+  } | null;
+  key_judgments: {
+    judgment: string;
+    probability: number;
+    term: string;
+    drivers: string[];
+  }[];
+};
+
 export type AlertRule = {
   rule_id: string;
   entity_id: string;
@@ -110,6 +143,13 @@ export const api = {
     get<EvidenceRow[]>(`/events/${encodeURIComponent(id)}/evidence`),
   eventSpectrum: (id: string) =>
     get<SpectrumDoc[]>(`/events/${encodeURIComponent(id)}/spectrum`),
+  intelRun: () =>
+    post<IntelReport>("/intel/run", {}),
+  intelLatest: () => get<IntelReport>("/intel/latest"),
+  intelReports: (n = 10) =>
+    get<{ report_id: string; created_at: string; scope: string; engine: string; summary: string }[]>(
+      `/intel/reports?n=${n}`,
+    ),
   brief: (watchlist: string, top = 5) =>
     get<{ text: string; items: number }>(
       `/brief?watchlist=${encodeURIComponent(watchlist)}&top=${top}`
