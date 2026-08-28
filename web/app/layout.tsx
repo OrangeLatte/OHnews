@@ -9,6 +9,7 @@ export const metadata: Metadata = {
 
 const NAV = [
   { href: "/", label: "仪表盘" },
+  { href: "/command", label: "指挥舱" },
   { href: "/alerts", label: "预警" },
   { href: "/brief", label: "晨报" },
   { href: "/research", label: "问诊" },

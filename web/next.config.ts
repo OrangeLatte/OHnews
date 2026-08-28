@@ -5,6 +5,7 @@ const API_PORT = process.env.OHNEWS_API_PORT ?? "8787";
 const API_ORIGIN = process.env.OHNEWS_API_ORIGIN ?? "http://127.0.0.1";
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
   async rewrites() {
     return [
       {
