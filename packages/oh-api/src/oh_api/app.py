@@ -28,8 +28,10 @@ from oh_agents.morning_brief import build_brief
 from oh_agents.research import run_research
 from oh_contracts.enums import SourceTier
 from oh_contracts.text import strip_html
+from oh_pipeline.anatomy import cluster_distributions, cluster_pairwise, entity_opposition
 from oh_pipeline.entities import EntityRegistry
 from oh_pipeline.spectra import sentence_spectrum
+from oh_pipeline.svo import parse_passage
 from oh_storage.bronze_parquet import ParquetBronzeWriter
 from oh_storage.connection import connect
 from oh_storage.sqlite_store import SqliteStore
@@ -319,7 +321,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
     @app.get("/api/events/{event_id}/spectrum")
     def event_spectrum(event_id: str) -> list[dict[str, Any]]:
-        """句级叙事光谱：事件关联文章逐句框架染色（只读派生，不进 NDI）。"""
+        """句级叙事光谱 v2：词级主体/动作/立场 spans + 框架兜底（只读派生）。"""
         store = _store()
         now = _now()
         rows = [r for r in store.stances_asof(now) if r.event_id == event_id]
@@ -327,22 +329,51 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             raise HTTPException(404, "no stances for event")
         wanted = {r.item_key for r in rows}
         src_by_key: dict[str, str] = {r.item_key: r.source_id for r in rows}
+        registry = EntityRegistry()
         docs: list[dict[str, Any]] = []
         for rec in _bronze().iter_records():
             if rec.item_key not in wanted:
                 continue
             body = strip_html(str(rec.normalized.get("body") or rec.normalized.get("title") or ""))
+            sents: list[dict[str, Any]] = []
+            for base, parsed in zip(
+                sentence_spectrum(body), parse_passage(body, registry), strict=False
+            ):
+                sents.append({**base, "spans": parsed["entities"] + parsed["actions"]})
             docs.append(
                 {
                     "item_key": rec.item_key,
                     "source_id": src_by_key.get(rec.item_key, ""),
                     "title": str(rec.normalized.get("title") or ""),
                     "published_at": str(rec.normalized.get("published_at") or ""),
-                    "sentences": sentence_spectrum(body),
+                    "sentences": sents,
                 }
             )
         docs.sort(key=lambda d: (d["published_at"], d["item_key"]))
         return docs
+
+    @app.get("/api/events/{event_id}/anatomy")
+    def event_anatomy(event_id: str) -> dict[str, Any]:
+        """分歧构成：NDI 拆解为簇对 JSD × 主体对立表（交互下钻的数据层）。"""
+        store = _store()
+        now = _now()
+        rows = [r for r in store.stances_asof(now) if r.event_id == event_id]
+        if not rows:
+            raise HTTPException(404, "no stances for event")
+        tier_map = _tier_map()
+        series = store.ndi_series(event_id, language="all")
+        latest = next((p for p in reversed(series) if p.status == "ok"), None)
+        return {
+            "event_id": event_id,
+            "ndi": (
+                {"ndi": latest.ndi, "ts": latest.ts, "n_sources": latest.n_sources}
+                if latest is not None
+                else None
+            ),
+            "clusters": cluster_distributions(rows, tier_map),
+            "cluster_pairs": cluster_pairwise(rows, tier_map),
+            "entity_opposition": entity_opposition(rows, tier_map),
+        }
 
     @app.get("/api/brief")
     def brief(watchlist: str = "fed,trump,ecb", top: int = 5) -> dict[str, Any]:

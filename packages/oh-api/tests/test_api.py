@@ -24,7 +24,16 @@ def client(tmp_path: Path) -> TestClient:
     run_pipeline(
         bronze, store, store, [ev], TIER_MAP, as_of=now, lookback_days=1, min_per_source=10
     )
-    app = create_app(AppPaths(root=tmp_path, sources_yaml=tmp_path / "none.yaml", now_fn=make_now))
+    # anatomy 端点从 sources.yaml 读 tier_map——写 mini 配置对齐 conftest.TIER_MAP
+    sources_yaml = tmp_path / "sources.yaml"
+    sources_yaml.write_text(
+        "sources:\n"
+        + "".join(
+            f"  - source_id: {sid}\n    tier: {tier.value}\n" for sid, tier in TIER_MAP.items()
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(AppPaths(root=tmp_path, sources_yaml=sources_yaml, now_fn=make_now))
     return TestClient(app)
 
 
@@ -77,6 +86,35 @@ def test_event_spectrum(client: TestClient) -> None:
 
 def test_spectrum_404(client: TestClient) -> None:
     assert client.get("/api/events/NOPE/spectrum").status_code == 404
+
+
+def test_spectrum_v2_spans(client: TestClient) -> None:
+    """词级主体/动作 spans：LOSS_BODY 有中文实体与框架词命中。"""
+    docs = client.get("/api/events/E01/spectrum").json()
+    assert docs
+    spans = [s for d in docs for s in d["sentences"] for s in s["spans"]]
+    assert spans, "种子正文含 美联储/衰退/损失 应产生 spans"
+    kinds = {
+        s["kind"] if "kind" in s else ("entity" if "entity_id" in s else "action") for s in spans
+    }
+    assert kinds <= {"entity", "action"}
+
+
+def test_event_anatomy(client: TestClient) -> None:
+    """分歧构成：官方(gov) vs 市场(wscn) 簇对 + fed 主体对立。"""
+    a = client.get("/api/events/E01/anatomy").json()
+    assert a["event_id"] == "E01"
+    assert a["ndi"] is not None
+    assert {"L1", "L3"} <= set(a["clusters"])  # gov=OFFICIAL wscn=FINANCIAL_PRESS
+    pairs = a["cluster_pairs"]
+    assert pairs and pairs[0]["official_vs_market"] is True
+    opp = a["entity_opposition"]
+    assert opp and opp[0]["entity_id"] == "fed"
+    assert opp[0]["n_official"] == 12 and opp[0]["n_market"] == 12
+
+
+def test_anatomy_404(client: TestClient) -> None:
+    assert client.get("/api/events/NOPE/anatomy").status_code == 404
 
 
 def test_intel_cycle_endpoints(client: TestClient) -> None:

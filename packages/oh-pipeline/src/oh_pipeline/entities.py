@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -23,7 +24,7 @@ class EntitySpec:
 DEFAULT_ENTITIES: tuple[EntitySpec, ...] = (
     EntitySpec(
         "fed",
-        ("Federal Reserve", "the Fed", "US central bank", "美联储", "美国联储", "联储局"),
+        ("Federal Reserve", "the Fed", "US central bank", "Fed", "美联储", "美国联储", "联储局"),
         wikidata_qid="Q16554",
     ),
     EntitySpec(
@@ -106,8 +107,64 @@ DEFAULT_ENTITIES: tuple[EntitySpec, ...] = (
     ),
     EntitySpec(
         "opec",
-        ("OPEC", "OPEC+", "石油输出国组织", "欧佩克"),
-        wikidata_qid="Q4603",
+        ("OPEC", "欧佩克", "石油输出国组织"),
+        wikidata_qid="Q131055",
+    ),
+    # —— 市场与科技高频主体（词级结构解析 v2 扩充）——
+    EntitySpec(
+        "powell",
+        ("Jerome Powell", "Jay Powell", "Powell", "鲍威尔", "鲍尔"),
+        wikidata_qid="Q1088480",
+    ),
+    EntitySpec(
+        "musk",
+        ("Elon Musk", "Musk", "马斯克"),
+        wikidata_qid="Q317521",
+    ),
+    EntitySpec(
+        "nvidia",
+        ("Nvidia", "NVIDIA", "英伟达"),
+        wikidata_qid="Q1162163",
+    ),
+    EntitySpec(
+        "tesla",
+        ("Tesla", "特斯拉"),
+        wikidata_qid="Q478214",
+    ),
+    EntitySpec(
+        "apple",
+        ("Apple", "苹果公司"),
+        wikidata_qid="Q312",
+    ),
+    EntitySpec(
+        "microsoft",
+        ("Microsoft", "微软"),
+        wikidata_qid="Q2283",
+    ),
+    EntitySpec(
+        "google",
+        ("Google", "Alphabet", "谷歌"),
+        wikidata_qid="Q95",
+    ),
+    EntitySpec(
+        "openai",
+        ("OpenAI", "Sam Altman", "Altman", "奥尔特曼", "奥特曼"),
+        wikidata_qid="Q19864517",
+    ),
+    EntitySpec(
+        "ustr",
+        (
+            "United States Trade Representative",
+            "U.S. Trade Representative",
+            "美国贸易代表办公室",
+            "贸易代表",
+        ),
+        wikidata_qid="Q17149786",
+    ),
+    EntitySpec(
+        "sec",
+        ("Securities and Exchange Commission", "美国证券交易委员会"),
+        wikidata_qid="Q568481",
     ),
 )
 
@@ -141,12 +198,37 @@ class EntityRegistry:
 
     def match(self, text: str) -> list[str]:
         """返回文本命中的 entity_id（去重保序；子实体与父实体可同时命中）。"""
+        seen: list[str] = []
+        for eid, _s, _e, _a in self.match_with_positions(text):
+            if eid not in seen:
+                seen.append(eid)
+        return seen
+
+    def match_with_positions(self, text: str) -> list[tuple[str, int, int, str]]:
+        """词级实体定位：[(entity_id, start, end, matched_alias)]。
+
+        ASCII 别名用 \\b 词边界匹配（根治 "the fed"⊂"the federal" 类误命中），
+        中文别名子串匹配；同一位置重叠命中保留更长别名，输出按 start 排序。
+        """
         low = text.lower()
-        hits: list[str] = []
+        raw: list[tuple[int, int, str, str]] = []
         for alias, eid in self._index:
-            if alias in low and eid not in hits:
-                hits.append(eid)
-        return hits
+            if alias.isascii():
+                for m in re.finditer(rf"\b{re.escape(alias)}\b", low):
+                    raw.append((m.start(), m.end(), eid, alias))
+            else:
+                start = 0
+                while (i := low.find(alias, start)) != -1:
+                    raw.append((i, i + len(alias), eid, alias))
+                    start = i + 1
+        raw.sort(key=lambda t: (t[0], -(t[1] - t[0])))
+        picked: list[tuple[str, int, int, str]] = []
+        last_end = -1
+        for s, e, eid, alias in raw:
+            if s >= last_end:
+                picked.append((eid, s, e, alias))
+                last_end = e
+        return picked
 
     def parent(self, entity_id: str) -> str | None:
         return self._by_id[entity_id].parent_id
