@@ -12,6 +12,7 @@ from oh_pipeline.divergence import (
 from oh_pipeline.entities import DEFAULT_ENTITIES, EntityRegistry, EntitySpec
 from oh_pipeline.rules import FRAME_KEYWORDS
 from oh_pipeline.run import EventNDI, PipelineReport, run_pipeline
+from oh_pipeline.spectra import sentence_spectrum, split_sentences
 from oh_pipeline.tagger import RuleTagger
 from oh_pipeline.validation import (
     ValidityResult,
@@ -36,6 +37,8 @@ __all__ = [
     "measurement_validity",
     "ndi_for_event",
     "run_pipeline",
+    "sentence_spectrum",
     "spearman_rho",
+    "split_sentences",
     "temperature_gap",
 ]
