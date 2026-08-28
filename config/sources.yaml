@@ -282,6 +282,28 @@ sources:
     params:
       url: "https://www.bankofengland.co.uk/rss/news"
 
+  - source_id: boe_speeches
+    adapter: browser
+    tier: L1
+    language: en
+    credibility_prior: 0.95
+    bias: official
+    rate_limit_rpm: 6
+    enabled: true
+    params:
+      list_url: "https://www.bankofengland.co.uk/speeches"
+      item_selector: "a.release-speech"
+      title_selector: "h3.list"
+      date_selector: "time.release-date"
+      date_attr: "datetime"          # ISO 日期（2026-07-21）
+      window_days: 90                # 演讲稿低频（月 3-8 篇），窗口放大防 0 条
+      wait_ms: 4000                  # BoE 列表 JS 渲染等待
+      article_type: analysis
+      detail:
+        content_selector: "div#output"   # 渲染后正文容器（h2 Speech + p 段落）
+        max_items: 5
+        max_chars: 20000                 # 演讲稿全文（普通 8000 截断会砍半）
+
   - source_id: uk_hmt
     adapter: rss
     tier: L1
@@ -780,7 +802,7 @@ sources:
       subreddits: [Economics, wallstreetbets, investing]
       limit: 25
 
-  # ==================== 死源台账（2026-08-27 全球探测 wave4 更新，留档防重复踩坑） ====================
+  # ==================== 死源台账（2026-08-28 wave6 更新，留档防重复踩坑） ====================
   # scmp：直连 SSL EOF + 代理 ConnectError（双重失败）
   # imf：403 Access Denied（UA/地域双重拒绝）
   # boj：whatsnew 路径重构 404（en 首页 200 但列表页失效；Phase 6 playwright 壳重探）
@@ -795,10 +817,14 @@ sources:
   # china_daily_world：HTTP 200 但 feed 日期冻结 2017-12（假 feed，停用）
   # moneycontrol：HTTP 200 但 feed 日期冻结 2024-04（假 feed，停用）
   # AP 401；BLS 403；Reuters RSS 404；Nikkei 日文站 404（英文站已入+date_fallback）
-  # ---- L1 长文本源专项探测（2026-08-28 wave5）：央行演讲稿静态通道已饱和 ----
+   # ---- L1 长文本源专项探测（2026-08-28 wave5）：央行演讲稿静态通道已饱和 ----
   # ecb speeches（/rss/key.html 404，/press/key 列表页 JS 渲染无静态链接）
-  # boe speeches（列表页 72KB JS 壳，无 /speech/ 链接；speeches RSS 404）
-  # bis cbspeeches（列表页/下载页均 JS 壳，无静态链接）；rba speeches RSS+HTML 全 403（WAF）
+  # boe speeches（列表页 72KB JS 壳，无 /speech/ 链接；speeches RSS 404）→ wave6 已由
+  #   playwright 壳接管（adapter: browser，见 boe_speeches 源）
+  # bis cbspeeches（列表页/下载页均 JS 壳，无静态链接；wave6 发现官方 ZIP 通道
+  #   /speeches/speeches_2026.zip 年度包+全量 123MB——非增量友好，Phase 7 特殊适配器再议）；
+  #   rba speeches RSS+HTML 全 403（WAF）；ecb 列表由 AddSearch 第三方索引驱动
+  #   （addsearch-js-client + data-database-prefix，需搜索 API 适配器，Phase 7 再议）
   # bankofcanada feed ?post_type 参数被忽略（返回通用 Posts 混入非演讲内容，语义不可控弃用）
   # fed per-speaker feeds（s_t_powell 等）与 speeches.xml 内容重叠，不加（避免同文多源放大 n_sources）
   # → ECB/BoE/BIS/RBA 演讲稿全文待 Phase 6+ playwright 壳（needs_browser 通道）；
