@@ -34,7 +34,7 @@ def row(src: str, entity: str, frame: FrameLabel, stance: StanceLabel) -> Stance
 def _rows() -> list[StanceRow]:
     rows: list[StanceRow] = []
     # 官方簇：全 loss/neutral（程式化），市场簇：混 stance
-    for i in range(4):
+    for _i in range(4):
         rows.append(row("gov", "fed", FrameLabel.LOSS, StanceLabel.NEUTRAL))
     rows.append(row("wire", "fed", FrameLabel.GAIN, StanceLabel.SUPPORTIVE))
     rows.append(row("wire", "fed", FrameLabel.GAIN, StanceLabel.SUPPORTIVE))
