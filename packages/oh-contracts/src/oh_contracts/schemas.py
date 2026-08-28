@@ -126,6 +126,8 @@ class NDIPoint(_Strict):
 
     language：within-language 管线标识（裁决 F：Phase 1 zh / Phase 2 en，
     跨语言二级叠加属 Phase 7 门禁；"all" = 未分语言的历史混算，向后兼容）。
+    low_confidence：language="cross"（跨语言二级叠加）时强制为 True——
+    未过四条件门禁前跨语言信号只允许以低置信标签呈现。
     """
 
     event_id: str
@@ -136,10 +138,13 @@ class NDIPoint(_Strict):
     n_sources: int = Field(ge=0)
     status: Literal["ok", "abstain"]
     language: str = "all"
+    low_confidence: bool = False
 
     def model_post_init(self, __context: Any) -> None:
         if self.status == "abstain" and self.ndi is not None:
             raise ValueError("abstain 点位不得携带 ndi 数值")
+        if self.language == "cross" and not self.low_confidence:
+            raise ValueError("跨语言点位（裁决 F）必须携带低置信标签")
 
 
 class SSEMessage(_Strict):
