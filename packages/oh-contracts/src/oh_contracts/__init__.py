@@ -33,6 +33,7 @@ from oh_contracts.enums import (
 )
 from oh_contracts.icd203 import PROBABILITY_RANGES, ProbabilityTerm, term_for_probability
 from oh_contracts.ids import content_hash, make_item_key, url_hash
+from oh_contracts.intel import AchCell, AchMatrix, AchRow, IntelReport, KeyJudgment
 from oh_contracts.schemas import (
     BronzeRecord,
     Claim,
@@ -82,6 +83,11 @@ __all__ = [
     "StanceLabel",
     "StanceRow",
     "Tier",
+    "AchCell",
+    "AchMatrix",
+    "AchRow",
+    "IntelReport",
+    "KeyJudgment",
     "content_hash",
     "make_item_key",
     "term_for_probability",
