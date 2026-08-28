@@ -130,6 +130,88 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             "bronze_records": sum(1 for _ in _bronze().iter_records()),
         }
 
+    @app.get("/api/flow/summary")
+    def flow_summary(days: int = 30) -> dict[str, Any]:
+        """信息流总览（情报大屏数据面）：Bronze 量级 × 框架流 × NDI 总览 × 事件链路。
+
+        daily：published_at（PIT 视角，缺失回落 fetched_at）按 日期×层级×语言 聚合；
+        sources：近窗口每源产出量（星系图节点大小）；frames/ndi 来自 Silver/Gold。
+        """
+        from collections import Counter
+
+        now = _now()
+        cutoff = now - timedelta(days=days)
+        tier_map = _tier_map()
+
+        daily: Counter[tuple[str, str, str]] = Counter()
+        src_n: Counter[str] = Counter()
+        src_lang: dict[str, str] = {}
+        src_last: dict[str, str] = {}
+        for rec in _bronze().iter_records():
+            ts = rec.published_at or rec.fetched_at
+            if ts < cutoff:
+                continue
+            day = ts.date().isoformat()
+            tier = tier_map.get(rec.source_id)
+            tier_v = tier.value if tier is not None else "?"
+            lang = str(rec.normalized.get("lang", "?"))
+            daily[(day, tier_v, lang)] += 1
+            src_n[rec.source_id] += 1
+            src_lang.setdefault(rec.source_id, lang)
+            src_last[rec.source_id] = ts.isoformat()
+
+        store = _store()
+        frames = [f for f in store.flow_frames() if f["date"] >= cutoff.date().isoformat()]
+        ndi = [
+            {
+                "event_id": p.event_id,
+                "ts": p.ts.isoformat(),
+                "ndi": p.ndi,
+                "ci_low": p.ci_low,
+                "ci_high": p.ci_high,
+                "n_sources": p.n_sources,
+                "status": p.status,
+                "language": p.language,
+                "low_confidence": p.low_confidence,
+            }
+            for p in store.ndi_all()
+            if p.ts >= cutoff
+        ]
+        links = []
+        for e in store.events_asof(now):
+            if e.as_of < cutoff:
+                continue
+            for ent in e.entities:
+                links.append(
+                    {
+                        "event_id": e.event_id,
+                        "entity": ent,
+                        "title": e.title,
+                        "as_of": e.as_of.isoformat(),
+                    }
+                )
+        return {
+            "generated_at": now.isoformat(),
+            "days": days,
+            "daily": [
+                {"date": d, "tier": t, "language": lg, "n": n}
+                for (d, t, lg), n in sorted(daily.items())
+            ],
+            "frames": frames,
+            "sources": [
+                {
+                    "source_id": s,
+                    "n": n,
+                    "language": src_lang.get(s, "?"),
+                    "tier": (tier_map[s].value if s in tier_map else "?"),
+                    "last_seen": src_last.get(s),
+                }
+                for s, n in sorted(src_n.items(), key=lambda kv: -kv[1])
+            ],
+            "ndi": ndi,
+            "event_links": links,
+        }
+
     @app.get("/api/events")
     def events(days: int = 7) -> list[dict[str, Any]]:
         store = _store()
