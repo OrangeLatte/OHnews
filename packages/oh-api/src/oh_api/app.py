@@ -63,6 +63,7 @@ class AppPaths:
     logs_dir: Path = Path(".opencode/logs/opencode")
     alerts_db: Path | None = None  # None → root/alerts.sqlite（跟随测试 tmp_path 隔离）
     chat_db: Path | None = None  # None → root/chat.sqlite
+    intel_db: Path | None = None  # None → root/intel.sqlite
     models_yaml: Path | None = None  # None → config/models.yaml（不存在则 chat 降级离线）
     now_fn: Any = None  # () -> datetime；None = datetime.now(UTC)
 
@@ -118,6 +119,12 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
     def _chat_store() -> ChatStore:
         db = paths.chat_db or (paths.root / "chat.sqlite")
         return _lazy("chat_store", lambda: ChatStore(db))
+
+    def _intel_ledger() -> Any:
+        from oh_agents.intel.intel_graph import IntelLedger
+
+        db = paths.intel_db or (paths.root / "intel.sqlite")
+        return _lazy("intel_ledger", lambda: IntelLedger(db))
 
     def _chat_router() -> Any:
         """chat_graph 的 ModelRouter（keys 缺失/配置不存在 → None 降级离线）。"""
@@ -418,6 +425,65 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
     @app.get("/api/chat/{thread_id}/messages")
     def chat_messages(thread_id: str) -> list[dict[str, Any]]:
         return _chat_store().messages(thread_id)
+
+    def _ndi_percentile(latest: float) -> float | None:
+        pts = [p.ndi for p in _store().ndi_all() if p.ndi is not None]
+        if len(pts) < 5:
+            return None
+        below = sum(1 for v in pts if v <= latest)
+        return below / len(pts)
+
+    @app.post("/api/intel/run")
+    async def intel_run(body: dict[str, str] | None = None) -> dict[str, Any]:
+        """一轮六角色情报循环（Scout→Cartographer→ACH→Chief；无 keys 离线降级）。"""
+        from oh_agents.intel.intel_graph import run_intel_cycle
+
+        now = _now()
+        events = _store().events_asof(now)
+        if not events:
+            raise HTTPException(404, "no events in scope")
+        stances = _store().stances_asof(now)
+        by_event: dict[str, int] = {}
+        for s in stances:
+            by_event[s.event_id] = by_event.get(s.event_id, 0) + 1
+        tier_map = _tier_map()
+        official = sum(1 for s in stances if tier_map.get(s.source_id) is SourceTier.OFFICIAL)
+        pts = _store().ndi_all()
+        ok = [p.ndi for p in pts if p.ndi is not None]
+        rep = await run_intel_cycle(
+            events=events,
+            stances_by_event=by_event,
+            official_rows=official,
+            total_rows=len(stances),
+            ndi_points=pts,
+            ndi_percentile=_ndi_percentile(ok[-1]) if ok else None,
+            now=now,
+            router=_chat_router(),
+            scope=(body or {}).get("scope") or "全库巡逻",
+        )
+        _intel_ledger().save(rep)
+        await publish_sse("intel_done", {"report_id": rep.report_id, "engine": rep.engine})
+        return rep.model_dump(mode="json")
+
+    @app.get("/api/intel/latest")
+    def intel_latest() -> dict[str, Any]:
+        reps = _intel_ledger().latest(1)
+        if not reps:
+            raise HTTPException(404, "no intel reports")
+        return reps[0].model_dump(mode="json")
+
+    @app.get("/api/intel/reports")
+    def intel_reports(n: int = 10) -> list[dict[str, Any]]:
+        return [
+            {
+                "report_id": r.report_id,
+                "created_at": r.created_at,
+                "scope": r.scope,
+                "engine": r.engine,
+                "summary": r.summary,
+            }
+            for r in _intel_ledger().latest(n)
+        ]
 
     @app.get("/api/decisions")
     def list_decisions(entity_id: str) -> list[dict[str, Any]]:

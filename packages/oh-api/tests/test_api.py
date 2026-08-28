@@ -79,6 +79,20 @@ def test_spectrum_404(client: TestClient) -> None:
     assert client.get("/api/events/NOPE/spectrum").status_code == 404
 
 
+def test_intel_cycle_endpoints(client: TestClient) -> None:
+    """六角色情报循环：离线降级跑通 + latest/reports 读取。"""
+    r = client.post("/api/intel/run", json={"scope": "测试巡逻"})
+    assert r.status_code == 200
+    rep = r.json()
+    assert rep["engine"] == "offline"
+    assert rep["ach"]["hypotheses"]
+    assert rep["ach"]["conclusion_index"] < len(rep["ach"]["hypotheses"])
+    assert all(k["term"] for k in rep["key_judgments"])
+    latest = client.get("/api/intel/latest").json()
+    assert latest["report_id"] == rep["report_id"]
+    assert client.get("/api/intel/reports").json()[0]["report_id"] == rep["report_id"]
+
+
 def test_brief_endpoint(client: TestClient) -> None:
     r = client.get("/api/brief?watchlist=fed").json()
     assert "NDI" in r["text"] and r["items"] == 1
