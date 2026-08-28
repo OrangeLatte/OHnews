@@ -29,6 +29,7 @@ from oh_agents.research import run_research
 from oh_contracts.enums import SourceTier
 from oh_contracts.text import strip_html
 from oh_pipeline.entities import EntityRegistry
+from oh_pipeline.spectra import sentence_spectrum
 from oh_storage.bronze_parquet import ParquetBronzeWriter
 from oh_storage.connection import connect
 from oh_storage.sqlite_store import SqliteStore
@@ -308,6 +309,33 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             }
             for r in sorted(rows, key=lambda x: -x.confidence)
         ]
+
+    @app.get("/api/events/{event_id}/spectrum")
+    def event_spectrum(event_id: str) -> list[dict[str, Any]]:
+        """句级叙事光谱：事件关联文章逐句框架染色（只读派生，不进 NDI）。"""
+        store = _store()
+        now = _now()
+        rows = [r for r in store.stances_asof(now) if r.event_id == event_id]
+        if not rows:
+            raise HTTPException(404, "no stances for event")
+        wanted = {r.item_key for r in rows}
+        src_by_key: dict[str, str] = {r.item_key: r.source_id for r in rows}
+        docs: list[dict[str, Any]] = []
+        for rec in _bronze().iter_records():
+            if rec.item_key not in wanted:
+                continue
+            body = strip_html(str(rec.normalized.get("body") or rec.normalized.get("title") or ""))
+            docs.append(
+                {
+                    "item_key": rec.item_key,
+                    "source_id": src_by_key.get(rec.item_key, ""),
+                    "title": str(rec.normalized.get("title") or ""),
+                    "published_at": str(rec.normalized.get("published_at") or ""),
+                    "sentences": sentence_spectrum(body),
+                }
+            )
+        docs.sort(key=lambda d: (d["published_at"], d["item_key"]))
+        return docs
 
     @app.get("/api/brief")
     def brief(watchlist: str = "fed,trump,ecb", top: int = 5) -> dict[str, Any]:

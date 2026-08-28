@@ -62,6 +62,23 @@ def test_evidence_404(client: TestClient) -> None:
     assert client.get("/api/events/NOPE/evidence").status_code == 404
 
 
+def test_event_spectrum(client: TestClient) -> None:
+    """句级叙事光谱：24 篇文章逐句染色，LOSS/GAIN 正文帧命中。"""
+    docs = client.get("/api/events/E01/spectrum").json()
+    assert len(docs) == 24
+    assert {"gov", "wscn"} <= {d["source_id"] for d in docs}
+    by_src = {d["source_id"]: d for d in docs}
+    loss_sents = by_src["gov"]["sentences"]
+    assert any(s["frame"] == "loss" for s in loss_sents)
+    gain_sents = by_src["wscn"]["sentences"]
+    assert any(s["frame"] == "gain" for s in gain_sents)
+    assert all("text" in s and "hits" in s for d in docs for s in d["sentences"])
+
+
+def test_spectrum_404(client: TestClient) -> None:
+    assert client.get("/api/events/NOPE/spectrum").status_code == 404
+
+
 def test_brief_endpoint(client: TestClient) -> None:
     r = client.get("/api/brief?watchlist=fed").json()
     assert "NDI" in r["text"] and r["items"] == 1
