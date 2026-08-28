@@ -31,6 +31,23 @@ export type EvidenceRow = {
   quote: string;
 };
 
+export type SpectrumSentence = {
+  i: number;
+  text: string;
+  frame: string | null;
+  stance: string | null;
+  hits: Record<string, number>;
+  keywords: string[];
+};
+
+export type SpectrumDoc = {
+  item_key: string;
+  source_id: string;
+  title: string;
+  published_at: string;
+  sentences: SpectrumSentence[];
+};
+
 export type DecisionRow = {
   decision_id: string;
   event_id: string | null;
@@ -91,6 +108,8 @@ export const api = {
   eventNdi: (id: string) => get<NdiPoint[]>(`/events/${encodeURIComponent(id)}/ndi`),
   eventEvidence: (id: string) =>
     get<EvidenceRow[]>(`/events/${encodeURIComponent(id)}/evidence`),
+  eventSpectrum: (id: string) =>
+    get<SpectrumDoc[]>(`/events/${encodeURIComponent(id)}/spectrum`),
   brief: (watchlist: string, top = 5) =>
     get<{ text: string; items: number }>(
       `/brief?watchlist=${encodeURIComponent(watchlist)}&top=${top}`

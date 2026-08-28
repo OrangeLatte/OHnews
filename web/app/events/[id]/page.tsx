@@ -19,7 +19,93 @@ import {
   api,
   type EvidenceRow,
   type NdiPoint,
+  type SpectrumDoc,
+  type SpectrumSentence,
 } from "@/lib/api";
+
+const FRAME_COLORS: Record<string, string> = {
+  loss: "#e5534b",
+  gain: "#3fb950",
+  responsibility: "#d29922",
+  conflict: "#bc8cff",
+  human_interest: "#58a6ff",
+  other: "#8b949e",
+};
+
+const FRAME_LABELS: Record<string, string> = {
+  loss: "损失",
+  gain: "收益",
+  responsibility: "责任",
+  conflict: "冲突",
+  human_interest: "人情味",
+  other: "其他",
+};
+
+function sentenceBg(s: SpectrumSentence): string | undefined {
+  if (!s.frame) return undefined;
+  const c = FRAME_COLORS[s.frame] ?? FRAME_COLORS.other;
+  return `${c}1f`;
+}
+
+function SpectrumBlock({ docs }: { docs: SpectrumDoc[] }) {
+  const [openKey, setOpenKey] = useState<string | null>(docs[0]?.item_key ?? null);
+  if (docs.length === 0)
+    return <p className="text-sm text-muted-foreground">暂无关联文章</p>;
+  return (
+    <div className="flex flex-col gap-2">
+      {docs.map((d) => {
+        const hits = d.sentences.filter((s) => s.frame).length;
+        const open = openKey === d.item_key;
+        return (
+          <div key={d.item_key} className="rounded-md border border-border/60">
+            <button
+              type="button"
+              onClick={() => setOpenKey(open ? null : d.item_key)}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted/40"
+            >
+              <span className="text-xs">{open ? "▼" : "▶"}</span>
+              <span className="font-mono text-xs text-muted-foreground">{d.source_id}</span>
+              <span className="flex-1 truncate">{d.title || "(无标题)"}</span>
+              <Badge variant="outline" className="text-[10px]">
+                {hits}/{d.sentences.length} 句命中
+              </Badge>
+            </button>
+            {open && (
+              <p className="border-t border-border/60 px-3 py-2 text-sm leading-7">
+                {d.sentences.map((s) => (
+                  <span
+                    key={s.i}
+                    className="mr-1 rounded px-1 py-0.5"
+                    style={{ backgroundColor: sentenceBg(s) }}
+                    title={
+                      s.frame
+                        ? `${FRAME_LABELS[s.frame] ?? s.frame}｜命中：${s.keywords.join("、")}${
+                            s.stance ? `｜立场：${s.stance === "critical" ? "批评" : "支持"}` : ""
+                          }`
+                        : undefined
+                    }
+                  >
+                    {s.text}
+                    {s.stance && (
+                      <sup
+                        className="ml-0.5 text-[10px]"
+                        style={{
+                          color: s.stance === "critical" ? "#e5534b" : "#3fb950",
+                        }}
+                      >
+                        {s.stance === "critical" ? "批" : "挺"}
+                      </sup>
+                    )}
+                  </span>
+                ))}
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function NdiChart({ points }: { points: NdiPoint[] }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -94,14 +180,16 @@ export default function EventPage({
   const { id } = use(params);
   const [ndi, setNdi] = useState<NdiPoint[] | null>(null);
   const [evidence, setEvidence] = useState<EvidenceRow[]>([]);
+  const [spectrum, setSpectrum] = useState<SpectrumDoc[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([api.eventNdi(id), api.eventEvidence(id)])
-      .then(([n, e]) => {
+    Promise.all([api.eventNdi(id), api.eventEvidence(id), api.eventSpectrum(id)])
+      .then(([n, e, sp]) => {
         setNdi(n);
         setEvidence(e);
+        setSpectrum(sp);
       })
       .catch((err) => setError(String(err)));
   }, [id]);
@@ -133,6 +221,18 @@ export default function EventPage({
           ) : (
             <p className="text-sm text-muted-foreground">暂无 NDI 点位</p>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">叙事光谱（句级框架染色，只读派生）</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            按句复用规则层线索词染色：损失红/收益绿/责任黄/冲突紫/人情味蓝；上标「批/挺」= 句内立场线索。悬浮查看命中词。
+          </p>
+        </CardHeader>
+        <CardContent>
+          <SpectrumBlock docs={spectrum} />
         </CardContent>
       </Card>
 
