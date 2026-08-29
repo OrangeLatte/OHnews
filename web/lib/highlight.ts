@@ -10,8 +10,20 @@ const FRAME_WORDS: Record<string, string[]> = {
 
 export type Segment = { text: string; frame: string | null };
 
+/** 清洗残留 HTML 标签与实体（部分源 body 含富文本）。 */
+export function stripHtml(raw: string): string {
+  return raw
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"');
+}
+
 /** 把文本切分为带框架着色的片段（贪心匹配，重叠取最长）。 */
-export function highlightFrames(text: string): Segment[] {
+export function highlightFrames(rawText: string): Segment[] {
+  const text = stripHtml(rawText);
   const hits: { start: number; end: number; frame: string }[] = [];
   for (const [frame, words] of Object.entries(FRAME_WORDS)) {
     for (const w of words) {
