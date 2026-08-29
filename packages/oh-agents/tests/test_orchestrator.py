@@ -156,6 +156,36 @@ def test_offline_artifact_and_run_intent(env) -> None:
     assert art["alternative"] is None
 
 
+def test_offline_challenge_artifact(env) -> None:
+    """challenge 意图：kind=challenge，ACH 纪律=必给竞争解释（alternative 非空）。"""
+    intent = Intent(intent=IntentKind.CHALLENGE, target_kind=TargetKind.EVENT, target_id="E01")
+    p = build_context_packet(
+        intent,
+        bronze=env["bronze"],
+        store=env["store"],
+        gold=env["gold"],
+        registry=env["registry"],
+        tier_map=TIER_MAP,
+        now=env["now"],
+    )
+    out = asyncio.run(
+        run_intent(
+            p,
+            bronze=env["bronze"],
+            store=env["store"],
+            gold=env["gold"],
+            registry=env["registry"],
+            router=None,
+            now=env["now"],
+        )
+    )
+    art = out["artifact"]
+    assert art["kind"] == "challenge"
+    assert art["intent"] == "challenge"
+    assert "H1" in art["alternative"] and "H3" in art["alternative"]
+    assert "红队" in art["uncertainty"]
+
+
 def test_answer_question_offline_with_events(env) -> None:
     """question Investigator 离线路径：命中事件→确定性摘要回答。"""
     from oh_agents.orchestrator import answer_question

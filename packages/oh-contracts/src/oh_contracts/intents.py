@@ -18,13 +18,14 @@ from oh_contracts.schemas import _Strict
 
 
 class IntentKind(StrEnum):
-    """五类 GUI 动作意图（REDESIGN_AGENT §Action-driven）。"""
+    """GUI 动作意图（REDESIGN_AGENT §Action-driven；CHALLENGE=触发式红队）。"""
 
     EXPLAIN_SIGNAL = "explain_signal"
     EXPLAIN_CAUSE = "explain_cause"
     COMPARE_NARRATIVES = "compare_narratives"
     SHOW_EVIDENCE = "show_evidence"
     START_INVESTIGATION = "start_investigation"
+    CHALLENGE = "challenge"
 
 
 class TargetKind(StrEnum):

@@ -27,6 +27,10 @@ _INVESTIGATE_HINTS: dict[IntentKind, str] = {
     IntentKind.COMPARE_NARRATIVES: "对比各信源簇（官方 vs 市场）的框架与立场差异，用证据链支撑。",
     IntentKind.SHOW_EVIDENCE: "列出支持该对象的关键证据（摘录+来源+PIT），并标注缺失佐证。",
     IntentKind.START_INVESTIGATION: "就该对象展开结构化调查：假设、反例、不确定性清单。",
+    IntentKind.CHALLENGE: (
+        "以红队视角挑战当前结论：列出与结论竞争的替代解释、证据弱点与"
+        "可能推翻结论的条件（ACH 纪律：至少给出一个反向证据）。"
+    ),
 }
 
 
@@ -198,6 +202,29 @@ def offline_artifact(packet: ContextPacket) -> AnalysisArtifact:
     elif len(official) == 0:
         alternative = "无官方簇数据，分歧度量缺官方对照——结论仅反映市场侧分布。"
     uncertainty = "；".join(packet.notes) if packet.notes else "离线模板输出：不含 LLM 解释层。"
+
+    if packet.intent == IntentKind.CHALLENGE:
+        # 触发式红队（REDESIGN_AGENT §Challenge Mode）：确定性竞争假设，ACH 纪律=必给反向证据
+        challenge_lines = [
+            "H1 叙事透支：分歧可能只是注意力驱动的过度反应，随后均值回归而非趋势延续。",
+            "H2 基本面反转：叙事变化或由未入样本的基本面事件驱动，叙事滞后于现实。",
+            "H3 采样噪声：官方簇行数有限，Dirichlet 平滑下分歧值对样本量敏感，可能是噪声。",
+        ]
+        red_alternative = "；".join(challenge_lines)
+        red_uncertainty = "；".join(
+            filter(None, [uncertainty, "红队输出不构成对结论的否证，仅列出竞争解释。"])
+        )
+        return AnalysisArtifact(
+            kind=ArtifactKind.CHALLENGE,
+            target_id=packet.target_id,
+            intent=packet.intent,
+            observation=observation,
+            interpretation="当前结论面临三项竞争解释（离线红队，确定性规则）：",
+            evidence=evidence,
+            alternative=red_alternative,
+            uncertainty=red_uncertainty,
+            engine="offline",
+        )
 
     return AnalysisArtifact(
         kind=ArtifactKind.ANALYSIS,
