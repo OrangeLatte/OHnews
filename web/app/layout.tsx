@@ -9,6 +9,10 @@ export const metadata: Metadata = {
 
 const NAV: { group: string; items: { href: string; label: string }[] }[] = [
   {
+    group: "Today",
+    items: [{ href: "/today", label: "今日简报" }],
+  },
+  {
     group: "监测",
     items: [
       { href: "/", label: "总览" },

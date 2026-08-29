@@ -91,6 +91,27 @@ export type DecisionRow = {
   outcome: string | null;
 };
 
+export type SignalRow = {
+  signal_id: string;
+  kind: string;
+  entity_id: string;
+  title: string;
+  what_changed: string;
+  why_it_matters: string | null;
+  metrics: Record<string, number>;
+  strength: number;
+  confidence: number;
+  evidence_ids: string[];
+  detected_at: string;
+  as_of: string;
+};
+
+export type TodayBriefing = {
+  date: string;
+  total: number;
+  signals: SignalRow[];
+};
+
 export type StatusInfo = {
   events: number;
   stances: number;
@@ -175,6 +196,7 @@ export const api = {
   eventNdi: (id: string) => get<NdiPoint[]>(`/events/${encodeURIComponent(id)}/ndi`),
   eventEvidence: (id: string) =>
     get<EvidenceRow[]>(`/events/${encodeURIComponent(id)}/evidence`),
+  today: (top = 10) => get<TodayBriefing>(`/today?top=${top}`),
   eventSpectrum: (id: string) =>
     get<SpectrumDoc[]>(`/events/${encodeURIComponent(id)}/spectrum`),
   eventAnatomy: (id: string) =>
