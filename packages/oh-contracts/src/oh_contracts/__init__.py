@@ -46,6 +46,7 @@ from oh_contracts.schemas import (
     SSEMessage,
     StanceRow,
 )
+from oh_contracts.signals import Signal, SignalKind
 from oh_contracts.text import strip_html
 
 __all__ = [
@@ -84,6 +85,8 @@ __all__ = [
     "StanceRow",
     "Tier",
     "AchCell",
+    "Signal",
+    "SignalKind",
     "AchMatrix",
     "AchRow",
     "IntelReport",

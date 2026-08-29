@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from oh_pipeline.detect import (
+    detect_attention_spikes,
+    detect_expectation_gaps,
+    detect_narrative_shifts,
+    detect_ndi_alerts,
+    detect_signals,
+)
 from oh_pipeline.divergence import (
     dirichlet_smooth,
     js_divergence,
@@ -28,6 +35,11 @@ __all__ = [
     "EntityRegistry",
     "EntitySpec",
     "PipelineReport",
+    "detect_attention_spikes",
+    "detect_expectation_gaps",
+    "detect_narrative_shifts",
+    "detect_ndi_alerts",
+    "detect_signals",
     "RuleTagger",
     "ValidityResult",
     "dirichlet_smooth",
