@@ -27,6 +27,7 @@ const NAV: { group: string; items: { href: string; label: string }[] }[] = [
     group: "分析",
     items: [
       { href: "/analyze", label: "工作台" },
+      { href: "/timeline", label: "叙事时间轴" },
       { href: "/brief", label: "晨报" },
       { href: "/decisions", label: "决策日志" },
     ],

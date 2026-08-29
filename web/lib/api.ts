@@ -60,6 +60,31 @@ export type SpectrumDoc = {
   sentences: SpectrumSentence[];
 };
 
+export type TimelinePoint = {
+  date: string;
+  articles: number;
+  n_events: number;
+  event_ids: string[];
+  ndi: number | null;
+  official_rows: number;
+  market_rows: number;
+};
+
+export type TimelineEventCard = {
+  event_id: string;
+  title: string;
+  as_of: string;
+  ndi: number | null;
+};
+
+export type TimelineResponse = {
+  entity_id: string;
+  days: number;
+  language: string;
+  points: TimelinePoint[];
+  events: TimelineEventCard[];
+};
+
 export type AnatomyData = {
   event_id: string;
   ndi: { ndi: number | null; ts: string; n_sources: number } | null;
@@ -222,6 +247,14 @@ export const api = {
     get<SpectrumDoc[]>(`/events/${encodeURIComponent(id)}/spectrum`),
   eventAnatomy: (id: string) =>
     get<AnatomyData>(`/events/${encodeURIComponent(id)}/anatomy`),
+  entitiesList: () =>
+    get<{
+      entities: { entity_id: string; aliases: string[]; parent_id: string | null }[];
+    }>("/entities"),
+  entityTimeline: (entityId: string, days = 30, language = "any") =>
+    get<TimelineResponse>(
+      `/timeline/${encodeURIComponent(entityId)}?days=${days}&language=${language}`,
+    ),
   intelRun: () =>
     post<IntelReport>("/intel/run", {}),
   intelLatest: () => get<IntelReport>("/intel/latest"),
