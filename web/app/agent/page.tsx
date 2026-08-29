@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { ChatPanel } from "@/app/chat/page";
+import KeySetup from "@/app/agent/key-setup";
 
 export default function AgentPage() {
   const [apiStatus, setApiStatus] = useState<{ ok: boolean; offline?: boolean } | null>(null);
@@ -46,12 +47,9 @@ export default function AgentPage() {
               <dt className="text-muted-foreground">LLM 路由</dt>
               <dd>DeepSeek / GLM 三级</dd>
             </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">未配置 keys 时</dt>
-              <dd>自动降级确定性聚合</dd>
-            </div>
           </dl>
         </section>
+        <KeySetup />
         <section className="border-t border-border/60 pt-3">
           <h2 className="paper-kicker mb-2 !text-[11px] !text-foreground">后台工具</h2>
           <ul className="space-y-1 text-xs text-muted-foreground">

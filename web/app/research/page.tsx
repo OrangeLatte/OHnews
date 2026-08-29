@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import React from "react";
 
 import { ChatPanel } from "@/app/chat/page";
+import KeySetup from "@/app/agent/key-setup";
 import { IntentPanel } from "@/app/agent/intent-panel";
 import type { AgentInvokeResponse } from "@/lib/api";
 import { api } from "@/lib/api";
@@ -238,6 +239,7 @@ export default function ResearchPage({
           ))}
         </div>
         <StructuredResearch st={st} setSt={setSt} />
+        <KeySetup />
       </aside>
     </div>
   );
