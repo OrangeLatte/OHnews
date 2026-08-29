@@ -264,19 +264,35 @@ async def run_intent(
         return {"artifact": art.model_dump(mode="json"), "reply": None, "offline": True}
     from oh_agents.chat import run_chat
 
-    result = await run_chat(
-        intent_message(packet),
-        history or [],
-        bronze=bronze,
-        store=store,
-        gold=gold,
-        registry=registry,
-        router=router,
-        tier=tier,
-        gdelt_proxy=gdelt_proxy,
-        now=now,
-    )
-    return {"artifact": None, "offline": False, **result}
+    try:
+        result = await run_chat(
+            intent_message(packet),
+            history or [],
+            bronze=bronze,
+            store=store,
+            gold=gold,
+            registry=registry,
+            router=router,
+            tier=tier,
+            gdelt_proxy=gdelt_proxy,
+            now=now,
+        )
+        return {"artifact": None, "offline": False, **result}
+    except Exception as exc:  # LLM 全候选失败→优雅降级离线 Artifact（诚实标注失败根因）
+        art = offline_artifact(packet)
+        uncertainty = art.uncertainty or ""
+        art = art.model_copy(
+            update={
+                "uncertainty": (uncertainty + "；" if uncertainty else "")
+                + f"LLM 调用失败已降级离线模板（{exc}）"
+            }
+        )
+        return {
+            "artifact": art.model_dump(mode="json"),
+            "reply": None,
+            "offline": True,
+            "llm_error": str(exc)[:400],
+        }
 
 
 async def answer_question(
