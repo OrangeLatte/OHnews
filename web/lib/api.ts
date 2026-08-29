@@ -137,6 +137,42 @@ export type TodayBriefing = {
   signals: SignalRow[];
 };
 
+export type AgentArtifact = {
+  kind: string;
+  target_id: string;
+  intent: string;
+  observation: string;
+  interpretation: string;
+  evidence: string[];
+  alternative: string | null;
+  uncertainty: string | null;
+  engine: string;
+  created_at: string;
+};
+
+export type AgentPacket = {
+  intent: string;
+  target_kind: string;
+  target_id: string;
+  entity_id: string | null;
+  signal: Record<string, unknown> | null;
+  event: Record<string, unknown> | null;
+  ndi_points: { ts: string; ndi: number | null; status: string }[];
+  stances: { source_id: string; entity_id: string; frame: string; stance: string; confidence: number }[];
+  evidence_ids: string[];
+  notes: string | null;
+};
+
+export type AgentInvokeResponse = {
+  offline: boolean;
+  packet: AgentPacket;
+  artifact?: AgentArtifact;
+  reply?: string;
+  citations?: string[];
+  tools_used?: string[];
+  rounds?: number;
+};
+
 export type WatchRow = {
   watch_id: string;
   type: string;
@@ -237,6 +273,12 @@ export const api = {
   eventEvidence: (id: string) =>
     get<EvidenceRow[]>(`/events/${encodeURIComponent(id)}/evidence`),
   today: (top = 10) => get<TodayBriefing>(`/today?top=${top}`),
+  agentInvoke: (body: {
+    intent: string;
+    target_kind: string;
+    target_id: string;
+    message?: string;
+  }) => post<AgentInvokeResponse>("/agent/invoke", body),
   watches: () => get<{ watches: WatchRow[] }>("/watches"),
   watchAdd: (type: string, query: string) =>
     post<WatchRow>("/watches", { type, query }),

@@ -41,6 +41,11 @@ function MetricChips({ s }: { s: SignalRow }) {
 function SignalCard({ s, index }: { s: SignalRow; index: number }) {
   const meta = KIND_META[s.kind] ?? { label: s.kind, color: "#8b949e" };
   const evidenceId = s.evidence_ids[0];
+  // attention_spike 无事件关联，Ask Analyst 以实体为 target；其余以事件为 target
+  const hasEventTarget = Boolean(evidenceId);
+  const askHref = hasEventTarget
+    ? `/agent?intent=explain_signal&target_kind=signal&target_id=${encodeURIComponent(s.signal_id)}`
+    : `/agent?intent=explain_signal&target_kind=entity&target_id=${encodeURIComponent(s.entity_id)}`;
   return (
     <article className="border-b border-border/60 py-6 first:pt-2 last:border-b-0">
       <div className="mb-2 flex items-baseline gap-3">
@@ -84,7 +89,13 @@ function SignalCard({ s, index }: { s: SignalRow; index: number }) {
       <div className="mt-3 flex items-center gap-3 pl-12">
         <MetricChips s={s} />
         <div className="ml-auto flex gap-2">
-          {evidenceId && (
+          <Link
+            href={askHref}
+            className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            Ask Analyst
+          </Link>
+          {hasEventTarget && (
             <>
               <Link
                 href={`/analyze/${encodeURIComponent(evidenceId)}`}
@@ -94,7 +105,7 @@ function SignalCard({ s, index }: { s: SignalRow; index: number }) {
               </Link>
               <Link
                 href={`/events/${encodeURIComponent(evidenceId)}`}
-                className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
               >
                 Show evidence
               </Link>
