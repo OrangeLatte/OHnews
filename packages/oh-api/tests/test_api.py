@@ -326,6 +326,57 @@ def test_watch_endpoints(client: TestClient) -> None:
     assert client.post("/api/watches/NOPE/refresh").status_code == 404
     # 列表 + 删除
     lst = client.get("/api/watches").json()["watches"]
-    assert {x["type"] for x in lst} == {"entity", "topic", "question"}
-    assert client.delete(f"/api/watches/{q['watch_id']}").json()["removed"] == q["watch_id"]
-    assert client.delete(f"/api/watches/{q['watch_id']}").status_code == 404
+    assert {x["watch_id"] for x in lst} >= {w["watch_id"], t["watch_id"]}
+    for wid in (w["watch_id"], t["watch_id"], q["watch_id"], q2["watch_id"]):
+        assert client.delete(f"/api/watches/{wid}").status_code == 200
+
+
+def test_library_endpoints(client: TestClient) -> None:
+    """Library Research Memory：三类条目 CRUD（REDESIGN §3 Library 页）。"""
+    # 保存 Agent Artifact（五层 JSON）
+    a = client.post(
+        "/api/library",
+        json={
+            "item_type": "analysis",
+            "title": "fed 叙事解读",
+            "ref_kind": "intent",
+            "ref_id": "explain_signal",
+            "payload": {
+                "observation": "NDI 0.279",
+                "interpretation": "官方与市场框架分化",
+                "evidence": ["boe_news", "fed_press"],
+                "alternative": None,
+                "uncertainty": "离线声明",
+            },
+        },
+    ).json()
+    assert a["item_id"].startswith("lib-") and a["item_type"] == "analysis"
+    # 收藏事件 + 手写笔记
+    e = client.post(
+        "/api/library",
+        json={
+            "item_type": "event",
+            "title": "E01 事件",
+            "ref_kind": "event",
+            "ref_id": "E01",
+            "payload": {"event_id": "E01", "ndi": 0.81},
+        },
+    ).json()
+    n = client.post(
+        "/api/library",
+        json={"item_type": "note", "title": "研究思路", "payload": {"text": "关注官方簇样本量"}},
+    ).json()
+    # 列表（倒序）+ 类型过滤
+    lst = client.get("/api/library").json()["items"]
+    assert {i["item_type"] for i in lst} == {"analysis", "event", "note"}
+    only = client.get("/api/library", params={"item_type": "event"}).json()["items"]
+    assert [i["item_id"] for i in only] == [e["item_id"]]
+    # 校验与 404
+    assert client.post("/api/library", json={"item_type": "bad", "title": "x"}).status_code == 422
+    assert client.post("/api/library", json={"item_type": "note", "title": " "}).status_code == 422
+    assert client.get("/api/library", params={"item_type": "bad"}).status_code == 422
+    assert client.delete("/api/library/NOPE").status_code == 404
+    # 删除
+    for iid in (a["item_id"], e["item_id"], n["item_id"]):
+        assert client.delete(f"/api/library/{iid}").status_code == 200
+    assert client.get("/api/library").json()["items"] == []

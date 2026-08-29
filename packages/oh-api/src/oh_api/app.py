@@ -76,6 +76,7 @@ class AppPaths:
     chat_db: Path | None = None  # None → root/chat.sqlite
     intel_db: Path | None = None  # None → root/intel.sqlite
     watch_db: Path | None = None  # None → root/watch.sqlite
+    library_db: Path | None = None  # None → root/library.sqlite
     models_yaml: Path | None = None  # None → config/models.yaml（不存在则 chat 降级离线）
     now_fn: Any = None  # () -> datetime；None = datetime.now(UTC)
 
@@ -143,6 +144,12 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
         db = paths.watch_db or (paths.root / "watch.sqlite")
         return _lazy("watch_store", lambda: WatchStore(db))
+
+    def _library_store() -> Any:
+        from oh_agents.library import LibraryStore
+
+        db = paths.library_db or (paths.root / "library.sqlite")
+        return _lazy("library_store", lambda: LibraryStore(db))
 
     def _chat_router() -> Any:
         """chat_graph 的 ModelRouter（keys 缺失/配置不存在 → None 降级离线）。"""
@@ -402,6 +409,35 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         refreshed = store.get(watch_id)
         assert refreshed is not None
         return refreshed.__dict__
+
+    @app.get("/api/library")
+    def library_list(item_type: str | None = None) -> dict[str, Any]:
+        try:
+            items = _library_store().list(item_type)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        return {"items": [i.__dict__ for i in items]}
+
+    @app.post("/api/library", status_code=201)
+    def library_add(body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            item = _library_store().add(
+                item_type=str(body.get("item_type", "")),
+                title=str(body.get("title", "")),
+                payload=dict(body.get("payload") or {}),
+                ref_kind=body.get("ref_kind"),
+                ref_id=body.get("ref_id"),
+                now=_now(),
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        return item.__dict__
+
+    @app.delete("/api/library/{item_id}")
+    def library_remove(item_id: str) -> dict[str, Any]:
+        if not _library_store().remove(item_id):
+            raise HTTPException(404, "library item not found")
+        return {"removed": item_id}
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
