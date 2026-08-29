@@ -182,6 +182,16 @@ export type WatchRow = {
   last_summary: Record<string, unknown> | null;
 };
 
+export type LibraryItem = {
+  item_id: string;
+  item_type: string;
+  title: string;
+  ref_kind: string | null;
+  ref_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
 export type StatusInfo = {
   events: number;
   stances: number;
@@ -283,6 +293,18 @@ export const api = {
   watchAdd: (type: string, query: string) =>
     post<WatchRow>("/watches", { type, query }),
   watchRemove: (id: string) => del<{ removed: string }>(`/watches/${id}`),
+  library: (itemType?: string) =>
+    get<{ items: LibraryItem[] }>(
+      `/library${itemType ? `?item_type=${encodeURIComponent(itemType)}` : ""}`,
+    ),
+  libraryAdd: (body: {
+    item_type: string;
+    title: string;
+    payload: Record<string, unknown>;
+    ref_kind?: string;
+    ref_id?: string;
+  }) => post<LibraryItem>("/library", body),
+  libraryRemove: (id: string) => del<{ removed: string }>(`/library/${id}`),
   watchRefresh: (id: string, minPerSource = 10) =>
     post<WatchRow>(`/watches/${id}/refresh?min_per_source=${minPerSource}`, {}),
   eventSpectrum: (id: string) =>

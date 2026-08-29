@@ -36,9 +36,33 @@ const LAYER_META: { key: string; label: string; color: string }[] = [
 
 function ArtifactView({ res }: { res: AgentInvokeResponse }) {
   const a = res.artifact;
+  const [savedId, setSavedId] = useState<string | null>(null);
   if (!a) return null;
   const evidence = Array.isArray(a.evidence) ? a.evidence : [];
   const packet = res.packet;
+
+  const saveToLibrary = async () => {
+    try {
+      const item = await api.libraryAdd({
+        item_type: "analysis",
+        title: `${INTENT_LABELS[a.intent] ?? a.intent} · ${a.target_id}`,
+        ref_kind: "intent",
+        ref_id: a.intent,
+        payload: {
+          observation: a.observation,
+          interpretation: a.interpretation,
+          evidence,
+          alternative: a.alternative,
+          uncertainty: a.uncertainty,
+          engine: a.engine,
+        },
+      });
+      setSavedId(item.item_id);
+    } catch {
+      /* 保存失败静默（按钮态不变化） */
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -119,6 +143,21 @@ function ArtifactView({ res }: { res: AgentInvokeResponse }) {
             )}
           </pre>
         </details>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={saveToLibrary}
+            disabled={savedId !== null}
+            className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted/40 disabled:opacity-60"
+          >
+            {savedId ? "已存入档案库" : "保存到档案库"}
+          </button>
+          {savedId && (
+            <a href="/library" className="text-xs text-muted-foreground hover:underline">
+              查看 →
+            </a>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

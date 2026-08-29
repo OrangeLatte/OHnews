@@ -13,6 +13,7 @@ const NAV: { group: string; items: { href: string; label: string }[] }[] = [
     items: [
       { href: "/today", label: "今日简报" },
       { href: "/watch", label: "订阅中心" },
+      { href: "/library", label: "研究档案库" },
     ],
   },
   {
