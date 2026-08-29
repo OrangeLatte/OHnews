@@ -4,25 +4,26 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  /* 复古报纸风：纸白/墨黑/报纸红，hairline 分隔，小圆角 */
+  --radius: 0.125rem;
+  --background: oklch(0.973 0.008 90);
+  --foreground: oklch(0.235 0.012 60);
+  --card: oklch(0.99 0.004 90);
+  --card-foreground: oklch(0.235 0.012 60);
+  --popover: oklch(0.99 0.004 90);
+  --popover-foreground: oklch(0.235 0.012 60);
+  --primary: oklch(0.42 0.11 32);
+  --primary-foreground: oklch(0.985 0.005 90);
+  --secondary: oklch(0.945 0.008 90);
+  --secondary-foreground: oklch(0.3 0.012 60);
+  --muted: oklch(0.945 0.008 90);
+  --muted-foreground: oklch(0.5 0.015 65);
+  --accent: oklch(0.945 0.008 90);
+  --accent-foreground: oklch(0.3 0.012 60);
+  --destructive: oklch(0.5 0.19 27);
+  --border: oklch(0.83 0.012 80);
+  --input: oklch(0.83 0.012 80);
+  --ring: oklch(0.42 0.11 32);
 }
 
 .dark {
@@ -69,8 +70,9 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-ok: oklch(0.72 0.17 150);
-  --color-abstain: oklch(0.78 0.13 85);
+  --color-ok: oklch(0.55 0.12 150);
+  --color-abstain: oklch(0.55 0.11 75);
+  --font-newspaper: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
 }
 
 @layer base {
@@ -80,4 +82,19 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* 报纸排版工具类 */
+.font-paper {
+  font-family: var(--font-newspaper);
+}
+.paper-rule {
+  border-top: 1px solid var(--foreground);
+  border-bottom: 3px double var(--foreground);
+}
+.paper-kicker {
+  font-size: 0.65rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
 }

@@ -137,7 +137,7 @@ export default function TodayPage() {
         <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
           Daily Intelligence Briefing · {briefing.date}
         </p>
-        <h1 className="mt-1 text-2xl font-semibold">
+        <h1 className="font-paper mt-1 text-3xl tracking-tight">
           {briefing.total > 0
             ? `${briefing.total} meaningful changes detected`
             : "今日无显著变化检出"}

@@ -24,7 +24,7 @@ export default function AnalyzeIndexPage() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3">
-        <h1 className="text-lg font-semibold">分析工作台</h1>
+        <h1 className="font-paper text-2xl tracking-tight">分析工作台</h1>
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}

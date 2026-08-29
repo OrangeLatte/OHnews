@@ -114,7 +114,7 @@ export default function TimelinePage() {
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">叙事时间轴</h1>
+        <h1 className="font-paper text-2xl tracking-tight">叙事时间轴</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           实体级生命周期：文章量 × 事件 × NDI（描述性指数，非预测器）。点事件标记下钻证据链。
         </p>

@@ -8,13 +8,13 @@ import { Button } from "@/components/ui/button";
 import { api, type IntelReport } from "@/lib/api";
 
 const TERM_META: Record<string, { zh: string; color: string }> = {
-  almost_certain: { zh: "几乎必然 ≥95%", color: "#3fb950" },
+  almost_certain: { zh: "几乎必然 ≥95%", color: "#1a7f37" },
   highly_likely: { zh: "极可能 80-95%", color: "#56d364" },
   likely: { zh: "可能 55-80%", color: "#d29922" },
-  roughly_even: { zh: "大致对半 45-55%", color: "#8b949e" },
+  roughly_even: { zh: "大致对半 45-55%", color: "#6e7781" },
   unlikely: { zh: "不太可能 20-45%", color: "#d29922" },
-  highly_unlikely: { zh: "极不可能 5-20%", color: "#f0883e" },
-  almost_impossible: { zh: "几乎不可能 <5%", color: "#e5534b" },
+  highly_unlikely: { zh: "极不可能 5-20%", color: "#b45309" },
+  almost_impossible: { zh: "几乎不可能 <5%", color: "#c93c37" },
 };
 
 const KIND_META: Record<string, string> = {
@@ -66,8 +66,8 @@ function AchMatrixTable({ report }: { report: IntelReport }) {
   const ach = report.ach;
   if (!ach) return <p className="text-sm text-muted-foreground">无 ACH 矩阵</p>;
   const scoreCell = (s: number | null) => {
-    if (s === 1) return <span className="text-[#3fb950]">+1</span>;
-    if (s === -1) return <span className="font-bold text-[#e5534b]">−1</span>;
+    if (s === 1) return <span className="text-[#1a7f37]">+1</span>;
+    if (s === -1) return <span className="font-bold text-[#c93c37]">−1</span>;
     if (s === 0) return <span className="text-muted-foreground">0</span>;
     return <span className="text-muted-foreground/50">N/A</span>;
   };
@@ -92,10 +92,10 @@ function AchMatrixTable({ report }: { report: IntelReport }) {
             return (
               <tr
                 key={hi}
-                className={`border-b border-border/40 ${concl ? "bg-[#3fb950]/10" : ""}`}
+                className={`border-b border-border/40 ${concl ? "bg-[#1a7f37]/10" : ""}`}
               >
                 <td className="px-2 py-2">
-                  {concl && <span className="mr-1 text-[#3fb950]">★</span>}
+                  {concl && <span className="mr-1 text-[#1a7f37]">★</span>}
                   <span className={concl ? "font-medium" : ""}>{h.hypothesis}</span>
                   {h.note && (
                     <p className="text-xs text-muted-foreground">{h.note}</p>
@@ -150,9 +150,9 @@ export function IntelPanel() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col gap-5 bg-[#070b14] text-[#c9d1d9]">
+    <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="font-mono text-xl font-bold tracking-wide text-[#e6edf3]">
+        <h1 className="font-mono text-xl font-bold tracking-wide text-foreground">
           情报巡逻 · INTEL CYCLE
         </h1>
         {report && (
@@ -164,8 +164,8 @@ export function IntelPanel() {
               variant="outline"
               className="text-[10px]"
               style={{
-                color: report.engine === "llm" ? "#3fb950" : "#8b949e",
-                borderColor: report.engine === "llm" ? "#3fb95055" : "#8b949e55",
+                color: report.engine === "llm" ? "#1a7f37" : "#6e7781",
+                borderColor: report.engine === "llm" ? "#1a7f3755" : "#6e778155",
               }}
             >
               {report.engine === "llm" ? "LLM 增强" : "离线降级"}
@@ -177,7 +177,7 @@ export function IntelPanel() {
           size="sm"
           onClick={runCycle}
           disabled={running}
-          className="ml-auto bg-[#1f6feb] hover:bg-[#388bfd]"
+          className="ml-auto bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           {running ? "巡逻中…" : "▶ 运行巡逻"}
         </Button>
@@ -187,7 +187,7 @@ export function IntelPanel() {
         竞争假设）→ Chief Analyst（ICD 203 概率语言 Key Judgments）。全部判断为
         描述性情报，非投资建议。
       </p>
-      {error && <p className="text-sm text-[#e5534b]">{error}</p>}
+      {error && <p className="text-sm text-[#c93c37]">{error}</p>}
 
       {!report && !running && (
         <div className="rounded-lg border border-dashed border-border/60 p-10 text-center text-sm text-muted-foreground">
@@ -198,17 +198,17 @@ export function IntelPanel() {
       {report && (
         <>
           {report.key_judgments.length > 0 && (
-            <section className="rounded-lg border border-border/60 bg-[#0d1117] p-4">
-              <h2 className="mb-3 text-sm font-semibold tracking-widest text-[#e6edf3]">
+            <section className="rounded-lg border border-border/60 bg-card p-4">
+              <h2 className="mb-3 text-sm font-semibold tracking-widest text-foreground">
                 KEY JUDGMENTS · ICD 203
               </h2>
               <div className="grid gap-3 md:grid-cols-2">
                 {report.key_judgments.map((k, i) => {
-                  const meta = TERM_META[k.term] ?? { zh: k.term, color: "#8b949e" };
+                  const meta = TERM_META[k.term] ?? { zh: k.term, color: "#6e7781" };
                   return (
                     <div
                       key={i}
-                      className="rounded-md border border-border/50 bg-[#070b14] p-3"
+                      className="rounded-md border border-border/50 bg-background p-3"
                       style={{ borderLeft: `3px solid ${meta.color}` }}
                     >
                       <p className="text-sm">{k.judgment}</p>
@@ -244,17 +244,17 @@ export function IntelPanel() {
           )}
 
           {report.scout_findings.length > 0 && (
-            <section className="rounded-lg border border-border/60 bg-[#0d1117] p-4">
-              <h2 className="mb-3 text-sm font-semibold tracking-widest text-[#e6edf3]">
+            <section className="rounded-lg border border-border/60 bg-card p-4">
+              <h2 className="mb-3 text-sm font-semibold tracking-widest text-foreground">
                 SCOUT FINDINGS · 异常巡逻
               </h2>
               <div className="flex flex-wrap gap-2">
                 {report.scout_findings.map((f, i) => (
                   <div
                     key={i}
-                    className="rounded-md border border-[#f0883e]/40 bg-[#f0883e]/10 px-3 py-1.5 text-xs"
+                    className="rounded-md border border-[#b45309]/40 bg-[#b45309]/10 px-3 py-1.5 text-xs"
                   >
-                    <span className="font-medium text-[#f0883e]">
+                    <span className="font-medium text-[#b45309]">
                       {KIND_META[f.kind] ?? f.kind}
                     </span>{" "}
                     <span className="font-mono">{f.target}</span>{" "}
@@ -266,16 +266,16 @@ export function IntelPanel() {
             </section>
           )}
 
-          <section className="rounded-lg border border-border/60 bg-[#0d1117] p-4">
-            <h2 className="mb-3 text-sm font-semibold tracking-widest text-[#e6edf3]">
+          <section className="rounded-lg border border-border/60 bg-card p-4">
+            <h2 className="mb-3 text-sm font-semibold tracking-widest text-foreground">
               ACH · 竞争假设矩阵（★ = 最经得起反证）
             </h2>
             <AchMatrixTable report={report} />
           </section>
 
           {report.network.nodes.length > 0 && (
-            <section className="rounded-lg border border-border/60 bg-[#0d1117] p-4">
-              <h2 className="mb-3 text-sm font-semibold tracking-widest text-[#e6edf3]">
+            <section className="rounded-lg border border-border/60 bg-card p-4">
+              <h2 className="mb-3 text-sm font-semibold tracking-widest text-foreground">
                 CARTOGRAPHER · 实体共现网络
               </h2>
               <NetworkChart report={report} />

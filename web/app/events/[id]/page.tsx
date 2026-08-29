@@ -208,7 +208,7 @@ export default function EventPage({
         <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
           ← 返回概览
         </Link>
-        <h1 className="font-mono text-lg">{id}</h1>
+        <h1 className="font-paper text-2xl tracking-tight">{id}</h1>
       </div>
 
       <Card>

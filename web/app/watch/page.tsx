@@ -94,7 +94,7 @@ export default function WatchPage() {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <div>
-        <h1 className="font-serif text-2xl tracking-tight">Watch</h1>
+        <h1 className="font-paper text-3xl tracking-tight">订阅中心</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           订阅实体、主题与研究问题——系统在你关心的方向上持续监测变化。
         </p>
