@@ -212,7 +212,7 @@ def offline_artifact(packet: ContextPacket) -> AnalysisArtifact:
     )
 
 
-def run_intent(
+async def run_intent(
     packet: ContextPacket,
     *,
     bronze: Any,
@@ -225,7 +225,11 @@ def run_intent(
     now: datetime | None = None,
     gdelt_proxy: str | None = None,
 ) -> dict[str, Any]:
-    """Intent 执行入口：router 在→chat 图（packet 注入）；router 缺→离线 Artifact。"""
+    """Intent 执行入口：router 在→chat 图（packet 注入）；router 缺→离线 Artifact。
+
+    LLM 路径必须 await run_chat（chat 图为 async）；此前同步调用返回
+    coroutine 的缺陷由本签名修正。
+    """
     if now is None:
         now = datetime.now(UTC)
     if router is None:
@@ -233,7 +237,7 @@ def run_intent(
         return {"artifact": art.model_dump(mode="json"), "reply": None, "offline": True}
     from oh_agents.chat import run_chat
 
-    result = run_chat(
+    result = await run_chat(
         intent_message(packet),
         history or [],
         bronze=bronze,
@@ -246,3 +250,74 @@ def run_intent(
         now=now,
     )
     return {"artifact": None, "offline": False, **result}
+
+
+async def answer_question(
+    question: str,
+    *,
+    bronze: Any,
+    store: Any,
+    gold: Any,
+    registry: Any,
+    tier_map: Any,
+    router: Any = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Question Watch 的 Investigator：事件匹配 → LLM 回答或离线确定性摘要。
+
+    返回 {status, engine, answer, events}：
+    - router 在 → status=answered / engine=llm / answer=chat 回复；
+    - router 缺但命中事件 → status=answered / engine=offline / answer=确定性摘要；
+    - router 缺且无事件 → status=pending_agent / answer=None。
+    """
+    if now is None:
+        now = datetime.now(UTC)
+    qlow = question.lower()
+    events = [
+        {
+            "event_id": e.event_id,
+            "title": e.title,
+            "as_of": e.as_of.isoformat(),
+        }
+        for e in store.events_asof(now)
+        if qlow in (e.title + " " + e.summary).lower()
+        or any(w in (e.title + " " + e.summary).lower() for w in qlow.split())
+    ]
+    if router is not None:
+        from oh_agents.chat import run_chat
+
+        result = await run_chat(
+            question,
+            [],
+            bronze=bronze,
+            store=store,
+            gold=gold,
+            registry=registry,
+            router=router,
+            now=now,
+        )
+        return {
+            "status": "answered",
+            "engine": "llm",
+            "answer": result["reply"],
+            "events": events,
+        }
+    if not events:
+        return {"status": "pending_agent", "engine": "offline", "answer": None, "events": []}
+    eid_by_event = {p.event_id: p for p in store.ndi_all()}
+    lines: list[str] = [f"库内命中 {len(events)} 个相关事件："]
+    for ev in events[:5]:
+        point = eid_by_event.get(ev["event_id"])
+        ndi_txt = (
+            f"NDI {point.ndi:.3f}（{point.language}）"
+            if point is not None and point.ndi is not None
+            else "NDI 弃权（样本不足）"
+        )
+        lines.append(f"- {ev['title']}（{ev['event_id']}）{ndi_txt}")
+    lines.append("（离线模式：以上为确定性快照摘要；配置 LLM keys 后可获得完整分析。）")
+    return {
+        "status": "answered",
+        "engine": "offline",
+        "answer": "\n".join(lines),
+        "events": events,
+    }

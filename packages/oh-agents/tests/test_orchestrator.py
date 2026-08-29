@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from conftest import TIER_MAP, make_now, seed_event
 from oh_agents.orchestrator import (
@@ -134,14 +136,16 @@ def test_offline_artifact_and_run_intent(env) -> None:
         tier_map=TIER_MAP,
         now=env["now"],
     )
-    out = run_intent(
-        p,
-        bronze=env["bronze"],
-        store=env["store"],
-        gold=env["gold"],
-        registry=env["registry"],
-        router=None,
-        now=env["now"],
+    out = asyncio.run(
+        run_intent(
+            p,
+            bronze=env["bronze"],
+            store=env["store"],
+            gold=env["gold"],
+            registry=env["registry"],
+            router=None,
+            now=env["now"],
+        )
     )
     assert out["offline"] is True and out["reply"] is None
     art = out["artifact"]
@@ -150,3 +154,42 @@ def test_offline_artifact_and_run_intent(env) -> None:
     assert art["intent"] == "start_investigation"
     # 极化种子含官方 gov 行 → alternative 不触发"无官方对照"分支
     assert art["alternative"] is None
+
+
+def test_answer_question_offline_with_events(env) -> None:
+    """question Investigator 离线路径：命中事件→确定性摘要回答。"""
+    from oh_agents.orchestrator import answer_question
+
+    out = asyncio.run(
+        answer_question(
+            "事件",
+            bronze=env["bronze"],
+            store=env["store"],
+            gold=env["gold"],
+            registry=env["registry"],
+            tier_map=TIER_MAP,
+            router=None,
+            now=env["now"],
+        )
+    )
+    assert out["status"] == "answered" and out["engine"] == "offline"
+    assert out["answer"] and "相关事件" in out["answer"]
+    assert len(out["events"]) == 1
+
+
+def test_answer_question_pending_without_events(env) -> None:
+    from oh_agents.orchestrator import answer_question
+
+    out = asyncio.run(
+        answer_question(
+            "完全不相关的量子问题",
+            bronze=env["bronze"],
+            store=env["store"],
+            gold=env["gold"],
+            registry=env["registry"],
+            tier_map=TIER_MAP,
+            router=None,
+            now=env["now"],
+        )
+    )
+    assert out["status"] == "pending_agent" and out["answer"] is None
