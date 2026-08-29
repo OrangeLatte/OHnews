@@ -316,6 +316,7 @@ export const api = {
     get<{
       entities: { entity_id: string; aliases: string[]; parent_id: string | null }[];
     }>("/entities"),
+  flowSummary: (days = 30) => get<Record<string, unknown>>(`/flow/summary?days=${days}`),
   entityTimeline: (entityId: string, days = 30, language = "any") =>
     get<TimelineResponse>(
       `/timeline/${encodeURIComponent(entityId)}?days=${days}&language=${language}`,
