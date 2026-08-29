@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import threading
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -503,6 +504,96 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             "ndi_ok": ok,
             "ndi_abstain": len(points) - ok,
             "bronze_records": sum(1 for _ in _bronze().iter_records()),
+        }
+
+    @app.get("/api/sources")
+    def sources_list() -> dict[str, Any]:
+        """信息源管理面（订阅中心）：全源清单 + Bronze 产出统计（订阅中心主表数据）。"""
+        doc: dict[str, Any] = {}
+        if paths.sources_yaml.exists():
+            with paths.sources_yaml.open(encoding="utf-8") as f:
+                doc = yaml.safe_load(f) or {}
+        now = _now()
+        c7: Counter[str] = Counter()
+        c30: Counter[str] = Counter()
+        last_seen: dict[str, str] = {}
+        for rec in _bronze().iter_records():
+            ts = rec.published_at or rec.fetched_at
+            sid = rec.source_id
+            if ts >= now - timedelta(days=7):
+                c7[sid] += 1
+            if ts >= now - timedelta(days=30):
+                c30[sid] += 1
+            prev = last_seen.get(sid)
+            if prev is None or ts.isoformat() > prev:
+                last_seen[sid] = ts.isoformat()
+        rows = []
+        for spec in doc.get("sources", []):
+            sid = spec.get("source_id")
+            if not sid:
+                continue
+            rows.append(
+                {
+                    "source_id": sid,
+                    "kind": spec.get("kind", "?"),
+                    "tier": spec.get("tier", "?"),
+                    "language": spec.get("language", "?"),
+                    "enabled": bool(spec.get("enabled", True)),
+                    "n_7d": c7.get(sid, 0),
+                    "n_30d": c30.get(sid, 0),
+                    "last_seen": last_seen.get(sid),
+                }
+            )
+        rows.sort(key=lambda r: (-r["n_7d"], -r["n_30d"], r["source_id"]))
+        return {"n": len(rows), "sources": rows}
+
+    @app.get("/api/sources/{source_id}/articles")
+    def source_articles(source_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """单源最近文章（源详情 + 句级多色标注的数据面）。"""
+        rows = []
+        for rec in _bronze().iter_records():
+            if rec.source_id != source_id:
+                continue
+            ts = rec.published_at or rec.fetched_at
+            rows.append(
+                {
+                    "item_key": rec.item_key,
+                    "title": str(rec.normalized.get("title") or ""),
+                    "url": str(rec.normalized.get("url") or ""),
+                    "published_at": ts.isoformat(),
+                    "body": str(rec.normalized.get("body") or "")[:600],
+                }
+            )
+        rows.sort(key=lambda r: r["published_at"], reverse=True)
+        return rows[: max(1, min(limit, 100))]
+
+    @app.post("/api/sources/{source_id}/refresh")
+    def source_refresh(source_id: str, days: int = 1) -> dict[str, Any]:
+        """单源采集操作（订阅中心「操作」列；同步执行，返回本窗口写入量）。"""
+        from oh_sources.registry import build_registry
+        from oh_sources.runner import run_collector
+
+        registry = build_registry(paths.sources_yaml)
+        try:
+            adapter = registry.get(source_id)
+        except KeyError as e:
+            raise HTTPException(404, f"unknown source: {source_id}") from e
+        now = _now()
+        result = asyncio.run(
+            run_collector(
+                adapter,
+                writer=_bronze(),
+                since=now - timedelta(days=max(1, min(days, 90))),
+                until=now,
+            )
+        )
+        return {
+            "source_id": result.source_id,
+            "ok": result.ok,
+            "n_items": result.n_items,
+            "n_written": result.n_written,
+            "error": result.error,
+            "duration_ms": result.duration_ms,
         }
 
     @app.get("/api/flow/summary")
