@@ -34,6 +34,14 @@ from oh_contracts.enums import (
 from oh_contracts.icd203 import PROBABILITY_RANGES, ProbabilityTerm, term_for_probability
 from oh_contracts.ids import content_hash, make_item_key, url_hash
 from oh_contracts.intel import AchCell, AchMatrix, AchRow, IntelReport, KeyJudgment
+from oh_contracts.intents import (
+    AnalysisArtifact,
+    ArtifactKind,
+    ContextPacket,
+    Intent,
+    IntentKind,
+    TargetKind,
+)
 from oh_contracts.schemas import (
     BronzeRecord,
     Claim,
@@ -50,6 +58,12 @@ from oh_contracts.signals import Signal, SignalKind
 from oh_contracts.text import strip_html
 
 __all__ = [
+    "AnalysisArtifact",
+    "ArtifactKind",
+    "ContextPacket",
+    "Intent",
+    "IntentKind",
+    "TargetKind",
     "strip_html",
     "BOOTSTRAP_RESAMPLES",
     "CONF_TAU_RULE",
