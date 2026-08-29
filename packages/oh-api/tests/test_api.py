@@ -43,6 +43,22 @@ def test_health(client: TestClient) -> None:
     assert r.json()["status"] == "ok"
 
 
+def test_today_briefing(client: TestClient) -> None:
+    """/api/today：极化种子事件应产出 NDI_ALERT / EXPECTATION_GAP Signal。"""
+    r = client.get("/api/today", params={"min_per_source": 1})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["date"] == make_now().date().isoformat()
+    kinds = {s["kind"] for s in data["signals"]}
+    assert "ndi_alert" in kinds and "expectation_gap" in kinds
+    for s in data["signals"]:
+        assert s["title"] and s["what_changed"]
+        assert 0 <= s["strength"] <= 100
+        assert s["evidence_ids"] == ["E01"]
+    strengths = [s["strength"] for s in data["signals"]]
+    assert strengths == sorted(strengths, reverse=True)
+
+
 def test_status_and_events(client: TestClient) -> None:
     s = client.get("/api/status").json()
     assert s["events"] == 1 and s["ndi_ok"] == 1

@@ -29,6 +29,7 @@ from oh_agents.research import run_research
 from oh_contracts.enums import SourceTier
 from oh_contracts.text import strip_html
 from oh_pipeline.anatomy import cluster_distributions, cluster_pairwise, entity_opposition
+from oh_pipeline.detect import detect_signals
 from oh_pipeline.entities import EntityRegistry
 from oh_pipeline.spectra import sentence_spectrum
 from oh_pipeline.svo import parse_passage
@@ -148,6 +149,25 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
     def _registry() -> EntityRegistry:
         return _lazy("registry", lambda: EntityRegistry())
+
+    @app.get("/api/today")
+    def today(top: int = 10, min_per_source: int = 10) -> dict[str, Any]:
+        """Daily Intelligence Briefing（REDESIGN §3/§7）：确定性变化检测 → Top-N Signal。"""
+        now = _now()
+        sigs = detect_signals(
+            _bronze().iter_records(),
+            _store(),
+            _registry(),
+            _tier_map(),
+            now,
+            min_per_source=min_per_source,
+            top_n=max(1, min(top, 30)),
+        )
+        return {
+            "date": now.date().isoformat(),
+            "total": len(sigs),
+            "signals": [s.model_dump(mode="json") for s in sigs],
+        }
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
