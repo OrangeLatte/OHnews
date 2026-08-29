@@ -283,12 +283,27 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                     "market_rows": market.get(d, 0),
                 }
             )
+        # R3：事件主导框架（全量 stance 行 argmax；v0 简化，不按簇分开计数）
+        frame_counts: dict[str, dict[str, int]] = {}
+        for row in store.stances_asof(now):
+            if row.event_id not in entity_event_ids:
+                continue
+            counts = frame_counts.setdefault(row.event_id, {})
+            counts[row.frame] = counts.get(row.frame, 0) + 1
+
+        def dominant_frame(eid: str) -> str | None:
+            c = frame_counts.get(eid)
+            if not c:
+                return None
+            return max(c.items(), key=lambda kv: (kv[1], kv[0]))[0]
+
         event_cards = [
             {
                 "event_id": ev.event_id,
                 "title": ev.title,
                 "as_of": ev.as_of.isoformat(),
                 "ndi": ndi_by_event.get(ev.event_id, None) and ndi_by_event[ev.event_id].ndi,
+                "dominant_frame": dominant_frame(ev.event_id),
             }
             for ev in events
             if ev.as_of.date() >= start
@@ -322,14 +337,8 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             raise HTTPException(404, "watch not found")
         return {"removed": watch_id}
 
-    @app.post("/api/watches/{watch_id}/refresh")
-    async def watches_refresh(watch_id: str, min_per_source: int = 10) -> dict[str, Any]:
-        """按类型重算订阅快照（entity/topic 确定性；question 接 Investigator）。"""
-        store = _watch_store()
-        w = store.get(watch_id)
-        if w is None:
-            raise HTTPException(404, "watch not found")
-        now = _now()
+    async def _refresh_one(w: Any, min_per_source: int, now: datetime) -> dict[str, Any]:
+        """按类型重算单个订阅快照（entity/topic 确定性；question 接 Investigator）。"""
         query = w.query
         if w.type == "entity":
             sigs = detect_signals(
@@ -347,12 +356,25 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                 for e in _store().events_asof(now)
                 if query in (e.entities or [])
             ]
+            # alerts 打通：该实体的既有规则触发（供订阅快照直接可见）
+            rules = [r for r in _alerts().list_rules() if r.entity_id == query]
+            hits = [h for h in _alerts().list_hits(limit=100) if h.entity_id == query][:3]
             summary: dict[str, Any] = {
                 "kind": "entity",
                 "n_signals": len(mine),
                 "signals": [s.model_dump(mode="json") for s in mine[:5]],
                 "n_events": len(events),
                 "events": events[:10],
+                "n_alert_rules": len(rules),
+                "alerts": [
+                    {
+                        "event_title": h.event_title,
+                        "ndi": h.ndi,
+                        "baseline": h.baseline,
+                        "triggered_at": h.triggered_at.isoformat(),
+                    }
+                    for h in hits
+                ],
             }
         elif w.type == "topic":
             terms = [t.strip().lower() for t in query.split(",") if t.strip()]
@@ -405,10 +427,33 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                 "n_matched_events": len(inv["events"]),
                 "events": inv["events"][:10],
             }
-        store.save_summary(watch_id, now=now, summary=summary)
-        refreshed = store.get(watch_id)
+        _watch_store().save_summary(w.watch_id, now=now, summary=summary)
+        refreshed = _watch_store().get(w.watch_id)
         assert refreshed is not None
         return refreshed.__dict__
+
+    @app.post("/api/watches/refresh_all")
+    async def watches_refresh_all(min_per_source: int = 10) -> dict[str, Any]:
+        """一键刷新全部订阅（供 cron / scripts/dev/refresh_watches.py 调用）。"""
+        now = _now()
+        results = []
+        for w in _watch_store().list():
+            try:
+                refreshed = await _refresh_one(w, min_per_source, now)
+                results.append(
+                    {"watch_id": w.watch_id, "ok": True, "summary": refreshed.get("last_summary")}
+                )
+            except Exception as exc:  # BLE001：单条失败不阻断整体刷新
+                results.append({"watch_id": w.watch_id, "ok": False, "error": str(exc)})
+        return {"refreshed_at": now.isoformat(), "n": len(results), "results": results}
+
+    @app.post("/api/watches/{watch_id}/refresh")
+    async def watches_refresh(watch_id: str, min_per_source: int = 10) -> dict[str, Any]:
+        store = _watch_store()
+        w = store.get(watch_id)
+        if w is None:
+            raise HTTPException(404, "watch not found")
+        return await _refresh_one(w, min_per_source, _now())
 
     @app.get("/api/library")
     def library_list(item_type: str | None = None) -> dict[str, Any]:
