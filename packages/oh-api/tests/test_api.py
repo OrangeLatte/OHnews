@@ -248,3 +248,33 @@ def test_chat_endpoints(client: TestClient) -> None:
     threads = client.get("/api/chat/threads").json()
     assert threads[0]["thread_id"] == tid and threads[0]["n"] == 4
     assert client.post("/api/chat", json={}).status_code == 422
+
+
+def test_watch_endpoints(client: TestClient) -> None:
+    """Watch 订阅中心：三类 CRUD + refresh 确定性快照（REDESIGN §3 Watch 页）。"""
+    # entity：refresh 过滤该实体 Signal + 事件
+    w = client.post("/api/watches", json={"type": "entity", "query": "fed"}).json()
+    r = client.post(f"/api/watches/{w['watch_id']}/refresh", params={"min_per_source": 1}).json()
+    assert r["type"] == "entity" and r["last_summary"]["kind"] == "entity"
+    assert r["last_summary"]["n_events"] >= 1  # seed E01 entities=[fed]
+    # topic：关键词命中 Bronze 计数 + 事件匹配
+    t = client.post("/api/watches", json={"type": "topic", "query": "衰退,增长"}).json()
+    rt = client.post(f"/api/watches/{t['watch_id']}/refresh").json()
+    st = rt["last_summary"]
+    assert st["kind"] == "topic" and st["n_articles"] >= 12  # LOSS/GAIN body 各 12 篇
+    # 事件 title/summary 不含关键词 → 0 命中（匹配语义正确）；结构完整即可
+    assert isinstance(st["n_events"], int) and st["top_sources"]
+    # question：关键词分词匹配事件（title 含"事件"），pending_agent 待 R4
+    q = client.post("/api/watches", json={"type": "question", "query": "事件"}).json()
+    rq = client.post(f"/api/watches/{q['watch_id']}/refresh").json()
+    assert rq["last_summary"]["status"] == "pending_agent"
+    assert rq["last_summary"]["n_matched_events"] >= 1
+    # 校验与 404
+    assert client.post("/api/watches", json={"type": "bad", "query": "x"}).status_code == 422
+    assert client.post("/api/watches", json={"type": "topic", "query": "  "}).status_code == 422
+    assert client.post("/api/watches/NOPE/refresh").status_code == 404
+    # 列表 + 删除
+    lst = client.get("/api/watches").json()["watches"]
+    assert {x["type"] for x in lst} == {"entity", "topic", "question"}
+    assert client.delete(f"/api/watches/{q['watch_id']}").json()["removed"] == q["watch_id"]
+    assert client.delete(f"/api/watches/{q['watch_id']}").status_code == 404

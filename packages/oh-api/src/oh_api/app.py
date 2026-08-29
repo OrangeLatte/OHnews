@@ -67,6 +67,7 @@ class AppPaths:
     alerts_db: Path | None = None  # None → root/alerts.sqlite（跟随测试 tmp_path 隔离）
     chat_db: Path | None = None  # None → root/chat.sqlite
     intel_db: Path | None = None  # None → root/intel.sqlite
+    watch_db: Path | None = None  # None → root/watch.sqlite
     models_yaml: Path | None = None  # None → config/models.yaml（不存在则 chat 降级离线）
     now_fn: Any = None  # () -> datetime；None = datetime.now(UTC)
 
@@ -129,6 +130,12 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         db = paths.intel_db or (paths.root / "intel.sqlite")
         return _lazy("intel_ledger", lambda: IntelLedger(db))
 
+    def _watch_store() -> Any:
+        from oh_agents.watch import WatchStore
+
+        db = paths.watch_db or (paths.root / "watch.sqlite")
+        return _lazy("watch_store", lambda: WatchStore(db))
+
     def _chat_router() -> Any:
         """chat_graph 的 ModelRouter（keys 缺失/配置不存在 → None 降级离线）。"""
         my = paths.models_yaml or Path("config/models.yaml")
@@ -168,6 +175,109 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             "total": len(sigs),
             "signals": [s.model_dump(mode="json") for s in sigs],
         }
+
+    @app.get("/api/watches")
+    def watches_list() -> dict[str, Any]:
+        return {"watches": [w.__dict__ for w in _watch_store().list()]}
+
+    @app.post("/api/watches", status_code=201)
+    def watches_add(body: dict[str, str]) -> dict[str, Any]:
+        try:
+            w = _watch_store().add(
+                type=str(body.get("type", "")), query=str(body.get("query", "")), now=_now()
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        return w.__dict__
+
+    @app.delete("/api/watches/{watch_id}")
+    def watches_remove(watch_id: str) -> dict[str, Any]:
+        if not _watch_store().remove(watch_id):
+            raise HTTPException(404, "watch not found")
+        return {"removed": watch_id}
+
+    @app.post("/api/watches/{watch_id}/refresh")
+    def watches_refresh(watch_id: str, min_per_source: int = 10) -> dict[str, Any]:
+        """按类型重算订阅快照（确定性，无 LLM；question 的 Agent 回答在 R4 接入）。"""
+        store = _watch_store()
+        w = store.get(watch_id)
+        if w is None:
+            raise HTTPException(404, "watch not found")
+        now = _now()
+        query = w.query
+        if w.type == "entity":
+            sigs = detect_signals(
+                _bronze().iter_records(),
+                _store(),
+                _registry(),
+                _tier_map(),
+                now,
+                min_per_source=min_per_source,
+                top_n=30,
+            )
+            mine = [s for s in sigs if s.entity_id == query]
+            events = [
+                {"event_id": e.event_id, "title": e.title, "as_of": e.as_of.isoformat()}
+                for e in _store().events_asof(now)
+                if query in (e.entities or [])
+            ]
+            summary: dict[str, Any] = {
+                "kind": "entity",
+                "n_signals": len(mine),
+                "signals": [s.model_dump(mode="json") for s in mine[:5]],
+                "n_events": len(events),
+                "events": events[:10],
+            }
+        elif w.type == "topic":
+            terms = [t.strip().lower() for t in query.split(",") if t.strip()]
+            cutoff = now - timedelta(days=7)
+            n_hits = 0
+            by_source: dict[str, int] = {}
+            for rec in _bronze().iter_records():
+                pub = rec.published_at or rec.fetched_at
+                if pub < cutoff:
+                    continue
+                text = (
+                    str(rec.normalized.get("title", ""))
+                    + "\n"
+                    + str(rec.normalized.get("body", ""))
+                ).lower()
+                if any(t in text for t in terms):
+                    n_hits += 1
+                    by_source[rec.source_id] = by_source.get(rec.source_id, 0) + 1
+            top_sources = sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+            events = [
+                {"event_id": e.event_id, "title": e.title, "as_of": e.as_of.isoformat()}
+                for e in _store().events_asof(now)
+                if any(t in (e.title + " " + e.summary).lower() for t in terms)
+            ]
+            summary = {
+                "kind": "topic",
+                "terms": terms,
+                "days": 7,
+                "n_articles": n_hits,
+                "top_sources": [{"source_id": s, "n": n} for s, n in top_sources],
+                "n_events": len(events),
+                "events": events[:10],
+            }
+        else:  # question
+            qlow = query.lower()
+            events = [
+                {"event_id": e.event_id, "title": e.title, "as_of": e.as_of.isoformat()}
+                for e in _store().events_asof(now)
+                if qlow in (e.title + " " + e.summary).lower()
+                or any(w in (e.title + " " + e.summary).lower() for w in qlow.split())
+            ]
+            summary = {
+                "kind": "question",
+                "status": "pending_agent",
+                "n_matched_events": len(events),
+                "events": events[:10],
+            }
+        store.save_summary(watch_id, now=now, summary=summary)
+        refreshed = store.get(watch_id)
+        assert refreshed is not None
+        return refreshed.__dict__
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
