@@ -8,8 +8,9 @@ export const metadata: Metadata = {
 };
 
 const NAV: { href: string; label: string }[] = [
+  { href: "/", label: "情报看板" },
   { href: "/today", label: "今日简报" },
-  { href: "/watch", label: "订阅" },
+  { href: "/watch", label: "信息源与订阅" },
   { href: "/agent", label: "研究台" },
   { href: "/library", label: "档案库" },
 ];
@@ -24,7 +25,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="zh" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
-        <header className="mx-auto w-full max-w-6xl px-6 pt-6">
+        <header className="mx-auto w-full max-w-7xl px-6 pt-6">
           <div className="flex items-end justify-between border-b pb-1">
             <p className="paper-kicker">Non-commercial research edition</p>
             <p className="paper-kicker">{today}</p>
@@ -52,8 +53,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             </span>
           </nav>
         </header>
-        <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-6">{children}</main>
-        <footer className="mx-auto w-full max-w-6xl border-t px-6 py-3 text-xs text-muted-foreground">
+        <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-6">{children}</main>
+        <footer className="mx-auto w-full max-w-7xl border-t px-6 py-3 text-xs text-muted-foreground">
           叙事分歧指数 NDI 为描述性监测指标；测量效度 ρ≥0.8 通过前不对外引用。
           本项目为非商业研究，不构成投资建议。
         </footer>

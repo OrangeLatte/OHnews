@@ -11,6 +11,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import SourcesManager from "@/app/watch/sources-manager";
+
 import { api, type SignalRow, type WatchRow } from "@/lib/api";
 
 const TYPE_META: Record<string, { label: string; hint: string; color: string }> = {
@@ -98,9 +100,10 @@ export default function WatchPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
+    <div className="flex flex-col gap-8">
+      <SourcesManager />
       <div>
-        <h1 className="font-paper text-3xl tracking-tight">订阅中心</h1>
+        <h2 className="font-paper text-xl">我的订阅</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           订阅实体、主题与研究问题——系统在你关心的方向上持续监测变化。
         </p>
