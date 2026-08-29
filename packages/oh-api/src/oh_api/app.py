@@ -25,7 +25,12 @@ from oh_agents.alerts import check_alerts
 from oh_agents.chat import ChatStore, run_chat
 from oh_agents.decision_log import DecisionLog
 from oh_agents.morning_brief import build_brief
-from oh_agents.orchestrator import build_context_packet, offline_artifact, run_intent
+from oh_agents.orchestrator import (
+    answer_question,
+    build_context_packet,
+    offline_artifact,
+    run_intent,
+)
 from oh_agents.research import run_research
 from oh_contracts.enums import SourceTier
 from oh_contracts.intents import Intent
@@ -311,8 +316,8 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         return {"removed": watch_id}
 
     @app.post("/api/watches/{watch_id}/refresh")
-    def watches_refresh(watch_id: str, min_per_source: int = 10) -> dict[str, Any]:
-        """按类型重算订阅快照（确定性，无 LLM；question 的 Agent 回答在 R4 接入）。"""
+    async def watches_refresh(watch_id: str, min_per_source: int = 10) -> dict[str, Any]:
+        """按类型重算订阅快照（entity/topic 确定性；question 接 Investigator）。"""
         store = _watch_store()
         w = store.get(watch_id)
         if w is None:
@@ -375,18 +380,23 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                 "events": events[:10],
             }
         else:  # question
-            qlow = query.lower()
-            events = [
-                {"event_id": e.event_id, "title": e.title, "as_of": e.as_of.isoformat()}
-                for e in _store().events_asof(now)
-                if qlow in (e.title + " " + e.summary).lower()
-                or any(w in (e.title + " " + e.summary).lower() for w in qlow.split())
-            ]
+            inv = await answer_question(
+                query,
+                bronze=_bronze(),
+                store=_store(),
+                gold=_store(),
+                registry=_registry(),
+                tier_map=_tier_map(),
+                router=_chat_router(),
+                now=now,
+            )
             summary = {
                 "kind": "question",
-                "status": "pending_agent",
-                "n_matched_events": len(events),
-                "events": events[:10],
+                "status": inv["status"],
+                "engine": inv["engine"],
+                "answer": inv["answer"],
+                "n_matched_events": len(inv["events"]),
+                "events": inv["events"][:10],
             }
         store.save_summary(watch_id, now=now, summary=summary)
         refreshed = store.get(watch_id)

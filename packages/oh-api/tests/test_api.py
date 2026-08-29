@@ -310,11 +310,16 @@ def test_watch_endpoints(client: TestClient) -> None:
     assert st["kind"] == "topic" and st["n_articles"] >= 12  # LOSS/GAIN body 各 12 篇
     # 事件 title/summary 不含关键词 → 0 命中（匹配语义正确）；结构完整即可
     assert isinstance(st["n_events"], int) and st["top_sources"]
-    # question：关键词分词匹配事件（title 含"事件"），pending_agent 待 R4
+    # question：Investigator 接入（R4）——无 keys 但命中事件 → 离线确定性回答
     q = client.post("/api/watches", json={"type": "question", "query": "事件"}).json()
     rq = client.post(f"/api/watches/{q['watch_id']}/refresh").json()
-    assert rq["last_summary"]["status"] == "pending_agent"
-    assert rq["last_summary"]["n_matched_events"] >= 1
+    qs = rq["last_summary"]
+    assert qs["status"] == "answered" and qs["engine"] == "offline"
+    assert "相关事件" in qs["answer"] and qs["n_matched_events"] >= 1
+    # 完全不相关问题：无 keys 且无命中 → pending_agent
+    q2 = client.post("/api/watches", json={"type": "question", "query": "量子纠缠与期货"}).json()
+    rq2 = client.post(f"/api/watches/{q2['watch_id']}/refresh").json()
+    assert rq2["last_summary"]["status"] == "pending_agent"
     # 校验与 404
     assert client.post("/api/watches", json={"type": "bad", "query": "x"}).status_code == 422
     assert client.post("/api/watches", json={"type": "topic", "query": "  "}).status_code == 422
