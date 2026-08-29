@@ -1,294 +1,303 @@
 "use client";
 
-import { use, useEffect, useRef, useState } from "react";
-import * as echarts from "echarts";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  api,
-  type EvidenceRow,
-  type NdiPoint,
-  type SpectrumDoc,
-  type SpectrumSentence,
-} from "@/lib/api";
+import { api, type AnatomyData, type EvidenceRow, type NdiPoint, type SpectrumDoc } from "@/lib/api";
+import { divergenceLevel, divergenceTrend, FRAME_ZH } from "@/lib/insight";
 
-const FRAME_COLORS: Record<string, string> = {
-  loss: "#e5534b",
-  gain: "#3fb950",
-  responsibility: "#d29922",
-  conflict: "#bc8cff",
-  human_interest: "#58a6ff",
-  other: "#8b949e",
+type EventMeta = {
+  event_id: string;
+  title: string;
+  entities: string[];
+  as_of: string;
+  ndi: number | null;
+  ndi_status: string;
+  n_sources: number;
 };
 
-const FRAME_LABELS: Record<string, string> = {
-  loss: "损失",
-  gain: "收益",
-  responsibility: "责任",
-  conflict: "冲突",
-  human_interest: "人情味",
-  other: "其他",
+const TIER_GROUP: Record<string, { label: string; zh: string; order: number }> = {
+  L1: { label: "Primary", zh: "官方声明", order: 0 },
+  L2: { label: "Secondary", zh: "通讯社与权威媒体", order: 1 },
+  L3: { label: "Market", zh: "市场媒体", order: 2 },
+  L4: { label: "Social", zh: "社媒讨论", order: 3 },
 };
 
-function sentenceBg(s: SpectrumSentence): string | undefined {
-  if (!s.frame) return undefined;
-  const c = FRAME_COLORS[s.frame] ?? FRAME_COLORS.other;
-  return `${c}1f`;
-}
-
-function SpectrumBlock({ docs }: { docs: SpectrumDoc[] }) {
-  const [openKey, setOpenKey] = useState<string | null>(docs[0]?.item_key ?? null);
-  if (docs.length === 0)
-    return <p className="text-sm text-muted-foreground">暂无关联文章</p>;
+function SectionHead({ no, en, zh }: { no: string; en: string; zh: string }) {
   return (
-    <div className="flex flex-col gap-2">
-      {docs.map((d) => {
-        const hits = d.sentences.filter((s) => s.frame).length;
-        const open = openKey === d.item_key;
-        return (
-          <div key={d.item_key} className="rounded-md border border-border/60">
-            <button
-              type="button"
-              onClick={() => setOpenKey(open ? null : d.item_key)}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted/40"
-            >
-              <span className="text-xs">{open ? "▼" : "▶"}</span>
-              <span className="font-mono text-xs text-muted-foreground">{d.source_id}</span>
-              <span className="flex-1 truncate">{d.title || "(无标题)"}</span>
-              <Badge variant="outline" className="text-[10px]">
-                {hits}/{d.sentences.length} 句命中
-              </Badge>
-            </button>
-            {open && (
-              <p className="border-t border-border/60 px-3 py-2 text-sm leading-7">
-                {d.sentences.map((s) => (
-                  <span
-                    key={s.i}
-                    className="mr-1 rounded px-1 py-0.5"
-                    style={{ backgroundColor: sentenceBg(s) }}
-                    title={
-                      s.frame
-                        ? `${FRAME_LABELS[s.frame] ?? s.frame}｜命中：${s.keywords.join("、")}${
-                            s.stance ? `｜立场：${s.stance === "critical" ? "批评" : "支持"}` : ""
-                          }`
-                        : undefined
-                    }
-                  >
-                    {s.text}
-                    {s.stance && (
-                      <sup
-                        className="ml-0.5 text-[10px]"
-                        style={{
-                          color: s.stance === "critical" ? "#e5534b" : "#3fb950",
-                        }}
-                      >
-                        {s.stance === "critical" ? "批" : "挺"}
-                      </sup>
-                    )}
-                  </span>
-                ))}
-              </p>
-            )}
-          </div>
-        );
-      })}
+    <div className="mt-8 flex items-baseline gap-3 border-b border-foreground/20 pb-1">
+      <span className="font-serif text-sm text-muted-foreground">{no}</span>
+      <h2 className="font-paper text-lg tracking-tight">{en}</h2>
+      <span className="paper-kicker">{zh}</span>
     </div>
   );
 }
 
-function NdiChart({ points }: { points: NdiPoint[] }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!ref.current || points.length === 0) return;
-    const ts = points.map((p) => p.ts.replace("T", " ").slice(0, 16));
-    const ndi = points.map((p) => p.ndi);
-    const lo = points.map((p) => p.ci_low);
-    const hi = points.map((p) => p.ci_high);
-    const chart = echarts.init(ref.current);
-    chart.setOption({
-      backgroundColor: "transparent",
-      tooltip: { trigger: "axis" },
-      legend: { data: ["NDI", "CI 下界", "CI 上界"], textStyle: { color: "#9ca3af" } },
-      grid: { left: 48, right: 24, top: 40, bottom: 32 },
-      xAxis: { type: "category", data: ts, axisLabel: { color: "#9ca3af" } },
-      yAxis: { type: "value", min: 0, max: 1, axisLabel: { color: "#9ca3af" } },
-      series: [
-        {
-          name: "NDI",
-          type: "line",
-          data: ndi,
-          connectNulls: true,
-          lineStyle: { width: 2 },
-          itemStyle: { color: "#3fb950" },
-        },
-        {
-          name: "CI 下界",
-          type: "line",
-          data: lo,
-          connectNulls: true,
-          lineStyle: { type: "dashed", opacity: 0.5 },
-          itemStyle: { color: "#58a6ff" },
-          symbol: "none",
-        },
-        {
-          name: "CI 上界",
-          type: "line",
-          data: hi,
-          connectNulls: true,
-          lineStyle: { type: "dashed", opacity: 0.5 },
-          itemStyle: { color: "#d29922" },
-          symbol: "none",
-        },
-      ],
-    });
-    const onResize = () => chart.resize();
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      chart.dispose();
-    };
-  }, [points]);
-
-  return <div ref={ref} className="h-72 w-full" />;
+function statusOf(meta: EventMeta | null): { label: string; color: string } {
+  if (!meta) return { label: "…", color: "#6e7781" };
+  if (meta.ndi_status === "ok") return { label: "Developing · 发展中", color: "#8b2635" };
+  return { label: "Emerging · 新出现", color: "#b08d3f" };
 }
 
-function citation(r: EvidenceRow) {
-  return [
-    `【摘录】${r.quote}`,
-    `来源：${r.source_id}（tier 内信源）`,
-    `PIT 时间：${r.ts}`,
-    `框架：${r.frame} / 立场：${r.stance} / 置信度：${r.confidence.toFixed(2)}（${r.engine}）`,
-    `item_key：${r.item_key}`,
-  ].join("\n");
-}
-
-export default function EventPage({
-  params,
-}: PageProps<"/events/[id]">) {
+export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
   const { id } = use(params);
+  const [meta, setMeta] = useState<EventMeta | null>(null);
   const [ndi, setNdi] = useState<NdiPoint[] | null>(null);
   const [evidence, setEvidence] = useState<EvidenceRow[]>([]);
   const [spectrum, setSpectrum] = useState<SpectrumDoc[]>([]);
+  const [anatomy, setAnatomy] = useState<AnatomyData | null>(null);
+  const [tierMap, setTierMap] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([api.eventNdi(id), api.eventEvidence(id), api.eventSpectrum(id)])
-      .then(([n, e, sp]) => {
+    const q = encodeURIComponent(id);
+    Promise.all([
+      fetch(`/api/events?days=60`).then((r) => r.json()),
+      api.eventNdi(id),
+      api.eventEvidence(id),
+      api.eventSpectrum(id),
+      api.eventAnatomy(id),
+      fetch(`/api/sources`).then((r) => r.json()),
+    ])
+      .then(([evts, n, e, sp, an, srcs]) => {
+        setMeta(
+          (evts as EventMeta[]).find((x) => x.event_id === id) ??
+            ({ event_id: id, title: id, entities: [], as_of: "", ndi: null, ndi_status: "abstain", n_sources: 0 } as EventMeta),
+        );
         setNdi(n);
         setEvidence(e);
         setSpectrum(sp);
+        setAnatomy(an);
+        const tm: Record<string, string> = {};
+        for (const s of (srcs as { sources: { source_id: string; tier: string }[] }).sources)
+          tm[s.source_id] = s.tier;
+        setTierMap(tm);
       })
       .catch((err) => setError(String(err)));
   }, [id]);
 
-  async function copyCite(r: EvidenceRow) {
-    await navigator.clipboard.writeText(citation(r));
-    setCopied(r.item_key);
-    setTimeout(() => setCopied(null), 1500);
-  }
-
   if (error) return <p className="text-destructive">加载失败：{error}</p>;
+  if (!meta) return <p className="text-sm text-muted-foreground">加载事件中…</p>;
+
+  const latestOk = ndi?.filter((p) => p.status === "ok" && p.ndi !== null) ?? [];
+  const lastPoint = latestOk[latestOk.length - 1] ?? null;
+  const prevPoint = latestOk.length > 1 ? latestOk[latestOk.length - 2] : null;
+  const lv = divergenceLevel(lastPoint ? (lastPoint.ndi as number) : null);
+  const trend = divergenceTrend(lastPoint && prevPoint ? (lastPoint.ndi as number) - (prevPoint.ndi as number) : null);
+  const status = statusOf(meta);
+
+  const grouped: Record<string, EvidenceRow[]> = {};
+  for (const row of evidence) {
+    const tier = tierMap[row.source_id] ?? "L3";
+    (grouped[tier] ??= []).push(row);
+  }
+  const tiers = Object.keys(grouped).sort(
+    (a, b) => (TIER_GROUP[a]?.order ?? 9) - (TIER_GROUP[b]?.order ?? 9),
+  );
+
+  const askQuestions = [
+    `为什么不同来源对「${meta.entities[0] ?? "该事件"}」的解释出现分歧？`,
+    "过去类似情况下发生了什么？",
+    "哪些信源正在推动当前叙事？",
+    "这个变化是短期关注还是持续趋势？",
+  ];
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center gap-3">
-        <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
-          ← 返回概览
-        </Link>
-        <h1 className="font-paper text-2xl tracking-tight">{id}</h1>
-      </div>
+    <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+      <article className="lg:col-span-8">
+        <header className="border-b border-foreground/20 pb-4">
+          <p className="paper-kicker">03 / EVENTS · {id}</p>
+          <h1 className="font-paper mt-2 text-3xl leading-tight tracking-tight">{meta.title}</h1>
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            <span className="font-medium" style={{ color: status.color }}>
+              STATUS {status.label}
+            </span>
+            <span>{meta.as_of.slice(0, 10)}</span>
+            <span>{meta.n_sources} 个信源共同报道</span>
+            {meta.entities.map((e) => (
+              <Link key={e} href={`/events?q=${e}`} className="border border-border px-1.5 py-0.5 font-mono text-[11px] hover:border-primary">
+                {e}
+              </Link>
+            ))}
+          </div>
+        </header>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">NDI 时序（弃权点不绘制连线）</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {ndi && ndi.length > 0 ? (
-            <NdiChart points={ndi} />
-          ) : (
-            <p className="text-sm text-muted-foreground">暂无 NDI 点位</p>
-          )}
-        </CardContent>
-      </Card>
+        <SectionHead no="01" en="What happened" zh="发生了什么" />
+        <p className="font-paper mt-3 text-base leading-7">
+          过去 {meta.as_of ? " reporting window" : ""}
+          内，{meta.n_sources} 个不同层级的信源共同报道了与{" "}
+          {meta.entities.join("、") || "该主题"}相关的变化。系统将其聚合为一个事件，并持续追踪各方解释的差异。
+        </p>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">叙事光谱（句级框架染色，只读派生）</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            按句复用规则层线索词染色：损失红/收益绿/责任黄/冲突紫/人情味蓝；上标「批/挺」= 句内立场线索。悬浮查看命中词。
+        <SectionHead no="02" en="Why it matters" zh="为什么重要" />
+        <p className="mt-3 text-sm leading-7">
+          {meta.n_sources >= 3
+            ? `跨层级信源的共同覆盖意味着这不是单一来源的孤立报道。`
+            : "目前覆盖信源较少，事件仍处早期。"}
+          {lv.rank >= 2
+            ? `同时，不同信源群体对它的解释已经出现明显分歧（${lv.zh}）——分歧本身往往比事件更值得注意。`
+            : lv.rank === 1
+              ? "各信源的解释开始出现差异，值得继续观察。"
+              : "目前各信源解释基本一致，或数据尚不足以判断。"}
+        </p>
+
+        <SectionHead no="03" en="What changed" zh="发生了什么变化" />
+        <div className="mt-3 flex items-baseline gap-4">
+          <span className="font-paper text-3xl" style={{ color: lv.color }}>
+            {lv.zh}
+          </span>
+          <span className="text-sm text-muted-foreground">叙事分歧 {trend}</span>
+        </div>
+        <details className="mt-2 text-xs text-muted-foreground">
+          <summary className="cursor-pointer">技术指标（方法论层）</summary>
+          <p className="mt-1 font-mono">
+            NDI {lastPoint ? (lastPoint.ndi as number).toFixed(3) : "—"} ·
+            信源数{" "}
+            {lastPoint?.n_sources ?? "—"} · 弃权语义：样本不足时不产出数值
           </p>
-        </CardHeader>
-        <CardContent>
-          <SpectrumBlock docs={spectrum} />
-        </CardContent>
-      </Card>
+        </details>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">证据链（claim → 原文摘录，一键引用）</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>来源</TableHead>
-                <TableHead>框架</TableHead>
-                <TableHead>立场</TableHead>
-                <TableHead>置信</TableHead>
-                <TableHead>引擎</TableHead>
-                <TableHead>PIT 时间</TableHead>
-                <TableHead>摘录</TableHead>
-                <TableHead></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {evidence.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="text-muted-foreground">
-                    暂无 stance（证据链为空）
-                  </TableCell>
-                </TableRow>
-              ) : (
-                evidence.map((r) => (
-                  <TableRow key={r.item_key + r.frame}>
-                    <TableCell className="font-mono text-xs">{r.source_id}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{r.frame}</Badge>
-                    </TableCell>
-                    <TableCell>{r.stance}</TableCell>
-                    <TableCell>{r.confidence.toFixed(2)}</TableCell>
-                    <TableCell className="text-xs">{r.engine}</TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {r.ts.replace("T", " ").slice(0, 16)}
-                    </TableCell>
-                    <TableCell className="max-w-[20rem] truncate" title={r.quote}>
-                      {r.quote}
-                    </TableCell>
-                    <TableCell>
-                      <Button size="sm" variant="outline" onClick={() => copyCite(r)}>
-                        {copied === r.item_key ? "已复制" : "复制引用"}
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+        <SectionHead no="04" en="Who disagrees" zh="谁和谁存在分歧" />
+        {(anatomy?.entity_opposition ?? []).length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">暂无主体级对立数据。</p>
+        ) : (
+          <div className="mt-3 flex flex-col gap-3">
+            {anatomy!.entity_opposition.map((o) => (
+              <div key={o.entity_id} className="border border-border/60 p-3">
+                <div className="flex items-baseline justify-between text-sm">
+                  <span className="font-medium">{o.entity_id}</span>
+                  <span className="font-mono text-xs text-muted-foreground">
+                    官方 {o.n_official} 行 · 市场 {o.n_market} 行 · 态度差 Δ{o.gap.toFixed(2)}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-4 text-xs">
+                  {(["supportive", "neutral", "critical"] as const).map((k) => (
+                    <div key={k}>
+                      <p className="paper-kicker">{k}</p>
+                      <p className="mt-1 font-mono">
+                        官方 {Math.round((o.official[k] ?? 0) * 100)}% vs 市场{" "}
+                        {Math.round((o.market[k] ?? 0) * 100)}%
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <SectionHead no="05" en="How narratives differ" zh="叙事地图" />
+        {(anatomy?.cluster_pairs ?? []).length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            信源簇样本不足，暂无法绘制叙事距离（弃权而非硬凑）。
+          </p>
+        ) : (
+          <div className="mt-3 flex flex-col gap-3">
+            {anatomy!.cluster_pairs.map((p) => {
+              const dist = Math.min(1, p.jsd);
+              return (
+                <div key={`${p.a}-${p.b}`}>
+                  <div className="flex items-baseline justify-between text-xs">
+                    <span className="font-medium">
+                      {p.a} {p.official_vs_market ? "（官方）" : ""} ↔ {p.b}{" "}
+                      {p.official_vs_market ? "（市场）" : ""}
+                    </span>
+                    <span className="font-mono text-muted-foreground">
+                      解释距离 {Math.round(dist * 100)}%
+                    </span>
+                  </div>
+                  <div className="mt-1 h-2 w-full bg-muted">
+                    <div
+                      className="h-2"
+                      style={{ width: `${dist * 100}%`, backgroundColor: "#8b2635" }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer">各信源簇的框架构成</summary>
+              {Object.entries(anatomy!.clusters).map(([tier, dist]) => {
+                const top = Object.entries(dist).sort((a, b) => b[1] - a[1])[0];
+                return (
+                  <p key={tier} className="mt-1 font-mono">
+                    {tier} 主导框架：{FRAME_ZH[top[0]] ?? top[0]}（{Math.round(top[1] * 100)}%）
+                  </p>
+                );
+              })}
+            </details>
+          </div>
+        )}
+
+        <SectionHead no="06" en="Evidence" zh="证据（按信源层级）" />
+        {tiers.length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">暂无证据行。</p>
+        ) : (
+          <div className="mt-3 flex flex-col gap-5">
+            {tiers.map((tier) => {
+              const g = TIER_GROUP[tier] ?? { label: tier, zh: tier, order: 9 };
+              return (
+                <div key={tier}>
+                  <p className="paper-kicker">
+                    {g.label} · {g.zh}（{grouped[tier].length}）
+                  </p>
+                  {grouped[tier].slice(0, 4).map((row, i) => (
+                    <p key={i} className="mt-1 font-paper text-sm leading-6">
+                      <span className="mr-2 font-mono text-[10px] uppercase text-muted-foreground">
+                        {row.source_id} · {FRAME_ZH[row.frame] ?? row.frame}
+                      </span>
+                      “{row.quote.length > 140 ? `${row.quote.slice(0, 140)}…` : row.quote}”
+                    </p>
+                  ))}
+                </div>
+              );
+            })}
+            <details>
+              <summary className="cursor-pointer text-xs text-muted-foreground">
+                句级叙事光谱（{spectrum.length} 篇文章逐句框架染色）
+              </summary>
+              <div className="mt-2 flex flex-col gap-2">
+                {spectrum.slice(0, 5).map((d) => (
+                  <p key={d.item_key} className="text-xs leading-6 text-muted-foreground">
+                    <span className="font-mono">{d.source_id}</span>：{d.sentences.slice(0, 6).map((s) => s.text).join("")}
+                  </p>
+                ))}
+              </div>
+            </details>
+          </div>
+        )}
+
+        <SectionHead no="07" en="Ask the analyst" zh="下一步研究" />
+        <div className="mt-3 flex flex-col gap-2">
+          {askQuestions.map((q) => (
+            <Link
+              key={q}
+              href={`/research?q=${encodeURIComponent(q)}&event=${encodeURIComponent(id)}`}
+              className="border border-border/60 px-3 py-2 text-sm hover:border-primary"
+            >
+              {q}
+            </Link>
+          ))}
+        </div>
+      </article>
+
+      <aside className="lg:col-span-4">
+        <div className="border border-border/60 p-4 lg:sticky lg:top-6">
+          <p className="paper-kicker">EVENT SUMMARY</p>
+          <p className="mt-2 font-paper text-sm leading-6">
+            {meta.n_sources} 源 · 分歧状态「{lv.zh}」{trend} ·{" "}
+            {anatomy?.cluster_pairs.length ?? 0} 组信源簇距离可比较
+          </p>
+          <div className="mt-3 border-t border-border/60 pt-3">
+            <p className="paper-kicker">YOUR NEXT STEPS</p>
+            <ul className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
+              <li>→ 点击预设问题进入研究台</li>
+              <li>→ 在研究台保存结论到档案库</li>
+              <li>→ 在订阅中心追踪相关实体</li>
+            </ul>
+          </div>
+        </div>
+      </aside>
     </div>
   );
 }
