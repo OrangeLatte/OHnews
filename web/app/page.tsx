@@ -5,6 +5,7 @@ import Link from "next/link";
 import * as echarts from "echarts";
 
 import { api } from "@/lib/api";
+import { attentionPhrase, divergenceLevel, signalKindMeta, watchStatus } from "@/lib/insight";
 
 /* ── Observable 风图表基座：细轴/淡网格/低饱和大地色板/线末标注 ── */
 
@@ -118,6 +119,7 @@ type FlowSummary = {
   frames: { date: string; frame: string; n: number }[];
   sources: { source_id: string; n: number; tier: string; language: string; last_seen: string | null }[];
   ndi: { event_id: string; ts: string; ndi: number | null; status: string; language: string }[];
+  event_links: { event_id: string; entity: string; title: string; as_of: string }[];
 };
 type TimelineResponse = {
   points: { date: string; articles: number; ndi: number | null; event_ids: string[] }[];
@@ -134,331 +136,434 @@ const ENTITIES = [
   ["opec", "OPEC"],
 ] as const;
 
-export default function DashboardPage() {
+/* ── 数据面 ── */
+
+type TodayResp = {
+  date: string;
+  total: number;
+  signals: {
+    signal_id: string;
+    kind: string;
+    entity_id: string;
+    title: string;
+    what_changed: string;
+    why_it_matters: string | null;
+    strength: number;
+    confidence: number;
+    metrics: Record<string, number>;
+    evidence_ids: string[];
+  }[];
+};
+type EventRow = {
+  event_id: string;
+  title: string;
+  entities: string[];
+  as_of: string;
+  ndi: number | null;
+  ndi_status: string;
+  n_sources: number;
+};
+type WatchRow = {
+  watch_id: string;
+  type: string;
+  query: string;
+  last_summary: Record<string, unknown> | null;
+};
+
+/* ── 小件 ── */
+
+function Chip({ children, color }: { children: React.ReactNode; color?: string }) {
+  return (
+    <span
+      className="border px-1.5 py-0.5 font-mono text-[11px]"
+      style={color ? { color, borderColor: `${color}55` } : undefined}
+    >
+      {children}
+    </span>
+  );
+}
+
+function SectionHead({ no, title, zh, question }: { no: string; title: string; zh: string; question: string }) {
+  return (
+    <div className="mb-3 border-t border-foreground/40 pt-3">
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-[11px] text-muted-foreground">{no}</span>
+        <h2 className="font-paper text-xl">{title}</h2>
+        <span className="text-sm text-muted-foreground">{zh}</span>
+      </div>
+      <p className="paper-kicker mt-0.5">{question}</p>
+    </div>
+  );
+}
+
+/* ── 页面 ── */
+
+export default function IntelligencePage() {
+  const [today, setToday] = useState<TodayResp | null>(null);
   const [flow, setFlow] = useState<FlowSummary | null>(null);
-  const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
-  const [entity, setEntity] = useState("fed");
-  const [days, setDays] = useState(30);
+  const [events, setEvents] = useState<EventRow[]>([]);
+  const [watches, setWatches] = useState<WatchRow[]>([]);
+  const [q, setQ] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .flowSummary(30)
-      .then((d) => setFlow(d as unknown as FlowSummary))
-      .catch(() => undefined);
+    Promise.all([
+      fetch("/api/today?top=5").then((r) => r.json()),
+      api.flowSummary(14),
+      api.events(7),
+      api.watches(),
+    ])
+      .then(([t, f, e, w]) => {
+        setToday(t as TodayResp);
+        setFlow(f as unknown as FlowSummary);
+        setEvents(e as unknown as EventRow[]);
+        setWatches(((w as { watches: WatchRow[] }).watches) ?? []);
+      })
+      .catch((err) => setError(String(err)));
   }, []);
-  useEffect(() => {
-    api
-      .entityTimeline(entity, days)
-      .then(setTimeline)
-      .catch(() => undefined);
-  }, [entity, days]);
 
-  const kpis = useMemo(() => {
-    if (!flow) return null;
-    const byDay = new Map<string, number>();
-    for (const d of flow.daily) byDay.set(d.date, (byDay.get(d.date) ?? 0) + d.n);
-    const last = [...byDay.entries()].sort(([a], [b]) => (a < b ? 1 : -1))[0];
-    const active = flow.sources.filter((s) => s.n > 0).length;
-    const ndiOk = flow.ndi.filter((p) => p.status === "ok" && p.ndi !== null);
-    const latestNdi = ndiOk.length > 0 ? ndiOk[ndiOk.length - 1] : null;
-    return {
-      todayArticles: last?.[1] ?? 0,
-      todayDate: last?.[0] ?? "",
-      activeSources: active,
-      nNdi: ndiOk.length,
-      latestNdi: latestNdi?.ndi ?? null,
-    };
+  /* Narrative Shifts：近 7 天 vs 前 7 天框架总量差（Question: 哪个叙事在上升/消失？） */
+  const shifts = useMemo(() => {
+    if (!flow) return [];
+    const dayTotals: Record<string, Record<string, number>> = {};
+    for (const f of flow.frames) {
+      dayTotals[f.date] = dayTotals[f.date] ?? {};
+      dayTotals[f.date][f.frame] = (dayTotals[f.date][f.frame] ?? 0) + f.n;
+    }
+    const dates = Object.keys(dayTotals).sort();
+    const cutoff = new Date(dates[dates.length - 1] ?? "1970-01-01");
+    cutoff.setUTCDate(cutoff.getUTCDate() - 6);
+    const cutPrev = new Date(cutoff);
+    cutPrev.setUTCDate(cutPrev.getUTCDate() - 7);
+    const cur: Record<string, number> = {};
+    const prev: Record<string, number> = {};
+    for (const [d, fr] of Object.entries(dayTotals)) {
+      const t = new Date(d);
+      const target = t >= cutoff ? cur : t >= cutPrev ? prev : null;
+      if (!target) continue;
+      for (const [k, v] of Object.entries(fr)) target[k] = (target[k] ?? 0) + v;
+    }
+    return Object.keys(FRAME_COLORS)
+      .map((frame) => {
+        const c = cur[frame] ?? 0;
+        const p = prev[frame] ?? 0;
+        const delta = c - p;
+        const pct = p > 0 ? Math.round((delta / p) * 100) : c > 0 ? 100 : 0;
+        return { frame, cur: c, prev: p, delta, pct };
+      })
+      .filter((s) => s.cur + s.prev > 0)
+      .sort((a, b) => b.delta - a.delta);
   }, [flow]);
 
-  /* 图1：信息流脉搏——每日文章量按层级堆叠 + NDI 线（右轴） */
-  const pulseOption = useMemo<echarts.EChartsOption>(() => {
+  /* Attention × Divergence（Question: 关注何时激增？分歧何时出现？Action: 点击事件下钻） */
+  const timelineOption = useMemo<echarts.EChartsOption>(() => {
     if (!flow) return {};
-    const tiers = ["L1", "L2", "L3", "L4", "?"];
-    const dates = [...new Set(flow.daily.map((d) => d.date))].sort();
-    const series: echarts.SeriesOption[] = tiers
-      .map((t) => ({
-        name: t,
-        type: "line" as const,
-        stack: "total",
-        areaStyle: { opacity: 0.5 },
-        lineStyle: { width: 0 },
-        symbol: "none" as const,
-        emphasis: { focus: "series" as const },
-        data: dates.map((d) => [
-          d,
-          flow.daily.filter((x) => x.date === d && x.tier === t).reduce((a, b) => a + b.n, 0),
-        ]),
-      }))
-      .filter((s) => flow.daily.some((d) => d.tier === s.name));
-    series.push({
-      name: "NDI",
-      type: "line" as const,
-      yAxisIndex: 1,
-      data: flow.ndi
-        .filter((p) => p.status === "ok" && p.ndi !== null)
-        .map((p) => [p.ts.slice(0, 10), p.ndi as number]),
-      lineStyle: { width: 2, color: "#8b2635" } as never,
-      itemStyle: { color: "#8b2635" },
-      symbol: "circle",
-      symbolSize: 6,
-      endLabel: {
-        show: true,
-        formatter: "NDI",
-        color: "#8b2635",
-        fontSize: 11,
-        fontFamily: "Georgia",
-      },
-    });
+    const dayN: Record<string, number> = {};
+    for (const r of flow.daily) dayN[r.date] = (dayN[r.date] ?? 0) + r.n;
+    const dates = Object.keys(dayN).sort();
+    void 0;
+    const bars = dates.map((d) => [d, dayN[d]]);
+    const ndiLine = flow.ndi
+      .filter((p) => p.status === "ok" && p.ndi !== null)
+      .map((p) => [p.ts.slice(0, 10), p.ndi as number])
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1));
+    const marks = Object.values(
+      flow.event_links.reduce<Record<string, { coord: string; title: string }>>((acc: Record<string, { coord: string; title: string }>, l: { as_of: string; title: string }) => {
+        const d = l.as_of.slice(0, 10);
+        if (!acc[d]) acc[d] = { coord: d, title: l.title };
+        return acc;
+      }, {}),
+    );
     return {
       ...BASE,
-      legend: { show: false },
+      legend: {
+        data: ["信息关注度", "叙事分歧"],
+        top: 0,
+        right: 0,
+        itemWidth: 14,
+        itemHeight: 8,
+        textStyle: { fontSize: 11, color: "#6e675c" },
+      },
+      xAxis: { ...BASE.xAxis, type: "category" as const },
       yAxis: [
-        {
-          type: "value" as const,
-          splitLine: { lineStyle: { color: "#ece5d8", width: 1 } },
-          axisLabel: { fontSize: 11, color: "#8a8375" },
-        },
+        { ...BASE.yAxis, name: "文章量", nameTextStyle: { fontSize: 10, color: "#8a8375" } },
         {
           type: "value" as const,
           min: 0,
           max: 1,
+          position: "right" as const,
           splitLine: { show: false },
-          axisLabel: { fontSize: 10, color: "#8b2635", formatter: (v: number) => v.toFixed(1) },
+          axisLabel: { fontSize: 11, color: "#8a8375" },
         },
       ],
-      series,
-    } as echarts.EChartsOption;
-  }, [flow]);
-
-  /* 图2：框架主题流 */
-  const frameOption = useMemo<echarts.EChartsOption>(() => {
-    if (!flow) return {};
-    const frames = ["loss", "gain", "responsibility", "conflict", "human_interest", "other"];
-    const dates = [...new Set(flow.frames.map((f) => f.date))].sort();
-    return {
-      ...BASE,
-      legend: { show: false },
-      series: frames
-        .map((f) => ({
-          name: f,
-          type: "line" as const,
-          stack: "frames",
-          areaStyle: { opacity: 0.55 },
-          lineStyle: { width: 0 },
-          symbol: "none" as const,
-          data: dates.map((d) => [
-            d,
-            flow.frames.filter((x) => x.date === d && x.frame === f).reduce((a, b) => a + b.n, 0),
-          ]),
-        }))
-        .filter((s) => flow.frames.some((x) => x.frame === s.name)),
-    } as echarts.EChartsOption;
-  }, [flow]);
-
-  /* 图3：源贡献排行（近 30 日 Top12，横向条） */
-  const sourceOption = useMemo<echarts.EChartsOption>(() => {
-    if (!flow) return {};
-    const top = flow.sources.slice(0, 12).reverse();
-    return {
-      grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
-      xAxis: {
-        type: "value" as const,
-        splitLine: { lineStyle: { color: "#ece5d8" } },
-        axisLabel: { fontSize: 10, color: "#8a8375" },
-      },
-      yAxis: {
-        type: "category" as const,
-        data: top.map((s) => s.source_id),
-        axisLine: { show: false },
-        axisTick: { show: false },
-        axisLabel: { fontSize: 11, color: "#6e675c" },
-      },
-      tooltip: { ...BASE.tooltip, trigger: "item" as const },
       series: [
         {
-          type: "bar" as const,
-          data: top.map((s) => ({
-            value: s.n,
-            itemStyle: { color: TIER_COLORS[s.tier] ?? TIER_COLORS["?"], opacity: 0.85, borderRadius: 1 },
-          })),
-          barWidth: 12,
-          label: {
+          name: "信息关注度",
+          type: "bar",
+          data: bars,
+          itemStyle: { color: "#c9beac", borderRadius: 1 },
+          barMaxWidth: 18,
+          markLine: {
+            symbol: "none",
+            silent: true,
+            lineStyle: { color: "#a34a2a", type: "dashed" as const, width: 1 },
+            label: {
+              show: true,
+              position: "insideEndTop" as const,
+              fontSize: 10,
+              color: "#a34a2a",
+              formatter: (p: { name?: string }) =>
+                ((p.name ?? "")).length > 12 ? `${(p.name ?? "").slice(0, 12)}…` : (p.name ?? ""),
+            },
+            data: marks.map((m: { coord: string; title: string }) => ({ xAxis: m.coord, name: m.title })),
+          },
+        },
+        {
+          name: "叙事分歧",
+          type: "line",
+          yAxisIndex: 1,
+          data: ndiLine,
+          smooth: false,
+          step: "end" as const,
+          lineStyle: { color: "#8b2635", width: 2 },
+          itemStyle: { color: "#8b2635" },
+          symbolSize: 6,
+          endLabel: {
             show: true,
-            position: "right" as const,
             fontSize: 10,
-            color: "#8a8375",
+            color: "#8b2635",
+            formatter: () => "分歧",
           },
         },
       ],
     } as echarts.EChartsOption;
   }, [flow]);
 
-  /* 图4：叙事时间轴（实体级，并入看板） */
-  const tlOption = useMemo<echarts.EChartsOption>(() => {
-    if (!timeline) return {};
+  /* Narrative Shifts 双向条 */
+  const shiftOption = useMemo<echarts.EChartsOption>(() => {
+    if (!shifts.length) return {};
     return {
       ...BASE,
-      legend: { show: false },
-      yAxis: [
-        {
-          type: "value" as const,
-          splitLine: { lineStyle: { color: "#ece5d8" } },
-          axisLabel: { fontSize: 10, color: "#8a8375" },
-        },
-        {
-          type: "value" as const,
-          min: 0,
-          max: 1,
-          splitLine: { show: false },
-          axisLabel: { fontSize: 10, color: "#8b2635" },
-        },
-      ],
+      grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
+      xAxis: { type: "value" as const, splitLine: { show: false }, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false } },
+      yAxis: {
+        type: "category" as const,
+        data: shifts.map((s) => FRAME_LABELS[s.frame]),
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { fontSize: 12, color: "#3a352c" },
+        splitLine: { show: false },
+      },
       series: [
         {
-          name: "文章量",
-          type: "bar" as const,
-          data: timeline.points.map((p) => [p.date, p.articles]),
-          itemStyle: { color: "#c9c0ae", opacity: 0.8 },
-          barWidth: "70%",
-        },
-        {
-          name: "NDI",
-          type: "line" as const,
-          yAxisIndex: 1,
-          data: timeline.points.map((p) => [p.date, p.ndi]),
-          connectNulls: true,
-          lineStyle: { width: 2, color: "#8b2635" },
-          itemStyle: { color: "#8b2635" },
-          symbolSize: 5,
-        },
-        {
-          name: "事件",
-          type: "scatter" as const,
-          data: timeline.points
-            .filter((p) => p.event_ids.length > 0)
-            .map((p) => [p.date, p.ndi ?? 0.05]),
-          symbolSize: 12,
-          itemStyle: { color: "#b08d3e", opacity: 0.9 },
+          type: "bar",
+          data: shifts.map((s) => ({
+            value: s.delta,
+            itemStyle: { color: s.delta >= 0 ? "#5e8a5e" : "#b3543f", borderRadius: 1 },
+          })),
+          label: {
+            show: true,
+            position: "right" as const,
+            fontSize: 11,
+            color: "#6e675c",
+            formatter: (p: { value: number }) =>
+              p.value >= 0 ? `+${p.value}` : `${p.value}`,
+          },
         },
       ],
     } as echarts.EChartsOption;
-  }, [timeline]);
+  }, [shifts]);
+
+  if (error) return <p className="text-destructive">加载失败：{error}</p>;
+
+  const signals = today?.signals ?? [];
+  const askHref = (question: string) => `/research?q=${encodeURIComponent(question)}`;
 
   return (
-    <div className="flex flex-col gap-8">
-      <header>
-        <h1 className="font-paper text-3xl tracking-tight">情报看板</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          全部信息源产出与叙事分歧的一页总览 · 每张图回答一个问题
-        </p>
-      </header>
+    <div className="grid gap-x-10 gap-y-8 lg:grid-cols-12">
+      {/* ── Main 8 栏 ── */}
+      <div className="lg:col-span-8">
+        <header className="mb-4">
+          <p className="paper-kicker">Today&apos;s Intelligence · {today?.date ?? "…"}</p>
+          <h1 className="font-paper mt-1 text-3xl tracking-tight">
+            {today
+              ? today.total > 0
+                ? `系统发现 ${today.total} 个值得关注的变化`
+                : "今日无显著变化检出"
+              : "正在扫描信息流…"}
+          </h1>
+          <p className="mt-1 text-xs text-muted-foreground">
+            每天系统从全部信息源中筛出真正发生变化的对象，压缩为最重要的信号；点击 Explore 进入事件与证据。
+          </p>
+        </header>
 
-      {kpis && (
-        <div className="grid grid-cols-2 gap-px border border-foreground/15 bg-foreground/15 md:grid-cols-4">
-          {[
-            { v: String(kpis.todayArticles), l: `文章量 · ${kpis.todayDate}` },
-            { v: String(kpis.activeSources), l: "活跃信息源（近30日）" },
-            { v: String(kpis.nNdi), l: "NDI 有效点位" },
-            {
-              v: kpis.latestNdi !== null ? kpis.latestNdi.toFixed(3) : "abstain",
-              l: "最新叙事分歧指数",
-            },
-          ].map((k) => (
-            <div key={k.l} className="bg-card px-5 py-4">
-              <div className="font-paper text-3xl">{k.v}</div>
-              <div className="paper-kicker !text-[10px]">{k.l}</div>
-            </div>
-          ))}
+        <div className="flex flex-col">
+          {signals.map((s, i) => {
+            const eid = s.evidence_ids[0];
+            const exploreHref = eid
+              ? `/events/${encodeURIComponent(eid)}`
+              : `/events?q=${encodeURIComponent(s.entity_id)}`;
+            const z = s.metrics["z"];
+            return (
+              <article key={s.signal_id} className="border-b border-border/60 py-5 first:pt-1">
+                <div className="flex items-baseline gap-3">
+                  <span className="font-paper text-3xl font-semibold text-muted-foreground/35">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Chip color={signalKindMeta(s.kind).color}>
+                        {signalKindMeta(s.kind).label} · {signalKindMeta(s.kind).zh}
+                      </Chip>
+                      <h2 className="font-paper text-lg leading-tight">{s.title}</h2>
+                    </div>
+                    <p className="mt-1.5 text-sm leading-6">{s.what_changed}</p>
+                    {s.why_it_matters && (
+                      <p className="mt-1 text-sm leading-6 text-muted-foreground">{s.why_it_matters}</p>
+                    )}
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className="font-paper text-2xl">{Math.round(s.strength)}</span>
+                      <span className="paper-kicker">/100 强度</span>
+                      {z !== undefined && <Chip>{attentionPhrase(z)}</Chip>}
+                      <Chip>conf {s.confidence.toFixed(2)}</Chip>
+                      {eid && <Chip>证据事件 {eid}</Chip>}
+                    </div>
+                  </div>
+                  <Link
+                    href={exploreHref}
+                    className="shrink-0 border border-foreground/60 px-3 py-1.5 text-xs font-medium hover:bg-foreground hover:text-background"
+                  >
+                    Explore →
+                  </Link>
+                </div>
+              </article>
+            );
+          })}
+          {today && signals.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              信息量不足以支撑任何结论时，系统选择弃权而非硬凑数字——这是刻意设计。
+            </p>
+          )}
         </div>
-      )}
 
-      <Panel
-        title="信息流脉搏"
-        subtitle="过去 30 天全部信息源的文章产出，按可信层级分层堆叠；红线为叙事分歧指数 NDI（右轴 0-1）。层级结构是否稳定、分歧何时抬头，一眼可辨。"
-        legend={[
-          ...Object.entries(TIER_COLORS)
-            .filter(([k]) => k !== "?")
-            .map(([k, c]) => ({ label: TIER_LABELS[k], color: c })),
-          { label: "NDI（右轴）", color: "#8b2635" },
-        ]}
-      >
-        <Chart option={pulseOption} height={320} />
-      </Panel>
-
-      <Panel
-        title="框架构成"
-        subtitle="每日文章按五框架+其他分类堆叠（损失/收益/责任/冲突/人情味）。框架配比的变化先于情绪变化——责任框架抬头通常意味着归因争论开始。"
-        legend={Object.entries(FRAME_COLORS).map(([k, c]) => ({ label: FRAME_LABELS[k], color: c }))}
-      >
-        <Chart option={frameOption} height={240} />
-      </Panel>
-
-      <Panel
-        title="源贡献排行"
-        subtitle="近 30 日产出量 Top 12 信息源，颜色为可信层级。快速识别主力源与断层——某层长期缺位时，该层视角在 NDI 中系统性缺席。"
-        legend={Object.entries(TIER_COLORS)
-          .filter(([k]) => k !== "?")
-          .map(([k, c]) => ({ label: TIER_LABELS[k], color: c }))}
-      >
-        <Chart option={sourceOption} height={300} />
-      </Panel>
-
-      <Panel
-        title="叙事时间轴"
-        subtitle="选定实体的逐日文章量（灰柱）与 NDI（红线，右轴）；金色圆点为成事件日。观察官方叙事密度与分歧抬头的先后关系。"
-      >
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          {ENTITIES.map(([id, zh]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setEntity(id)}
-              className={`border px-2.5 py-1 text-xs transition-colors ${
-                entity === id
-                  ? "border-foreground bg-foreground text-background"
-                  : "border-border text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {zh}
-            </button>
-          ))}
-          <span className="ml-auto flex gap-1">
-            {[7, 30, 90].map((d) => (
-              <button
-                key={d}
-                type="button"
-                onClick={() => setDays(d)}
-                className={`px-2 py-1 text-xs ${
-                  days === d ? "font-semibold text-foreground" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {d}d
-              </button>
-            ))}
-          </span>
+        {/* Attention × Divergence */}
+        <div className="mt-8">
+          <SectionHead
+            no="§2"
+            title="What is changing"
+            zh="注意力 × 分歧时间轴"
+            question="Question：关注何时激增？分歧何时出现？｜Action：点击虚线事件标记下钻"
+          />
+          {flow && <Chart option={timelineOption} height={280} />}
+          {!flow && <p className="text-sm text-muted-foreground">加载中…</p>}
         </div>
-        <Chart option={tlOption} height={260} />
-        {timeline && timeline.events.length > 0 && (
-          <div className="mt-2 border-t border-border/60 pt-2">
-            {timeline.events.slice(0, 5).map((ev) => (
-              <Link
-                key={ev.event_id}
-                href={`/events/${ev.event_id}`}
-                className="flex items-baseline gap-3 py-1.5 text-sm hover:text-primary"
-              >
-                <span className="font-mono text-xs text-muted-foreground">{ev.as_of.slice(0, 10)}</span>
-                <span className="flex-1 truncate">{ev.title}</span>
-                {ev.dominant_frame && (
-                  <span className="font-paper text-xs italic text-primary">{FRAME_LABELS[ev.dominant_frame] ?? ev.dominant_frame}</span>
-                )}
-                <span className="font-mono text-xs">
-                  {ev.ndi !== null ? `NDI ${ev.ndi.toFixed(3)}` : "abstain"}
-                </span>
-              </Link>
+
+        {/* Narrative Shifts */}
+        <div className="mt-8">
+          <SectionHead
+            no="§3"
+            title="Narrative shifts"
+            zh="叙事迁移（近 7 天 vs 前 7 天）"
+            question="Question：哪个叙事在上升、哪个在消失？｜Action：进入事件页查看证据"
+          />
+          {shifts.length > 0 ? <Chart option={shiftOption} height={170} /> : (
+            <p className="text-sm text-muted-foreground">窗口内框架数据不足。</p>
+          )}
+          <div className="mt-1 flex flex-wrap gap-3">
+            {shifts.slice(0, 3).map((s) => (
+              <span key={s.frame} className="text-[11px] text-muted-foreground">
+                {FRAME_LABELS[s.frame]}：{s.prev}→{s.cur} 篇（{s.delta >= 0 ? "+" : ""}{s.delta}）
+              </span>
             ))}
           </div>
-        )}
-      </Panel>
+        </div>
+      </div>
+
+      {/* ── Sidebar 4 栏 ── */}
+      <aside className="flex flex-col gap-8 lg:col-span-4">
+        <section>
+          <SectionHead no="§4" title="Active events" zh="进行中的事件" question="Question：现在有哪些事件在演化？" />
+          <div className="flex flex-col">
+            {events.slice(0, 6).map((e) => {
+              const lv = divergenceLevel(e.ndi_status === "ok" ? e.ndi : null);
+              return (
+                <Link
+                  key={e.event_id}
+                  href={`/events/${e.event_id}`}
+                  className="border-b border-border/50 py-2 text-sm hover:text-primary"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-mono text-[11px] text-muted-foreground">{e.as_of.slice(5, 10)}</span>
+                    <span className="min-w-0 flex-1 truncate">{e.title}</span>
+                  </div>
+                  <div className="mt-0.5 pl-8">
+                    <span className="text-[11px]" style={{ color: lv.color }}>
+                      ● {lv.zh}
+                    </span>
+                    <span className="ml-2 text-[11px] text-muted-foreground">{e.n_sources} 源</span>
+                  </div>
+                </Link>
+              );
+            })}
+            {events.length === 0 && <p className="text-sm text-muted-foreground">近 7 日无成组事件。</p>}
+          </div>
+          <Link href="/events" className="mt-1 inline-block text-xs text-muted-foreground hover:text-primary">
+            全部事件 →
+          </Link>
+        </section>
+
+        <section>
+          <SectionHead no="§5" title="Your watchlist" zh="关注状态" question="Question：我关注的东西最近有什么变化？" />
+          <div className="flex flex-col gap-1.5">
+            {watches.slice(0, 6).map((w) => {
+              const st = watchStatus(w.last_summary);
+              return (
+                <Link key={w.watch_id} href="/watch" className="flex items-baseline gap-2 text-sm hover:text-primary">
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: st.color }} />
+                  <span className="min-w-0 flex-1 truncate">{w.query}</span>
+                  <span className="text-[11px]" style={{ color: st.color }}>
+                    {st.zh}
+                  </span>
+                </Link>
+              );
+            })}
+            {watches.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                尚无订阅——在 <Link href="/watch" className="underline">Watchlist</Link> 添加实体/主题/问题。
+              </p>
+            )}
+          </div>
+        </section>
+
+        <section>
+          <SectionHead no="§6" title="Ask the analyst" zh="问分析师" question="Agent 从问题出发，产出可归档的研究结论" />
+          <form
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              if (q.trim()) window.location.href = askHref(q.trim());
+            }}
+          >
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Why is the Fed narrative changing?"
+              className="w-full border border-border bg-card px-3 py-2 text-sm outline-none focus:border-foreground"
+            />
+          </form>
+          <div className="mt-2 flex flex-col gap-1">
+            {["为什么市场预期和官方表态出现偏离？", "哪些信源正在推动当前叙事？", "这个变化是短期噪声还是持续趋势？"].map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => (window.location.href = askHref(s))}
+                className="text-left text-xs text-muted-foreground hover:text-primary"
+              >
+                · {s}
+              </button>
+            ))}
+          </div>
+        </section>
+      </aside>
     </div>
   );
 }

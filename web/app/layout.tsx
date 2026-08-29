@@ -7,12 +7,13 @@ export const metadata: Metadata = {
   description: "Agent 原生市场叙事情报台（非商业研究）",
 };
 
-const NAV: { href: string; label: string }[] = [
-  { href: "/", label: "情报看板" },
-  { href: "/today", label: "今日简报" },
-  { href: "/watch", label: "信息源与订阅" },
-  { href: "/agent", label: "研究台" },
-  { href: "/library", label: "档案库" },
+const NAV: { href: string; no: string; label: string; zh: string }[] = [
+  { href: "/", no: "01", label: "INTELLIGENCE", zh: "情报总览" },
+  { href: "/today", no: "02", label: "SIGNALS", zh: "今日信号" },
+  { href: "/events", no: "03", label: "EVENTS", zh: "事件与叙事" },
+  { href: "/watch", no: "04", label: "WATCHLIST", zh: "关注与订阅" },
+  { href: "/research", no: "05", label: "RESEARCH", zh: "研究工作台" },
+  { href: "/library", no: "06", label: "ARCHIVE", zh: "研究档案" },
 ];
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -38,14 +39,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               叙事分歧 · 每日监测
             </p>
           </div>
-          <nav className="paper-rule flex items-center gap-6 pb-2">
+          <nav className="paper-rule flex items-center gap-5 pb-2">
             {NAV.map((n) => (
               <Link
                 key={n.href}
                 href={n.href}
-                className="paper-kicker !text-foreground hover:!text-primary"
+                className="group flex items-baseline gap-1.5 hover:!text-primary"
               >
-                {n.label}
+                <span className="paper-kicker !text-muted-foreground/70">{n.no}</span>
+                <span className="paper-kicker !text-foreground">{n.label}</span>
+                <span className="hidden text-[11px] text-muted-foreground lg:inline">{n.zh}</span>
               </Link>
             ))}
             <span className="ml-auto paper-kicker hidden md:inline">
