@@ -16,7 +16,7 @@ import { api, type SignalRow, type WatchRow } from "@/lib/api";
 const TYPE_META: Record<string, { label: string; hint: string; color: string }> = {
   entity: { label: "实体", hint: "实体 id（如 fed / ecb / trump）", color: "#58a6ff" },
   topic: { label: "主题", hint: "关键词，逗号分隔（如 衰退,关税）", color: "#d29922" },
-  question: { label: "问题", hint: "研究问题句（Agent 回答在 R4 接入）", color: "#bc8cff" },
+  question: { label: "问题", hint: "研究问题句（系统将自动检索并回答）", color: "#bc8cff" },
 };
 
 function summaryLines(w: WatchRow): string[] {
@@ -37,7 +37,16 @@ function summaryLines(w: WatchRow): string[] {
       lines.push(`主要来源：${tops.map((t) => `${t.source_id}(${t.n})`).join("、")}`);
     lines.push(`${s.n_events} 个关联事件`);
   } else {
-    lines.push(`问题已记录 · 匹配 ${s.n_matched_events} 个事件 · Agent 深度回答即将接入`);
+    // question：Investigator 已接入——answered（llm/offline）渲染回答，pending_agent 待 keys
+    const status = s.status as string;
+    const answer = s.answer as string | null;
+    if (status === "answered" && answer) {
+      const engine = s.engine === "llm" ? "Agent 回答" : "确定性摘要（未配置 keys）";
+      lines.push(`已回答（${engine}）· 匹配 ${s.n_matched_events} 个事件`);
+      for (const ln of answer.split("\n")) if (ln.trim()) lines.push(ln);
+    } else {
+      lines.push(`问题已记录 · 匹配 ${s.n_matched_events} 个事件 · 暂无可命中数据或未配置 keys`);
+    }
     const evs = (s.events as { event_id: string; title: string }[]) ?? [];
     for (const e of evs.slice(0, 3)) lines.push(`· 事件 ${e.event_id}：${e.title}`);
   }
