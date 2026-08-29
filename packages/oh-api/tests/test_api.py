@@ -380,3 +380,20 @@ def test_library_endpoints(client: TestClient) -> None:
     for iid in (a["item_id"], e["item_id"], n["item_id"]):
         assert client.delete(f"/api/library/{iid}").status_code == 200
     assert client.get("/api/library").json()["items"] == []
+
+
+def test_keys_roundtrip_and_llm_ready(client: TestClient) -> None:
+    """运行时 keys：POST 热生效（无 models.yaml 时 llm_ready 仍 false=诚实降级）。"""
+    r = client.get("/api/keys").json()
+    assert r == {"deepseek": False, "zhipu": False, "llm_ready": False}
+    r2 = client.post(
+        "/api/keys",
+        json={"DEEPSEEK_API_KEY": "sk-test-abc", "ZHIPU_API_KEY": "  ", "EVIL": "x"},
+    )
+    assert r2.status_code == 422  # 未知字段拒绝
+    r3 = client.post("/api/keys", json={"DEEPSEEK_API_KEY": "sk-test-abc"}).json()
+    assert r3["deepseek"] is True and r3["zhipu"] is False
+    # 值不回显
+    assert "sk-test-abc" not in str(r3)
+    # repo 真实 config/models.yaml 存在 → key 注入后 router 可构造（llm_ready=True 热生效）
+    assert r3["llm_ready"] is True

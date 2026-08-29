@@ -152,15 +152,46 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         db = paths.library_db or (paths.root / "library.sqlite")
         return _lazy("library_store", lambda: LibraryStore(db))
 
+    # ---- 运行时 API keys（UI 配置 → data/runtime_keys.json，gitignored；env 优先）----
+    def _runtime_keys_path() -> Path:
+        return paths.root / "runtime_keys.json"
+
+    def _runtime_keys() -> dict[str, str]:
+        p = _runtime_keys_path()
+        if not p.exists():
+            return {}
+        try:
+            data = json.loads(p.read_text())
+            return {k: str(v) for k, v in data.items() if isinstance(v, str)}
+        except Exception:
+            return {}
+
+    def _get_key(provider: str) -> str | None:
+        env_name = f"{provider.upper()}_API_KEY"
+        v = os.getenv(env_name)
+        if v:
+            return v
+        return _runtime_keys().get(env_name)
+
+    def _sync_env() -> None:
+        """runtime keys 注入 os.environ——oh-llm 的 _ensure/ChatOpenAI 只读进程环境。"""
+        for env_name in ("DEEPSEEK_API_KEY", "ZHIPU_API_KEY"):
+            k = _runtime_keys().get(env_name)
+            if k:
+                os.environ[env_name] = k
+
+    _router_gen = [0]  # keys 更新时 +1，使所有线程的 chat_router 缓存失效
+
     def _chat_router() -> Any:
         """chat_graph 的 ModelRouter（keys 缺失/配置不存在 → None 降级离线）。"""
         my = paths.models_yaml or Path("config/models.yaml")
         if not my.exists():
             return None
-        import os
 
-        if not (os.getenv("DEEPSEEK_API_KEY") or os.getenv("ZHIPU_API_KEY")):
+        if not (_get_key("deepseek") or _get_key("zhipu")):
             return None
+
+        _sync_env()
 
         def _build() -> Any:
             from oh_llm.config import load_llm_config
@@ -168,7 +199,38 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
             return ModelRouter(load_llm_config(my))
 
-        return _lazy("chat_router", _build)
+        return _lazy(f"chat_router:{_router_gen[0]}", _build)
+
+    @app.get("/api/keys")
+    def keys_status() -> dict[str, Any]:
+        """LLM keys 配置状态（只回布尔，永不回显 key 本身）。"""
+        return {
+            "deepseek": _get_key("deepseek") is not None,
+            "zhipu": _get_key("zhipu") is not None,
+            "llm_ready": _chat_router() is not None,
+        }
+
+    @app.post("/api/keys")
+    def keys_save(body: dict[str, str]) -> dict[str, Any]:
+        """保存运行时 keys（热生效，无需重启；持久化到 gitignored runtime_keys.json）。"""
+        allowed = {"DEEPSEEK_API_KEY", "ZHIPU_API_KEY"}
+        current = _runtime_keys()
+        changed = False
+        for k, v in (body or {}).items():
+            if k not in allowed:
+                raise HTTPException(422, f"unknown key field: {k}")
+            if not isinstance(v, str) or not v.strip():
+                continue
+            current[k] = v.strip()
+            changed = True
+        if changed:
+            p = _runtime_keys_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(current))
+            p.chmod(0o600)
+            _sync_env()
+            _router_gen[0] += 1  # 重建所有线程的 ModelRouter
+        return keys_status()
 
     def _registry() -> EntityRegistry:
         return _lazy("registry", lambda: EntityRegistry())
@@ -846,17 +908,46 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         ts = now.isoformat()
         history = [{"role": m["role"], "content": m["content"]} for m in cs.messages(thread_id)]
         cs.append(thread_id, "user", message, ts)
-        result = await run_chat(
-            message,
-            history,
-            bronze=_bronze(),
-            store=_store(),
-            gold=_store(),
-            registry=_registry(),
-            router=_chat_router(),
-            gdelt_proxy=os.getenv("OHNEWS_GDELT_PROXY"),
-            now=now,
-        )
+        try:
+            result = await run_chat(
+                message,
+                history,
+                bronze=_bronze(),
+                store=_store(),
+                gold=_store(),
+                registry=_registry(),
+                router=_chat_router(),
+                gdelt_proxy=os.getenv("OHNEWS_GDELT_PROXY"),
+                now=now,
+            )
+        except Exception as exc:  # LLM 全候选失败→离线聚合降级回复，绝不裸 500
+            try:
+                fallback = await run_chat(
+                    message,
+                    history,
+                    bronze=_bronze(),
+                    store=_store(),
+                    gold=_store(),
+                    registry=_registry(),
+                    router=None,
+                    gdelt_proxy=os.getenv("OHNEWS_GDELT_PROXY"),
+                    now=now,
+                )
+                degraded = (
+                    f"（模型调用未成功，以下为确定性数据摘要。\n失败原因节选：{str(exc)[:160]}）\n\n"
+                )
+                result = {
+                    **fallback,
+                    "reply": degraded + fallback["reply"],
+                    "llm_error": str(exc)[:300],
+                }
+            except Exception as exc2:  # 连离线聚合都失败→最小回复
+                result = {
+                    "reply": f"服务暂时不可用：{str(exc2)[:200]}",
+                    "citations": [],
+                    "tools_used": [],
+                    "rounds": 0,
+                }
         cs.append(thread_id, "assistant", result["reply"], now.isoformat())
         await publish_sse(
             "chat_done",
