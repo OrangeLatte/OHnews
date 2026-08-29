@@ -112,6 +112,15 @@ export type TodayBriefing = {
   signals: SignalRow[];
 };
 
+export type WatchRow = {
+  watch_id: string;
+  type: string;
+  query: string;
+  created_at: string;
+  last_checked_at: string | null;
+  last_summary: Record<string, unknown> | null;
+};
+
 export type StatusInfo = {
   events: number;
   stances: number;
@@ -190,6 +199,12 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return r.json();
 }
 
+async function del<T>(path: string): Promise<T> {
+  const r = await fetch(`/api${path}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+  return r.json();
+}
+
 export const api = {
   status: () => get<StatusInfo>("/status"),
   events: (days = 7) => get<EventRow[]>(`/events?days=${days}`),
@@ -197,6 +212,12 @@ export const api = {
   eventEvidence: (id: string) =>
     get<EvidenceRow[]>(`/events/${encodeURIComponent(id)}/evidence`),
   today: (top = 10) => get<TodayBriefing>(`/today?top=${top}`),
+  watches: () => get<{ watches: WatchRow[] }>("/watches"),
+  watchAdd: (type: string, query: string) =>
+    post<WatchRow>("/watches", { type, query }),
+  watchRemove: (id: string) => del<{ removed: string }>(`/watches/${id}`),
+  watchRefresh: (id: string, minPerSource = 10) =>
+    post<WatchRow>(`/watches/${id}/refresh?min_per_source=${minPerSource}`, {}),
   eventSpectrum: (id: string) =>
     get<SpectrumDoc[]>(`/events/${encodeURIComponent(id)}/spectrum`),
   eventAnatomy: (id: string) =>
