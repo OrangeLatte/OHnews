@@ -79,6 +79,7 @@ def build_context_packet(
     event: dict[str, Any] | None = None
     entity_id: str | None = None
     event_id: str | None = None
+    entity_events: list[dict[str, Any]] = []
 
     if intent.target_kind is TargetKind.SIGNAL:
         signal = _signal_fallback(
@@ -111,7 +112,6 @@ def build_context_packet(
 
     ndi_points: list[dict[str, Any]] = []
     if entity_id:
-        entity_events: list[dict[str, Any]] = []
         for ev in store.events_asof(now):
             rec = ev.model_dump(mode="json") if hasattr(ev, "model_dump") else dict(ev)
             if entity_id in list(rec.get("entities") or []):
@@ -133,9 +133,10 @@ def build_context_packet(
             ndi_points.sort(key=lambda p: p.get("ts") or "")
 
     stances: list[dict[str, Any]] = []
-    if event_id:
+    wanted_events = {event_id} if event_id else {ev["event_id"] for ev in entity_events}
+    if wanted_events:
         for r in store.stances_asof(now):
-            if r.event_id != event_id:
+            if r.event_id not in wanted_events:
                 continue
             stances.append(
                 {
