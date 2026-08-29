@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 
-type Msg = { role: string; content: string; ts?: string };
+type Msg = { role: string; content: string; ts?: string; tools_used?: string[] };
 
 type ChatResp = {
   thread_id: string;
@@ -19,13 +19,56 @@ type ChatResp = {
   offline: boolean;
 };
 
-export function ChatPanel() {
+// Research Plan：工具调用→用户可理解的研究动作（✓ 已完成步骤）
+const TOOL_STEPS: Record<string, string> = {
+  query_events: "检索相关事件",
+  search_entities: "匹配追踪实体",
+  get_ndi: "调取分歧读数",
+  retrieve_evidence: "抽取证据链",
+  fetch_online: "在线检索补充",
+  draft_brief: "汇编研究摘要",
+};
+
+function ResearchPlan({ tools }: { tools: string[] }) {
+  const steps = tools.map((t) => TOOL_STEPS[t] ?? t);
+  if (steps.length === 0) return null;
+  return (
+    <div className="mt-2 border-t border-border/50 pt-2">
+      <p className="paper-kicker mb-1">Research Plan</p>
+      {steps.map((s, i) => (
+        <p key={i} className="text-xs leading-5 text-muted-foreground">
+          ✓ {s}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+export function ChatPanel({
+  prefill,
+  autoSend = false,
+}: {
+  prefill?: string;
+  autoSend?: boolean;
+}) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const autoSent = useRef(false);
+
+  // 预填（Ask Analyst / Suggested Tasks）：填入输入框，autoSend 时直接发送
+  useEffect(() => {
+    if (!prefill) return;
+    setInput(prefill);
+    if (autoSend && !autoSent.current) {
+      autoSent.current = true;
+      void submit(prefill);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill, autoSend]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -41,22 +84,30 @@ export function ChatPanel() {
     }
   }
 
-  async function send() {
-    const message = input.trim();
+  async function submit(message: string) {
     if (!message || loading) return;
-    setInput("");
     setMessages((m) => [...m, { role: "user", content: message }]);
     setLoading(true);
     setError(null);
     try {
       const r: ChatResp = await api.chat(message, threadId);
       setThreadId(r.thread_id);
-      setMessages((m) => [...m, { role: "assistant", content: r.reply }]);
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: r.reply, tools_used: r.tools_used },
+      ]);
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
+  }
+
+  function send() {
+    const message = input.trim();
+    if (!message) return;
+    setInput("");
+    void submit(message);
   }
 
   async function showThreads() {
@@ -102,11 +153,14 @@ export function ChatPanel() {
               key={i}
               className={
                 m.role === "user"
-                  ? "self-end rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap"
-                  : "self-start rounded-lg bg-muted px-3 py-2 text-sm whitespace-pre-wrap"
+                  ? "self-end max-w-[85%] bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap"
+                  : "self-start max-w-[92%] bg-muted px-3 py-2 text-sm whitespace-pre-wrap"
               }
             >
               {m.content}
+              {m.role === "assistant" && m.tools_used && m.tools_used.length > 0 && (
+                <ResearchPlan tools={m.tools_used} />
+              )}
             </div>
           ))}
           {loading && <p className="text-sm text-muted-foreground">研究员思考中…</p>}
