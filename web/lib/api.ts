@@ -75,6 +75,7 @@ export type TimelineEventCard = {
   title: string;
   as_of: string;
   ndi: number | null;
+  dominant_frame?: string | null;
 };
 
 export type TimelineResponse = {

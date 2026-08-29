@@ -13,6 +13,7 @@ const INTENTS: { value: string; label: string }[] = [
   { value: "compare_narratives", label: "Compare Narratives · 比较叙事" },
   { value: "show_evidence", label: "Show Evidence · 出示证据" },
   { value: "start_investigation", label: "Start Investigation · 立案调查" },
+  { value: "challenge", label: "Challenge · 红队挑战" },
 ];
 
 const TARGET_KINDS: { value: string; label: string }[] = [
@@ -34,7 +35,15 @@ const LAYER_META: { key: string; label: string; color: string }[] = [
   { key: "uncertainty", label: "UNCERTAINTY · 不确定性", color: "#8b949e" },
 ];
 
-function ArtifactView({ res }: { res: AgentInvokeResponse }) {
+function ArtifactView({
+  res,
+  onChallenge,
+  busy,
+}: {
+  res: AgentInvokeResponse;
+  onChallenge: () => void;
+  busy: boolean;
+}) {
   const a = res.artifact;
   const [savedId, setSavedId] = useState<string | null>(null);
   if (!a) return null;
@@ -146,6 +155,14 @@ function ArtifactView({ res }: { res: AgentInvokeResponse }) {
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={onChallenge}
+            disabled={busy}
+            className="rounded-md border border-primary/40 px-3 py-1.5 text-xs text-primary hover:bg-primary/5 disabled:opacity-60"
+          >
+            红队挑战（Challenge）
+          </button>
+          <button
+            type="button"
             onClick={saveToLibrary}
             disabled={savedId !== null}
             className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted/40 disabled:opacity-60"
@@ -241,7 +258,8 @@ export function IntentPanel() {
     }
   }, []);
 
-  async function invoke() {
+  async function invoke(overrideIntent?: string) {
+    const it = overrideIntent ?? intent;
     if (!targetId.trim()) {
       setError("target_id 不能为空");
       return;
@@ -251,7 +269,7 @@ export function IntentPanel() {
     setRes(null);
     try {
       const r = await api.agentInvoke({
-        intent,
+        intent: it,
         target_kind: targetKind,
         target_id: targetId.trim(),
         message: message.trim() || undefined,
@@ -324,7 +342,7 @@ export function IntentPanel() {
             />
           </label>
           <div className="flex items-center gap-3">
-            <Button size="sm" onClick={invoke} disabled={busy}>
+            <Button size="sm" onClick={() => invoke()} disabled={busy}>
               {busy ? "Analyst 运行中…" : "调用分析师"}
             </Button>
             {error && <span className="text-xs text-destructive">{error}</span>}
@@ -333,7 +351,11 @@ export function IntentPanel() {
       </Card>
 
       {res &&
-        (res.artifact ? <ArtifactView res={res} /> : <ChatReplyView res={res} />)}
+        (res.artifact ? (
+          <ArtifactView res={res} onChallenge={() => invoke("challenge")} busy={busy} />
+        ) : (
+          <ChatReplyView res={res} />
+        ))}
     </div>
   );
 }

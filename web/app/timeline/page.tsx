@@ -193,21 +193,31 @@ export default function TimelinePage() {
           </CardHeader>
           <CardContent>
             <div className="flex flex-col divide-y divide-border/60">
-              {data.events.map((ev) => (
-                <Link
-                  key={ev.event_id}
-                  href={`/events/${ev.event_id}`}
-                  className="flex items-baseline gap-3 py-2 text-sm hover:text-foreground"
-                >
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {ev.as_of.slice(0, 10)}
-                  </span>
-                  <span className="flex-1 truncate">{ev.title}</span>
-                  <span className="font-mono text-xs">
-                    NDI {ev.ndi !== null ? ev.ndi.toFixed(3) : "abstain"}
-                  </span>
-                </Link>
-              ))}
+              {data.events.map((ev, i) => {
+                const prev = data.events[i + 1];
+                const shift =
+                  prev && ev.dominant_frame && prev.dominant_frame && ev.dominant_frame !== prev.dominant_frame
+                    ? `${prev.dominant_frame} → ${ev.dominant_frame}`
+                    : null;
+                return (
+                  <Link
+                    key={ev.event_id}
+                    href={`/events/${ev.event_id}`}
+                    className="flex items-baseline gap-3 py-2 text-sm hover:text-foreground"
+                  >
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {ev.as_of.slice(0, 10)}
+                    </span>
+                    <span className="flex-1 truncate">{ev.title}</span>
+                    {shift && (
+                      <span className="font-paper text-xs italic text-primary">{shift}</span>
+                    )}
+                    <span className="font-mono text-xs">
+                      NDI {ev.ndi !== null ? ev.ndi.toFixed(3) : "abstain"}
+                    </span>
+                  </Link>
+                );
+              })}
             </div>
           </CardContent>
         </Card>

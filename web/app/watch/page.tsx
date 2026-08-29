@@ -30,6 +30,12 @@ function summaryLines(w: WatchRow): string[] {
       lines.push(`· [${g.kind}] ${g.title}（strength ${Math.round(g.strength)}）`);
     const evs = (s.events as { event_id: string; title: string }[]) ?? [];
     for (const e of evs.slice(0, 3)) lines.push(`· 事件 ${e.event_id}：${e.title}`);
+    const alerts = (s.alerts as { event_title: string; ndi: number; baseline: number }[]) ?? [];
+    if (alerts.length)
+      for (const a of alerts)
+        lines.push(`⚠ 预警：${a.event_title}（NDI ${a.ndi.toFixed(2)} > 基线 ${a.baseline.toFixed(2)}）`);
+    else if ((s.n_alert_rules as number) === 0)
+      lines.push("（该实体暂无预警规则，可在后台 /alerts 配置分位阈值）");
   } else if (s.kind === "topic") {
     lines.push(`近 7 日 ${s.n_articles} 篇文章命中「${(s.terms as string[]).join(" / ")}」`);
     const tops = (s.top_sources as { source_id: string; n: number }[]) ?? [];
