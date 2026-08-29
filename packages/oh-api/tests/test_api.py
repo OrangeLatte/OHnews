@@ -104,6 +104,28 @@ def test_spectrum_404(client: TestClient) -> None:
     assert client.get("/api/events/NOPE/spectrum").status_code == 404
 
 
+def test_entities_list(client: TestClient) -> None:
+    ents = client.get("/api/entities").json()["entities"]
+    ids = {e["entity_id"] for e in ents}
+    assert {"fed", "fomc", "ecb"} <= ids
+    assert any(e["parent_id"] == "fed" for e in ents)
+
+
+def test_entity_timeline(client: TestClient) -> None:
+    """R3 时间轴：窗口点位/事件卡/NDI 关联。"""
+    tl = client.get("/api/timeline/fed", params={"days": 7}).json()
+    assert tl["entity_id"] == "fed" and len(tl["points"]) == 7
+    total_articles = sum(p["articles"] for p in tl["points"])
+    assert total_articles == 24  # seed: 12 gov + 12 wscn 全部含 fed
+    assert tl["points"][-1]["n_events"] == 1  # E01 as_of=now（末日）
+    assert tl["events"][0]["event_id"] == "E01"
+    assert tl["events"][0]["ndi"] is not None  # run_pipeline 已出 NDI
+    official_rows = sum(p["official_rows"] for p in tl["points"])
+    assert official_rows > 0  # gov=OFFICIAL tier
+
+    assert client.get("/api/timeline/nope").status_code == 404
+
+
 def test_spectrum_v2_spans(client: TestClient) -> None:
     """词级主体/动作 spans：LOSS_BODY 有中文实体与框架词命中。"""
     docs = client.get("/api/events/E01/spectrum").json()

@@ -13,7 +13,7 @@ import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -27,6 +27,7 @@ from oh_agents.decision_log import DecisionLog
 from oh_agents.morning_brief import build_brief
 from oh_agents.research import run_research
 from oh_contracts.enums import SourceTier
+from oh_contracts.schemas import NDIPoint
 from oh_contracts.text import strip_html
 from oh_pipeline.anatomy import cluster_distributions, cluster_pairwise, entity_opposition
 from oh_pipeline.detect import detect_signals
@@ -174,6 +175,117 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             "date": now.date().isoformat(),
             "total": len(sigs),
             "signals": [s.model_dump(mode="json") for s in sigs],
+        }
+
+    @app.get("/api/entities")
+    def entities_list() -> dict[str, Any]:
+        """实体清单（Timeline/Watch 实体选择器数据源）。"""
+        from oh_pipeline.entities import DEFAULT_ENTITIES
+
+        return {
+            "entities": [
+                {
+                    "entity_id": e.entity_id,
+                    "aliases": list(e.aliases),
+                    "parent_id": e.parent_id,
+                }
+                for e in DEFAULT_ENTITIES
+            ]
+        }
+
+    @app.get("/api/timeline/{entity_id}")
+    def entity_timeline(entity_id: str, days: int = 30, language: str = "any") -> dict[str, Any]:
+        """实体级叙事时间轴（R3）：日粒度文章量/事件/NDI/官方-市场行数。
+
+        language="any"（默认）不过滤——同一事件多语言点位时优先混算（all）。
+        """
+        registry = _registry()
+        try:
+            registry.get(entity_id)
+        except KeyError as e:
+            raise HTTPException(404, f"unknown entity: {entity_id}") from e
+        now = _now()
+        window = max(1, min(days, 365))
+        start = (now - timedelta(days=window - 1)).date()
+        store = _store()
+        tier_map = _tier_map()
+
+        articles: dict[date, int] = {}
+        for rec in _bronze().iter_records():
+            pub = rec.published_at or rec.fetched_at
+            d = pub.date()
+            if d < start or d > now.date():
+                continue
+            text = (
+                str(rec.normalized.get("title") or "") + str(rec.normalized.get("body") or "")[:600]
+            )
+            if not text.strip():
+                continue
+            if entity_id in registry.match(text):
+                articles[d] = articles.get(d, 0) + 1
+
+        events = [ev for ev in store.events_asof(now) if entity_id in (ev.entities or [])]
+        events_by_day: dict[date, list[str]] = {}
+        for ev in events:
+            events_by_day.setdefault(ev.as_of.date(), []).append(ev.event_id)
+
+        ndi_by_event: dict[str, NDIPoint] = {}
+        entity_event_ids = {ev.event_id for ev in events}
+        for p in store.ndi_all():
+            if p.event_id not in entity_event_ids:
+                continue
+            if language != "any" and p.language != language:
+                continue
+            prev = ndi_by_event.get(p.event_id)
+            rank = {"all": 0, "zh": 1, "en": 2, "cross": 3}
+            if prev is None or rank.get(p.language, 9) < rank.get(prev.language, 9):
+                ndi_by_event[p.event_id] = p
+
+        official: dict[date, int] = {}
+        market: dict[date, int] = {}
+        for row in store.stances_asof(now):
+            if row.entity_id != entity_id or row.ts.date() < start:
+                continue
+            is_official = tier_map.get(row.source_id) == SourceTier.OFFICIAL
+            bucket = official if is_official else market
+            bucket[row.ts.date()] = bucket.get(row.ts.date(), 0) + 1
+
+        points: list[dict[str, Any]] = []
+        for i in range(window):
+            d = start + timedelta(days=i)
+            ev_ids = events_by_day.get(d, [])
+            ndi_val = next(
+                (ndi_by_event[eid].ndi for eid in ev_ids if eid in ndi_by_event),
+                None,
+            )
+            points.append(
+                {
+                    "date": d.isoformat(),
+                    "articles": articles.get(d, 0),
+                    "n_events": len(ev_ids),
+                    "event_ids": ev_ids,
+                    "ndi": ndi_val,
+                    "official_rows": official.get(d, 0),
+                    "market_rows": market.get(d, 0),
+                }
+            )
+        event_cards = [
+            {
+                "event_id": ev.event_id,
+                "title": ev.title,
+                "as_of": ev.as_of.isoformat(),
+                "ndi": ndi_by_event.get(ev.event_id, None) and ndi_by_event[ev.event_id].ndi,
+            }
+            for ev in events
+            if ev.as_of.date() >= start
+        ]
+        event_cards.sort(key=lambda c: c["as_of"], reverse=True)
+        return {
+            "entity_id": entity_id,
+            "days": window,
+            "language": language,
+            "points": points,
+            "events": event_cards,
         }
 
     @app.get("/api/watches")
