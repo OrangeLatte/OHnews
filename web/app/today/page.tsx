@@ -71,8 +71,8 @@ function SignalCard({
   // attention_spike 无事件关联，Ask Analyst 以实体为 target；其余以事件为 target
   const hasEventTarget = Boolean(evidenceId);
   const askHref = hasEventTarget
-    ? `/agent?intent=explain_signal&target_kind=signal&target_id=${encodeURIComponent(s.signal_id)}`
-    : `/agent?intent=explain_signal&target_kind=entity&target_id=${encodeURIComponent(s.entity_id)}`;
+    ? `/research?q=${encodeURIComponent(`解读信号 ${s.signal_id}：${s.title}。发生了什么变化，为什么重要？`)}&event=${encodeURIComponent(evidenceId)}`
+    : `/research?q=${encodeURIComponent(`实体 ${s.entity_id} 的关注度为何骤增？发生了什么？`)}&event=${encodeURIComponent(s.entity_id)}`;
   return (
     <article className="border-b border-border/60 py-6 first:pt-2 last:border-b-0">
       <div className="mb-2 flex items-baseline gap-3">

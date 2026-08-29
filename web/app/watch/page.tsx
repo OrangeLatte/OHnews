@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { watchStatus } from "@/lib/insight";
 import SourcesManager from "@/app/watch/sources-manager";
 
 import { api, type SignalRow, type WatchRow } from "@/lib/api";
@@ -146,11 +147,36 @@ export default function WatchPage() {
 
       <div className="flex flex-col gap-3">
         {watches.length === 0 ? (
-          <p className="text-sm text-muted-foreground">暂无订阅——从上方添加第一个 Watch。</p>
+          <div className="rounded border border-border bg-card px-4 py-8 text-center">
+            <p className="font-paper text-lg">你的情报雷达还是空的</p>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+              订阅实体（如 fed、nvidia）、主题（如「关税、降息」）或研究问题后，系统会在每次刷新时汇报它们的状态：安静、发展中、关注度骤增或叙事分歧。订阅将成为你的个人情报雷达。
+            </p>
+            <div className="mt-3 flex justify-center gap-2 text-xs">
+              <a href="/events" className="text-primary hover:underline">
+                先看看有什么事件 →
+              </a>
+            </div>
+          </div>
         ) : (
-          watches.map((w) => {
-            const meta = TYPE_META[w.type] ?? TYPE_META.entity;
+          (["entity", "topic", "question"] as const).map((group) => {
+            const items = watches.filter((w) => w.type === group);
+            if (items.length === 0) return null;
+            const gmeta = TYPE_META[group];
             return (
+              <div key={group} className="flex flex-col gap-2">
+                <p className="paper-kicker mt-2 border-b border-border pb-1">
+                  {group === "entity"
+                    ? "Tracked entities · 追踪实体"
+                    : group === "topic"
+                      ? "Tracked topics · 追踪主题"
+                      : "Research questions · 研究问题"}
+                  （{items.length}）
+                </p>
+                {items.map((w) => {
+                  const meta = gmeta;
+                  const status = watchStatus(w.last_summary as Record<string, unknown> | null);
+                  return (
               <Card key={w.watch_id}>
                 <CardHeader className="pb-2">
                   <div className="flex items-center gap-2">
@@ -162,6 +188,12 @@ export default function WatchPage() {
                       {meta.label}
                     </Badge>
                     <CardTitle className="flex-1 font-mono text-sm">{w.query}</CardTitle>
+                    <span
+                      className="text-[10px] font-semibold uppercase tracking-wide"
+                      style={{ color: status.color }}
+                    >
+                      ● {status.label}
+                    </span>
                     <Button
                       size="sm"
                       variant="outline"
@@ -195,8 +227,11 @@ export default function WatchPage() {
                   </ul>
                 </CardContent>
               </Card>
-            );
-          })
+                );
+              })}
+            </div>
+          );
+        })
         )}
       </div>
     </div>

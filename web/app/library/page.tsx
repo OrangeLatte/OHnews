@@ -116,9 +116,24 @@ export default function LibraryPage() {
       {items === null ? (
         <p className="mt-8 text-sm text-muted-foreground">加载中…</p>
       ) : items.length === 0 ? (
-        <p className="mt-8 text-sm text-muted-foreground">
-          档案库为空。在分析师页运行研究后保存结论，或收藏事件。
-        </p>
+        <div className="mt-8 rounded border border-border bg-card px-6 py-10 text-center">
+          <p className="font-paper text-xl">研究档案库是空的</p>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+            你的研究结论、收藏的事件和个人笔记都会沉淀在这里——形成一个可以回看、引用、
+            追溯的研究记忆。从研究台生成结构化分析后点「保存到档案库」，即可开始积累。
+          </p>
+          <div className="mt-4 flex justify-center gap-3 text-xs">
+            <a href="/events" className="border border-border px-3 py-1.5 hover:border-primary/40">
+              Explore Events
+            </a>
+            <a
+              href="/research"
+              className="bg-primary px-3 py-1.5 text-primary-foreground hover:bg-primary/90"
+            >
+              Start Research
+            </a>
+          </div>
+        </div>
       ) : (
         <div className="mt-6 flex flex-col gap-3">
           {items.map((it) => {
