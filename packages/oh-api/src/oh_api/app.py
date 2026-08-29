@@ -25,8 +25,10 @@ from oh_agents.alerts import check_alerts
 from oh_agents.chat import ChatStore, run_chat
 from oh_agents.decision_log import DecisionLog
 from oh_agents.morning_brief import build_brief
+from oh_agents.orchestrator import build_context_packet, offline_artifact, run_intent
 from oh_agents.research import run_research
 from oh_contracts.enums import SourceTier
+from oh_contracts.intents import Intent
 from oh_contracts.schemas import NDIPoint
 from oh_contracts.text import strip_html
 from oh_pipeline.anatomy import cluster_distributions, cluster_pairwise, entity_opposition
@@ -690,6 +692,62 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             "rounds": result["rounds"],
             "offline": _chat_router() is None,
         }
+
+    @app.post("/api/agent/invoke")
+    async def agent_invoke(body: dict[str, Any]) -> dict[str, Any]:
+        """Intent 驱动入口（REDESIGN_AGENT：按钮 → Intent → Orchestrator → Agent）。
+
+        router 缺失 → 离线五层 Artifact（确定性模板）；router 在 → chat 图
+        注入 ContextPacket。tier_map/type 校验失败 → 422。
+        """
+        intent_raw = str(body.get("intent", "")).strip()
+        target_kind_raw = str(body.get("target_kind", "")).strip()
+        target_id = str(body.get("target_id", "")).strip()
+        if not intent_raw or not target_kind_raw or not target_id:
+            raise HTTPException(422, "intent/target_kind/target_id required")
+        if target_kind_raw not in ("signal", "event", "entity", "topic"):
+            raise HTTPException(422, f"unknown target_kind: {target_kind_raw}")
+        try:
+            intent = Intent(
+                intent=intent_raw,  # type: ignore[arg-type]
+                target_kind=target_kind_raw,  # type: ignore[arg-type]
+                target_id=target_id,
+                message=body.get("message") or None,
+            )
+        except Exception as exc:
+            raise HTTPException(422, f"invalid intent: {exc}") from exc
+
+        now = _now()
+        packet = build_context_packet(
+            intent,
+            bronze=_bronze(),
+            store=_store(),
+            gold=_store(),
+            registry=_registry(),
+            tier_map=_tier_map(),
+            now=now,
+            min_per_source=int(body.get("min_per_source", 10)),
+        )
+        router = _chat_router()
+        if router is None:
+            art = offline_artifact(packet)
+            return {
+                "offline": True,
+                "packet": packet.model_dump(mode="json"),
+                "artifact": art.model_dump(mode="json"),
+            }
+        result = await run_intent(
+            packet,
+            bronze=_bronze(),
+            store=_store(),
+            gold=_store(),
+            registry=_registry(),
+            router=router,
+            gdelt_proxy=os.getenv("OHNEWS_GDELT_PROXY"),
+            now=now,
+        )
+        await publish_sse("agent_done", {"intent": intent.intent.value, "target": target_id})
+        return {"offline": False, "packet": packet.model_dump(mode="json"), **result}
 
     @app.get("/api/chat/threads")
     def chat_threads() -> list[dict[str, Any]]:

@@ -104,6 +104,30 @@ def test_spectrum_404(client: TestClient) -> None:
     assert client.get("/api/events/NOPE/spectrum").status_code == 404
 
 
+def test_agent_invoke_offline(client: TestClient) -> None:
+    """Intent 驱动入口（离线路径）：EVENT target → 五层 Artifact。"""
+    r = client.post(
+        "/api/agent/invoke",
+        json={"intent": "show_evidence", "target_kind": "event", "target_id": "E01"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["offline"] is True
+    art = data["artifact"]
+    assert art["engine"] == "offline" and art["intent"] == "show_evidence"
+    assert art["observation"] and art["interpretation"]
+    assert data["packet"]["event"]["event_id"] == "E01"
+    assert data["packet"]["stances"]
+
+
+def test_agent_invoke_validation(client: TestClient) -> None:
+    assert client.post("/api/agent/invoke", json={}).status_code == 422
+    bad = {"intent": "show_evidence", "target_kind": "nope", "target_id": "x"}
+    assert client.post("/api/agent/invoke", json=bad).status_code == 422
+    unk = {"intent": "nope", "target_kind": "event", "target_id": "E01"}
+    assert client.post("/api/agent/invoke", json=unk).status_code == 422
+
+
 def test_entities_list(client: TestClient) -> None:
     ents = client.get("/api/entities").json()["entities"]
     ids = {e["entity_id"] for e in ents}
