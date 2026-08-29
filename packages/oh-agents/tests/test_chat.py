@@ -184,3 +184,26 @@ def test_chat_store(tmp_path: Path) -> None:
     assert len(threads) == 2
     assert threads[0]["thread_id"] == "t2"  # 按最后消息时间倒序
     assert threads[0]["n"] == 1
+
+
+def test_chat_context_injection(tmp_path: Path) -> None:
+    """context（如 ContextPacket 摘要）应前缀注入首轮 user 消息。"""
+    bronze, store, now = _setup(tmp_path)
+    router = ScriptRouter([ChatOutput(reply="基于上下文的回答。", citations=[])])
+    result = asyncio.run(
+        run_chat(
+            "这代表什么？",
+            [],
+            bronze=bronze,
+            store=store,
+            gold=store,
+            registry=EntityRegistry(),
+            router=router,
+            now=now,
+            context="研究上下文：NDI 0.279（ok）；官方 9 / 市场 11",
+        )
+    )
+    assert result["reply"] == "基于上下文的回答。"
+    assert router.prompts and "【研究上下文】" in router.prompts[0]
+    assert "NDI 0.279" in router.prompts[0]
+    assert "【问题】这代表什么？" in router.prompts[0]

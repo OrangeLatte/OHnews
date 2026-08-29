@@ -295,10 +295,13 @@ async def run_chat(
     tier: Any = None,
     gdelt_proxy: str | None = None,
     now: datetime | None = None,
+    context: str | None = None,
 ) -> dict[str, Any]:
     """单轮会话：历史+新消息 → agent⇄tools 循环 → 回复+审计。
 
     history 为 [{"role": "user"|"assistant", "content": ...}, ...]。
+    context 为可选研究上下文（如 ContextPacket.summary_text()），
+    以「研究上下文」前缀注入本轮 user 消息头部。
     返回 {reply, citations, tools_used, rounds}。
     """
     if tier is None:
@@ -315,9 +318,10 @@ async def run_chat(
         gdelt_proxy=gdelt_proxy,
     )
     graph = build_chat_graph(deps)
+    full_message = f"【研究上下文】\n{context}\n\n【问题】{message}" if context else message
     result = await graph.ainvoke(
         {
-            "messages": [*history, {"role": "user", "content": message}],
+            "messages": [*history, {"role": "user", "content": full_message}],
             "now": (now or datetime.now(UTC)).isoformat(),
             "rounds": 0,
             "tool_feedback": "",
