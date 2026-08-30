@@ -429,3 +429,37 @@ def test_evidence_by_keys_endpoint(client: TestClient) -> None:
     # 校验：空列表 / 超限
     assert client.post("/api/evidence/by_keys", json={"item_keys": []}).status_code == 422
     assert client.post("/api/evidence/by_keys", json={"item_keys": ["k"] * 201}).status_code == 422
+
+
+def test_event_detail_includes_assessment(client: TestClient) -> None:
+    """R1：event_detail 内联 EventAssessment（评估层接入事件详情）。"""
+    d = client.get("/api/events/E01").json()
+    a = d["assessment"]
+    assert a is not None
+    assert a["event_id"] == "E01"
+    assert a["status"] in {"confirmed", "contested", "developing", "unverified"}
+    assert 0 <= a["confidence"] <= 1
+    assert a["evidence_strength"] in {"strong", "moderate", "limited", "insufficient"}
+    assert a["engine"] == "offline"
+    assert a["observation"]
+
+
+def test_intel_daily_endpoint(client: TestClient) -> None:
+    """/api/intel/daily：M2 四层快照（评估/信号/叙事/洞察，engine=offline）。"""
+    r = client.get("/api/intel/daily", params={"days": 1, "min_per_source": 1})
+    assert r.status_code == 200
+    d = r.json()
+    assert set(d) == {"as_of", "assessments", "signals", "narratives", "insights"}
+    assert d["assessments"] and d["assessments"][0]["event_id"] == "E01"
+    kinds = {s["kind"] for s in d["signals"]}
+    assert "ndi_alert" in kinds and "expectation_gap" in kinds
+    for s in d["signals"]:
+        assert s["evidence_kind"] in {"item_key", "event_id"}
+        assert "intelligence_score" in s["metrics"]
+    for n in d["narratives"]:
+        assert n["narrative_id"].startswith("nar-")
+        assert n["engine"] == "offline"
+    for i in d["insights"]:
+        assert i["insight_id"].startswith("ins-")
+        assert len(i["alternative_explanations"]) >= 1
+        assert i["engine"] == "offline"

@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 from oh_agents.alerts import check_alerts
 from oh_agents.chat import ChatStore, run_chat
 from oh_agents.decision_log import DecisionLog
+from oh_agents.intel_pipeline import build_daily_intel
 from oh_agents.morning_brief import build_brief
 from oh_agents.orchestrator import (
     answer_question,
@@ -39,7 +40,9 @@ from oh_contracts.schemas import NDIPoint
 from oh_contracts.text import strip_html
 from oh_pipeline.anatomy import cluster_distributions, cluster_pairwise, entity_opposition
 from oh_pipeline.detect import detect_signals
-from oh_pipeline.entities import EntityRegistry
+from oh_pipeline.entities import DEFAULT_ENTITIES, EntityRegistry
+from oh_pipeline.event_status import assess_event
+from oh_pipeline.evidence import build_evidence
 from oh_pipeline.spectra import sentence_spectrum
 from oh_pipeline.svo import parse_passage
 from oh_storage.bronze_parquet import ParquetBronzeWriter
@@ -766,13 +769,23 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
     @app.get("/api/events/{event_id}")
     def event_detail(event_id: str) -> dict[str, Any]:
-        """单事件详情（R0 断点修复：详情页不再拉全量列表 .find）。"""
+        """单事件详情（R0 断点修复：详情页不再拉全量列表 .find）。
+
+        R1：内联该事件的 EventAssessment（M2 评估层——状态/置信/证据强度/观察）。
+        """
         now = _now()
         store = _store()
         for e in store.events_asof(now):
             if e.event_id == event_id:
                 series = store.ndi_series(event_id)
                 latest = series[-1] if series else None
+                rows = [r for r in store.stances_asof(now) if r.event_id == event_id]
+                assessment = None
+                if rows:
+                    keys = {r.item_key for r in rows}
+                    recs = [rec for rec in _bronze().iter_records() if rec.item_key in keys]
+                    a = assess_event(event_id, build_evidence(recs, _tier_map()), rows)
+                    assessment = a.model_dump(mode="json")
                 return {
                     "event_id": e.event_id,
                     "title": e.title,
@@ -783,6 +796,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                     "ndi": latest.ndi if latest else None,
                     "ndi_status": latest.status if latest else "none",
                     "n_sources": latest.n_sources if latest else 0,
+                    "assessment": assessment,
                 }
         raise HTTPException(404, f"event not found: {event_id}")
 
@@ -1124,6 +1138,34 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         _intel_ledger().save(rep)
         await publish_sse("intel_done", {"report_id": rep.report_id, "engine": rep.engine})
         return rep.model_dump(mode="json")
+
+    @app.get("/api/intel/daily")
+    def intel_daily(
+        days: int = 7,
+        min_per_source: int = 2,
+        top_n: int = 10,
+    ) -> dict[str, Any]:
+        """M2 四层情报快照（R1：评估/信号/叙事/洞察 → JSON，engine=offline）。
+
+        PIT：build_daily_intel 内部只用 as_of 及更早数据；无 side effect（只读）。
+        """
+        d = build_daily_intel(
+            _bronze().iter_records(),
+            _store(),
+            EntityRegistry(DEFAULT_ENTITIES),
+            _tier_map(),
+            as_of=_now(),
+            lookback_days=days,
+            min_per_source=min_per_source,
+            top_n=top_n,
+        )
+        return {
+            "as_of": d.as_of.isoformat(),
+            "assessments": [a.model_dump(mode="json") for a in d.assessments],
+            "signals": [s.model_dump(mode="json") for s in d.signals],
+            "narratives": [n.model_dump(mode="json") for n in d.narratives],
+            "insights": [i.model_dump(mode="json") for i in d.insights],
+        }
 
     @app.get("/api/intel/latest")
     def intel_latest() -> dict[str, Any]:
