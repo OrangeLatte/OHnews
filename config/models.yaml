@@ -23,6 +23,9 @@ providers:
     extra_body:
       thinking:
         type: disabled
+    # DeepSeek V4 在 function_calling 下会把 schema 误认作真工具并乱起
+    # tool_call name（OutputParserException: Unknown tool type），固定 json_mode
+    strategy: json_mode
     models:
       deepseek-v4-flash:
         context_window: 128000

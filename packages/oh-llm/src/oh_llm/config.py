@@ -27,7 +27,7 @@ class ModelRef:
 
 @dataclass(frozen=True)
 class ProviderSpec:
-    """供应商：OpenAI 兼容 base_url + 密钥环境变量 + 模型清单 + extra_body。"""
+    """供应商：OpenAI 兼容 base_url + 密钥环境变量 + 模型清单 + extra_body + 策略覆盖。"""
 
     name: str
     base_url: str | None
@@ -36,6 +36,11 @@ class ProviderSpec:
     # 透传 ChatOpenAI extra_body（如 DeepSeek V4 需 {"thinking": {"type": "disabled"}}
     # 关闭思考模式，否则不支持强制 tool_choice 的 function_calling）
     extra_body: dict[str, Any] | None = None
+    # 每供应商结构化输出策略覆盖（"native"/"function_calling"/"json_mode"）。
+    # None = 用全局 defaults.strategy。DeepSeek V4 对 function_calling 会把
+    # schema 误认为真工具并乱起 tool_call name（实测 OutputParserException），
+    # 故该供应商固定 json_mode（response_format=json_object，无工具名混淆）。
+    strategy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +80,7 @@ def load_llm_config(path: str | Path) -> LLMConfig:
             api_key_env=spec.get("api_key_env"),
             models=tuple(spec.get("models", {})),
             extra_body=spec.get("extra_body"),
+            strategy=spec.get("strategy"),
         )
         for name, spec in raw.get("providers", {}).items()
     }

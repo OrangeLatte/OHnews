@@ -82,11 +82,43 @@ class ModelRouter:
         system: str,
         user: str,
     ) -> T:
-        """单候选调用（langchain 结构化输出）。测试可 override。"""
+        """单候选调用（策略分派：function_calling / json_mode；测试可 override）。"""
+        provider_strategy = self._config.provider_of(ref).strategy or self._config.strategy
+        if provider_strategy == "json_mode":
+            return await self._invoke_json_mode(ref, schema, system, user)
         llm = self._ensure(ref)
         bound = llm.with_structured_output(schema, method=self._config.strategy)  # type: ignore[attr-defined]
         raw = await bound.ainvoke([SystemMessage(system), HumanMessage(user)])
         return schema.model_validate(raw)
+
+    async def _invoke_json_mode(
+        self,
+        ref: ModelRef,
+        schema: type[T],
+        system: str,
+        user: str,
+    ) -> T:
+        """json_mode：response_format=json_object + schema 注入 prompt，文本输出后校验。
+
+        无工具调用协议 → 不存在"模型把 schema 当真工具乱起 name"的混淆
+        （DeepSeek V4 function_calling 实测 OutputParserException 根因）。
+        """
+        import json
+
+        llm = self._ensure(ref)
+        schema_desc = json.dumps(schema.model_json_schema(), ensure_ascii=False)
+        sys2 = (
+            f"{system}\n\n输出要求：仅输出一个 JSON 对象（无代码围栏/无解释文字），"
+            f"必须符合以下 JSON Schema：\n{schema_desc}"
+        )
+        bound = llm.bind(response_format={"type": "json_object"})
+        raw = await bound.ainvoke([SystemMessage(sys2), HumanMessage(user)])
+        content = raw.content
+        text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.strip("`").removeprefix("json").strip()
+        return schema.model_validate_json(text)
 
     async def _invoke_with_limit(
         self,
