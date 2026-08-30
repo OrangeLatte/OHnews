@@ -36,7 +36,9 @@ class Signal(_Strict):
     metrics: dict[str, float] = Field(default_factory=dict)  # kind 相关数值
     strength: float = Field(ge=0, le=100)  # 重要性排序 0-100
     confidence: float = Field(ge=0, le=1)
-    evidence_ids: list[str] = Field(default_factory=list)  # event_ids，证据链入口
+    evidence_ids: list[str] = Field(default_factory=list)  # 证据链入口；语义由 evidence_kind 决定
+    # ids 元素类型（R0 断点修复：双语义显式化）
+    evidence_kind: Literal["item_key", "event_id"] = "event_id"
     detected_at: datetime
     as_of: datetime  # PIT 锚：只用 as_of 及更早信息计算
     # —— RECONSTRUCTION C：Signal 主体语义与解释层（可选字段向后兼容）——
