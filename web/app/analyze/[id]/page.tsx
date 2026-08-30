@@ -303,14 +303,21 @@ export default function WorkbenchPage({ params }: PageProps<"/analyze/[id]">) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setActiveEntity(null);
+    let alive = true;
     Promise.all([api.eventAnatomy(id), api.eventSpectrum(id), api.eventEvidence(id)])
       .then(([a, sp, ev]) => {
+        if (!alive) return;
         setAnatomy(a);
         setSpectrum(sp);
         setEvidence(ev);
       })
-      .catch((err) => setError(String(err)));
+      .catch((err) => {
+        if (alive) setError(String(err));
+      });
+    return () => {
+      alive = false;
+      setActiveEntity(null); /* 事件切换时清理选中主体（cleanup 期 setState 合规） */
+    };
   }, [id]);
 
   if (error)

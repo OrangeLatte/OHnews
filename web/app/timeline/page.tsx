@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type TimelineResponse } from "@/lib/api";
@@ -88,17 +89,25 @@ function TimelineChart({
 }
 
 export default function TimelinePage() {
+  const router = useRouter();
   const [entity, setEntity] = useState("fed");
   const [days, setDays] = useState(30);
   const [data, setData] = useState<TimelineResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setData(null);
+    let alive = true;
     api
       .entityTimeline(entity, days)
-      .then(setData)
-      .catch((err) => setError(String(err)));
+      .then((d) => {
+        if (alive) setData(d);
+      })
+      .catch((err) => {
+        if (alive) setError(String(err));
+      });
+    return () => {
+      alive = false;
+    };
   }, [entity, days]);
 
   const knownIds = useMemo(() => new Set(GROUPS.flatMap((g) => g.ids)), []);
@@ -174,7 +183,7 @@ export default function TimelinePage() {
         <CardContent>
           {data ? (
             data.points.some((p) => p.articles > 0 || p.n_events > 0) ? (
-              <TimelineChart data={data} onPickEvent={(id) => (window.location.href = `/events/${id}`)} />
+              <TimelineChart data={data} onPickEvent={(id) => router.push(`/events/${id}`)} />
             ) : (
               <p className="text-sm text-muted-foreground">
                 窗口内无该实体的文章或事件——可尝试扩大时间范围。

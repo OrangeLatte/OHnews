@@ -34,8 +34,13 @@ export default function AlertsPage() {
   }, []);
 
   useEffect(() => {
-    void query().catch(() => setRules([]));
-  }, [query]);
+    Promise.all([api.alertRules(), api.alertHits()])
+      .then(([r, h]) => {
+        setRules(r);
+        setHits(h);
+      })
+      .catch(() => setRules([]));
+  }, []);
 
   async function add() {
     if (!entityId.trim()) return;
@@ -73,7 +78,7 @@ export default function AlertsPage() {
       </div>
       <p className="text-xs text-muted-foreground">
         触发语义：实体相关事件 NDI ≥ 该实体历史分布 P{percentile * 100}（描述性提示
-        "分歧进入历史高位区间"，非方向性判断）。同实体每日最多 1 次；历史点位不足 8 个自动弃权。
+        「分歧进入历史高位区间」，非方向性判断）。同实体每日最多 1 次；历史点位不足 8 个自动弃权。
       </p>
 
       <Card>

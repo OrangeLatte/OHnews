@@ -3,7 +3,33 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-import { api, type EvidenceRow, type SignalRow, type TodayBriefing } from "@/lib/api";
+import {
+  api,
+  type EvidenceByKeyRow,
+  type EvidenceRow,
+  type SignalRow,
+  type TodayBriefing,
+} from "@/lib/api";
+
+// 统一证据预览行：event_id 路径=stance 行（label=frame）；
+// item_key 路径=原始文章反查（label=title）
+type PreviewRow = { source_id: string; label: string; quote: string };
+
+function toPreview(rows: EvidenceRow[]): PreviewRow[] {
+  return rows.map((e) => ({
+    source_id: e.source_id,
+    label: e.frame,
+    quote: e.quote,
+  }));
+}
+
+function toPreviewFromKeys(rows: EvidenceByKeyRow[]): PreviewRow[] {
+  return rows.map((e) => ({
+    source_id: e.source_id,
+    label: e.title || e.item_key,
+    quote: e.quote,
+  }));
+}
 
 const KIND_META: Record<string, { label: string; color: string }> = {
   attention_spike: { label: "Attention Spike", color: "#f0b429" },
@@ -38,7 +64,7 @@ function MetricChips({ s }: { s: SignalRow }) {
   );
 }
 
-function InlineEvidence({ rows }: { rows: EvidenceRow[] }) {
+function InlineEvidence({ rows }: { rows: PreviewRow[] }) {
   if (rows.length === 0) return null;
   return (
     <div className="mt-3 border-l-2 border-primary/30 pl-3">
@@ -48,7 +74,7 @@ function InlineEvidence({ rows }: { rows: EvidenceRow[] }) {
       {rows.slice(0, 3).map((e, i) => (
         <p key={i} className="mb-1 font-paper text-sm leading-6">
           <span className="mr-2 font-mono text-[10px] uppercase text-muted-foreground">
-            {e.source_id}·{e.frame}
+            {e.source_id}·{e.label}
           </span>
           “{e.quote.length > 120 ? `${e.quote.slice(0, 120)}…` : e.quote}”
         </p>
@@ -64,15 +90,14 @@ function SignalCard({
 }: {
   s: SignalRow;
   index: number;
-  evidence: EvidenceRow[];
+  evidence: PreviewRow[];
 }) {
   const meta = KIND_META[s.kind] ?? { label: s.kind, color: "#8b949e" };
-  const evidenceId = s.evidence_ids[0];
-  // attention_spike 无事件关联，Ask Analyst 以实体为 target；其余以事件为 target
-  const hasEventTarget = Boolean(evidenceId);
-  const askHref = hasEventTarget
-    ? `/research?q=${encodeURIComponent(`解读信号 ${s.signal_id}：${s.title}。发生了什么变化，为什么重要？`)}&event=${encodeURIComponent(evidenceId)}`
-    : `/research?q=${encodeURIComponent(`实体 ${s.entity_id} 的关注度为何骤增？发生了什么？`)}&event=${encodeURIComponent(s.entity_id)}`;
+  const isItemKind = s.evidence_kind === "item_key";
+  const eventId = isItemKind ? undefined : s.evidence_ids[0];
+  // item_key 语义（narrative_shift）无事件 id，Ask Analyst 以实体为 target
+  const askTarget = eventId ?? s.entity_id;
+  const askHref = `/research?q=${encodeURIComponent(`解读信号 ${s.signal_id}：${s.title}。发生了什么变化，为什么重要？`)}&event=${encodeURIComponent(askTarget)}`;
   return (
     <article className="border-b border-border/60 py-6 first:pt-2 last:border-b-0">
       <div className="mb-2 flex items-baseline gap-3">
@@ -127,16 +152,16 @@ function SignalCard({
           >
             Ask Analyst
           </Link>
-          {hasEventTarget && (
+          {eventId && (
             <>
               <Link
-                href={`/analyze/${encodeURIComponent(evidenceId)}`}
+                href={`/analyze/${encodeURIComponent(eventId)}`}
                 className="rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
               >
                 Compare narratives
               </Link>
               <Link
-                href={`/events/${encodeURIComponent(evidenceId)}`}
+                href={`/events/${encodeURIComponent(eventId)}`}
                 className="rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
               >
                 Show evidence
@@ -151,7 +176,7 @@ function SignalCard({
 
 export default function TodayPage() {
   const [briefing, setBriefing] = useState<TodayBriefing | null>(null);
-  const [evidenceMap, setEvidenceMap] = useState<Record<string, EvidenceRow[]>>({});
+  const [evidenceMap, setEvidenceMap] = useState<Record<string, PreviewRow[]>>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -159,14 +184,18 @@ export default function TodayPage() {
       .today(10)
       .then((b) => {
         setBriefing(b);
-        // R1：事件类 Signal 内联证据预览（并行拉取，静默失败不阻断）
+        // 证据预览按 evidence_kind 路由（R0 断点修复）：
+        // item_key → POST /evidence/by_keys（原始文章反查）；
+        // event_id → GET /events/{id}/evidence（stance 行）。并行拉取，静默失败不阻断。
         for (const s of b.signals) {
-          const eid = s.evidence_ids[0];
-          if (!eid || evidenceMap[eid]) continue;
-          api
-            .eventEvidence(eid)
+          if (s.evidence_ids.length === 0 || evidenceMap[s.signal_id]) continue;
+          const fetch$ =
+            s.evidence_kind === "item_key"
+              ? api.evidenceByKeys(s.evidence_ids).then(toPreviewFromKeys)
+              : api.eventEvidence(s.evidence_ids[0]).then(toPreview);
+          fetch$
             .then((rows) =>
-              setEvidenceMap((m) => ({ ...m, [eid]: rows.slice(0, 3) })),
+              setEvidenceMap((m) => ({ ...m, [s.signal_id]: rows })),
             )
             .catch(() => undefined);
         }
@@ -199,17 +228,14 @@ export default function TodayPage() {
             暂无越过检测阈值的 Signal（信息量不足时系统选择弃权而非硬凑数字）。
           </p>
         ) : (
-          briefing.signals.map((s, i) => {
-            const eid = s.evidence_ids[0];
-            return (
-              <SignalCard
-                key={s.signal_id}
-                s={s}
-                index={i}
-                evidence={eid ? (evidenceMap[eid] ?? []) : []}
-              />
-            );
-          })
+          briefing.signals.map((s, i) => (
+            <SignalCard
+              key={s.signal_id}
+              s={s}
+              index={i}
+              evidence={evidenceMap[s.signal_id] ?? []}
+            />
+          ))
         )}
       </section>
     </div>

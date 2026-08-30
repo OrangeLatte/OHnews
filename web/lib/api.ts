@@ -17,6 +17,20 @@ export type NdiPoint = {
   ci_high: number | null;
   n_sources: number;
   status: string;
+  language: string;
+};
+
+/** GET /api/events/{id} 单事件详情（R0：详情页不再拉全量列表） */
+export type EventDetailRow = {
+  event_id: string;
+  title: string;
+  summary: string;
+  entities: string[];
+  as_of: string;
+  first_seen: string | null;
+  ndi: number | null;
+  ndi_status: string;
+  n_sources: number;
 };
 
 export type EvidenceRow = {
@@ -117,6 +131,15 @@ export type DecisionRow = {
   outcome: string | null;
 };
 
+export type EvidenceByKeyRow = {
+  item_key: string;
+  source_id: string;
+  title: string;
+  url: string;
+  published_at: string;
+  quote: string;
+};
+
 export type SignalRow = {
   signal_id: string;
   kind: string;
@@ -128,6 +151,9 @@ export type SignalRow = {
   strength: number;
   confidence: number;
   evidence_ids: string[];
+  // evidence_ids 的语义：item_key=原始文章反查（POST /evidence/by_keys）；
+  // event_id=事件证据链（GET /events/{id}/evidence）。narrative_shift 为 item_key。
+  evidence_kind: "item_key" | "event_id";
   detected_at: string;
   as_of: string;
 };
@@ -281,8 +307,11 @@ export const api = {
   status: () => get<StatusInfo>("/status"),
   events: (days = 7) => get<EventRow[]>(`/events?days=${days}`),
   eventNdi: (id: string) => get<NdiPoint[]>(`/events/${encodeURIComponent(id)}/ndi`),
+  eventDetail: (id: string) => get<EventDetailRow>(`/events/${encodeURIComponent(id)}`),
   eventEvidence: (id: string) =>
     get<EvidenceRow[]>(`/events/${encodeURIComponent(id)}/evidence`),
+  evidenceByKeys: (itemKeys: string[]) =>
+    post<EvidenceByKeyRow[]>("/evidence/by_keys", { item_keys: itemKeys }),
   today: (top = 10) => get<TodayBriefing>(`/today?top=${top}`),
   agentInvoke: (body: {
     intent: string;
@@ -333,7 +362,7 @@ export const api = {
       `/brief?watchlist=${encodeURIComponent(watchlist)}&top=${top}`
     ),
   research: (question: string) =>
-    post<{ answer: string; confidence: string; citations: string[]; tool_calls: string[] }>(
+    post<{ answer: string; confidence: number; citations: string[]; tool_calls: string[] }>(
       "/research",
       { question }
     ),

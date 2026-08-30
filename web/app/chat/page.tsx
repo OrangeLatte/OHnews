@@ -62,11 +62,15 @@ export function ChatPanel({
   // 预填（Ask Analyst / Suggested Tasks）：填入输入框，autoSend 时直接发送
   useEffect(() => {
     if (!prefill) return;
-    setInput(prefill);
-    if (autoSend && !autoSent.current) {
-      autoSent.current = true;
-      void submit(prefill);
-    }
+    /* deferred 到宏任务：避免 effect 同步 setState 级联渲染 */
+    const t = setTimeout(() => {
+      setInput(prefill);
+      if (autoSend && !autoSent.current) {
+        autoSent.current = true;
+        void submit(prefill);
+      }
+    }, 0);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill, autoSend]);
 

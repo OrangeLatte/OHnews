@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { api, type LibraryItem } from "@/lib/api";
 
 const TYPE_META: Record<string, { label: string; color: string }> = {
@@ -123,15 +124,15 @@ export default function LibraryPage() {
             追溯的研究记忆。从研究台生成结构化分析后点「保存到档案库」，即可开始积累。
           </p>
           <div className="mt-4 flex justify-center gap-3 text-xs">
-            <a href="/events" className="border border-border px-3 py-1.5 hover:border-primary/40">
+            <Link href="/events" className="border border-border px-3 py-1.5 hover:border-primary/40">
               Explore Events
-            </a>
-            <a
+            </Link>
+            <Link
               href="/research"
               className="bg-primary px-3 py-1.5 text-primary-foreground hover:bg-primary/90"
             >
               Start Research
-            </a>
+            </Link>
           </div>
         </div>
       ) : (

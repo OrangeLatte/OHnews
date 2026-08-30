@@ -23,6 +23,8 @@ const TIER_GROUP: Record<string, { label: string; zh: string; order: number }> =
   L4: { label: "Social", zh: "社媒讨论", order: 3 },
 };
 
+const LANG_ZH: Record<string, string> = { zh: "中文语料", en: "英文语料" };
+
 function SectionHead({ no, en, zh }: { no: string; en: string; zh: string }) {
   return (
     <div className="mt-8 flex items-baseline gap-3 border-b border-foreground/20 pb-1">
@@ -50,20 +52,16 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const q = encodeURIComponent(id);
     Promise.all([
-      fetch(`/api/events?days=60`).then((r) => r.json()),
+      api.eventDetail(id),
       api.eventNdi(id),
       api.eventEvidence(id),
       api.eventSpectrum(id),
       api.eventAnatomy(id),
       fetch(`/api/sources`).then((r) => r.json()),
     ])
-      .then(([evts, n, e, sp, an, srcs]) => {
-        setMeta(
-          (evts as EventMeta[]).find((x) => x.event_id === id) ??
-            ({ event_id: id, title: id, entities: [], as_of: "", ndi: null, ndi_status: "abstain", n_sources: 0 } as EventMeta),
-        );
+      .then(([meta, n, e, sp, an, srcs]) => {
+        setMeta(meta);
         setNdi(n);
         setEvidence(e);
         setSpectrum(sp);
@@ -81,7 +79,12 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
 
   const latestOk = ndi?.filter((p) => p.status === "ok" && p.ndi !== null) ?? [];
   const lastPoint = latestOk[latestOk.length - 1] ?? null;
-  const prevPoint = latestOk.length > 1 ? latestOk[latestOk.length - 2] : null;
+  /* 趋势对比只在同一语言语料内进行——跨语言 NDI 点的差值无意义 */
+  const prevPoint = lastPoint
+    ? ([...latestOk]
+        .reverse()
+        .find((p) => p.language === lastPoint.language && p.ts !== lastPoint.ts) ?? null)
+    : null;
   const lv = divergenceLevel(lastPoint ? (lastPoint.ndi as number) : null);
   const trend = divergenceTrend(lastPoint && prevPoint ? (lastPoint.ndi as number) - (prevPoint.ndi as number) : null);
   const status = statusOf(meta);
@@ -147,13 +150,19 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
             {lv.zh}
           </span>
           <span className="text-sm text-muted-foreground">叙事分歧 {trend}</span>
+          {lastPoint && (
+            <span className="border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+              {LANG_ZH[lastPoint.language] ?? `语料 ${lastPoint.language}`}
+            </span>
+          )}
         </div>
         <details className="mt-2 text-xs text-muted-foreground">
           <summary className="cursor-pointer">技术指标（方法论层）</summary>
           <p className="mt-1 font-mono">
             NDI {lastPoint ? (lastPoint.ndi as number).toFixed(3) : "—"} ·
             信源数{" "}
-            {lastPoint?.n_sources ?? "—"} · 弃权语义：样本不足时不产出数值
+            {lastPoint?.n_sources ?? "—"} · 语料 {lastPoint?.language ?? "—"} ·{" "}
+            弃权语义：样本不足时不产出数值
           </p>
         </details>
 

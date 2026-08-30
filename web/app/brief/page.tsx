@@ -29,7 +29,14 @@ export default function BriefPage() {
   }
 
   useEffect(() => {
-    void load();
+    api
+      .brief(watchlist, 5)
+      .then((b) => {
+        setText(b.text);
+        setItems(b.items);
+      })
+      .catch((err) => setError(String(err)));
+    // 初次挂载加载；手动重载走 load()（含 loading 态）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

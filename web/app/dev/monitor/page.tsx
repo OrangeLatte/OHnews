@@ -25,8 +25,14 @@ export default function DevMonitorPage() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    api
+      .devLogs()
+      .then((d) => {
+        setDir(d.logs_dir);
+        setFiles(d.files);
+      })
+      .catch((err) => setError(String(err)));
+  }, []);
 
   async function open(name: string) {
     try {

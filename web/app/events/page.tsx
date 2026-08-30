@@ -22,12 +22,13 @@ export default function EventsPage() {
   const [q, setQ] = useState("");
 
   useEffect(() => {
-    const sp = new URLSearchParams(window.location.search);
-    const qs = sp.get("q");
-    if (qs) setQ(qs);
+    const qs = new URLSearchParams(window.location.search).get("q");
     api
       .events(30)
-      .then(setEvents)
+      .then((evts) => {
+        setEvents(evts);
+        if (qs) setQ(qs);
+      })
       .catch((err) => setError(String(err)));
   }, []);
 

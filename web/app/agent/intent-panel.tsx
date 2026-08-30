@@ -244,18 +244,23 @@ export function IntentPanel() {
     const it = sp.get("intent");
     const tk = sp.get("target_kind");
     const tid = sp.get("target_id");
-    if (it) setIntent(it);
-    if (tk) setTargetKind(tk);
-    if (tid) setTargetId(tid);
-    if (it && tk && tid && !autoFired.current) {
-      autoFired.current = true;
-      setBusy(true);
-      api
-        .agentInvoke({ intent: it, target_kind: tk, target_id: tid })
-        .then(setRes)
-        .catch((err) => setError(String(err)))
-        .finally(() => setBusy(false));
-    }
+    if (!it && !tk && !tid) return;
+    /* 深链注入 deferred 到宏任务：避免 effect 同步 setState 级联渲染 */
+    const t = setTimeout(() => {
+      if (it) setIntent(it);
+      if (tk) setTargetKind(tk);
+      if (tid) setTargetId(tid);
+      if (it && tk && tid && !autoFired.current) {
+        autoFired.current = true;
+        setBusy(true);
+        api
+          .agentInvoke({ intent: it, target_kind: tk, target_id: tid })
+          .then(setRes)
+          .catch((err) => setError(String(err)))
+          .finally(() => setBusy(false));
+      }
+    }, 0);
+    return () => clearTimeout(t);
   }, []);
 
   async function invoke(overrideIntent?: string) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -153,9 +154,9 @@ export default function WatchPage() {
               订阅实体（如 fed、nvidia）、主题（如「关税、降息」）或研究问题后，系统会在每次刷新时汇报它们的状态：安静、发展中、关注度骤增或叙事分歧。订阅将成为你的个人情报雷达。
             </p>
             <div className="mt-3 flex justify-center gap-2 text-xs">
-              <a href="/events" className="text-primary hover:underline">
+              <Link href="/events" className="text-primary hover:underline">
                 先看看有什么事件 →
-              </a>
+              </Link>
             </div>
           </div>
         ) : (

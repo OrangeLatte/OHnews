@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
 import React from "react";
 
 import { ChatPanel } from "@/app/chat/page";
@@ -162,12 +163,12 @@ function StructuredResearch({
           <div>
             <p className="paper-kicker">Next investigation</p>
             <div className="flex flex-wrap gap-2 text-xs">
-              <a className="text-primary hover:underline" href="/events">
+              <Link className="text-primary hover:underline" href="/events">
                 浏览事件 →
-              </a>
-              <a className="text-primary hover:underline" href="/library">
+              </Link>
+              <Link className="text-primary hover:underline" href="/library">
                 存入档案 →
-              </a>
+              </Link>
             </div>
           </div>
         </div>
@@ -199,10 +200,13 @@ export default function ResearchPage({
   });
 
   useEffect(() => {
-    if (q) {
+    if (!q) return;
+    /* deferred 到宏任务：避免 effect 同步 setState 级联渲染 */
+    const t = setTimeout(() => {
       setPrefill(q);
       setAutoSend(true);
-    }
+    }, 0);
+    return () => clearTimeout(t);
   }, [q]);
 
   return (

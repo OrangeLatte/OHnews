@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import * as echarts from "echarts";
 
 import { api } from "@/lib/api";
@@ -66,12 +67,27 @@ const BASE = {
   },
 };
 
-function Chart({ option, height = 300 }: { option: echarts.EChartsOption; height?: number }) {
+function Chart({
+  option,
+  height = 300,
+  onSeriesClick,
+}: {
+  option: echarts.EChartsOption;
+  height?: number;
+  onSeriesClick?: (params: echarts.ECElementEvent) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
+  const cbRef = useRef(onSeriesClick);
+  useEffect(() => {
+    cbRef.current = onSeriesClick;
+  }, [onSeriesClick]);
   useEffect(() => {
     if (!ref.current) return;
     const chart = echarts.init(ref.current);
     chart.setOption(option);
+    if (cbRef.current) {
+      chart.on("click", (params: echarts.ECElementEvent) => cbRef.current?.(params));
+    }
     const onResize = () => chart.resize();
     window.addEventListener("resize", onResize);
     return () => {
@@ -205,6 +221,7 @@ export default function IntelligencePage() {
   const [watches, setWatches] = useState<WatchRow[]>([]);
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     Promise.all([
@@ -268,11 +285,14 @@ export default function IntelligencePage() {
       .map((p) => [p.ts.slice(0, 10), p.ndi as number])
       .sort((a, b) => (a[0] < b[0] ? -1 : 1));
     const marks = Object.values(
-      flow.event_links.reduce<Record<string, { coord: string; title: string }>>((acc: Record<string, { coord: string; title: string }>, l: { as_of: string; title: string }) => {
-        const d = l.as_of.slice(0, 10);
-        if (!acc[d]) acc[d] = { coord: d, title: l.title };
-        return acc;
-      }, {}),
+      flow.event_links.reduce<Record<string, { coord: string; title: string; eventId: string }>>(
+        (acc: Record<string, { coord: string; title: string; eventId: string }>, l: { as_of: string; title: string; event_id: string }) => {
+          const d = l.as_of.slice(0, 10);
+          if (!acc[d]) acc[d] = { coord: d, title: l.title, eventId: l.event_id };
+          return acc;
+        },
+        {},
+      ),
     );
     return {
       ...BASE,
@@ -305,7 +325,7 @@ export default function IntelligencePage() {
           barMaxWidth: 18,
           markLine: {
             symbol: "none",
-            silent: true,
+            silent: false,
             lineStyle: { color: "#a34a2a", type: "dashed" as const, width: 1 },
             label: {
               show: true,
@@ -315,7 +335,11 @@ export default function IntelligencePage() {
               formatter: (p: { name?: string }) =>
                 ((p.name ?? "")).length > 12 ? `${(p.name ?? "").slice(0, 12)}…` : (p.name ?? ""),
             },
-            data: marks.map((m: { coord: string; title: string }) => ({ xAxis: m.coord, name: m.title })),
+            data: marks.map((m: { coord: string; title: string; eventId: string }) => ({
+              xAxis: m.coord,
+              name: m.title,
+              eventId: m.eventId,
+            })),
           },
         },
         {
@@ -454,7 +478,18 @@ export default function IntelligencePage() {
             zh="注意力 × 分歧时间轴"
             question="Question：关注何时激增？分歧何时出现？｜Action：点击虚线事件标记下钻"
           />
-          {flow && <Chart option={timelineOption} height={280} />}
+          {flow && (
+            <Chart
+              option={timelineOption}
+              height={280}
+              onSeriesClick={(params) => {
+                if ((params.dataType as string) === "markLine") {
+                  const data = params.data as { eventId?: string };
+                  if (data.eventId) router.push(`/events/${encodeURIComponent(data.eventId)}`);
+                }
+              }}
+            />
+          )}
           {!flow && <p className="text-sm text-muted-foreground">加载中…</p>}
         </div>
 
@@ -540,7 +575,7 @@ export default function IntelligencePage() {
           <form
             onSubmit={(ev) => {
               ev.preventDefault();
-              if (q.trim()) window.location.href = askHref(q.trim());
+              if (q.trim()) router.push(askHref(q.trim()));
             }}
           >
             <input
@@ -555,7 +590,7 @@ export default function IntelligencePage() {
               <button
                 key={s}
                 type="button"
-                onClick={() => (window.location.href = askHref(s))}
+                onClick={() => router.push(askHref(s))}
                 className="text-left text-xs text-muted-foreground hover:text-primary"
               >
                 · {s}

@@ -34,8 +34,11 @@ export default function DecisionsPage() {
   }, [entityId]);
 
   useEffect(() => {
-    void query();
-  }, [query]);
+    api
+      .decisions(entityId || "fed")
+      .then(setRows)
+      .catch(() => setRows([]));
+  }, [entityId]);
 
   async function add() {
     if (!decision.trim()) return;
