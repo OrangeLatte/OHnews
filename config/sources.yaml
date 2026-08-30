@@ -132,11 +132,15 @@ sources:
     language: zh
     credibility_prior: 0.60
     bias: mixed_aggregate
-    rate_limit_rpm: 6
+    rate_limit_rpm: 3
     enabled: true
     params:
-      query: "sourcelang:chinese (央行 OR 货币政策 OR 利率 OR 中美 OR 关税)"
+      # GDELT 底层索引是机器翻译英文，CJK 关键词检索 0 命中——用英文主题词锁定中文报道
+      query: >-
+        sourcelang:chinese (central bank OR "monetary policy" OR "interest rate"
+        OR tariff OR "trade war" OR "foreign exchange")
       max_records: 75
+      slice_days: 1
       proxy_url: "http://127.0.0.1:9674"
       proxy_fallback: true
 
@@ -147,14 +151,14 @@ sources:
     language: en
     credibility_prior: 0.60
     bias: mixed_aggregate
-    rate_limit_rpm: 6
+    rate_limit_rpm: 3
     enabled: true
     params:
       query: >-
         sourcelang:english (central bank OR "monetary policy" OR "interest rate"
         OR "federal reserve" OR "bank of england" OR "european central bank" OR tariff)
       max_records: 250
-      slice_days: 7
+      slice_days: 1
       proxy_url: "http://127.0.0.1:9674"
       proxy_fallback: true
 
