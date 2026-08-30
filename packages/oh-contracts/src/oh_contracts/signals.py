@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import Field
 
@@ -38,3 +39,10 @@ class Signal(_Strict):
     evidence_ids: list[str] = Field(default_factory=list)  # event_ids，证据链入口
     detected_at: datetime
     as_of: datetime  # PIT 锚：只用 as_of 及更早信息计算
+    # —— RECONSTRUCTION C：Signal 主体语义与解释层（可选字段向后兼容）——
+    subject_type: Literal["entity", "event", "topic", "narrative"] = "entity"
+    subject_id: str | None = None  # 缺省=entity_id
+    novelty_score: float | None = Field(default=None, ge=0, le=1)
+    persistence_score: float | None = Field(default=None, ge=0, le=1)
+    baseline: float | None = None  # 检测基线值（解释层折叠用）
+    current_value: float | None = None  # 当前值

@@ -42,6 +42,23 @@ from oh_contracts.intents import (
     IntentKind,
     TargetKind,
 )
+from oh_contracts.narrative import (
+    EventAssessment,
+    EventStatus,
+    EvidenceItem,
+    EvidenceRole,
+    EvidenceStrength,
+    Insight,
+    NarrativeMomentum,
+    NarrativeStatement,
+)
+from oh_contracts.ranking import (
+    WEIGHTS,
+    entity_importance,
+    impact_factor,
+    intelligence_score,
+    novelty_factor,
+)
 from oh_contracts.schemas import (
     BronzeRecord,
     Claim,
@@ -101,6 +118,19 @@ __all__ = [
     "AchCell",
     "Signal",
     "SignalKind",
+    "EventAssessment",
+    "EventStatus",
+    "EvidenceItem",
+    "EvidenceRole",
+    "EvidenceStrength",
+    "Insight",
+    "NarrativeMomentum",
+    "NarrativeStatement",
+    "WEIGHTS",
+    "entity_importance",
+    "impact_factor",
+    "intelligence_score",
+    "novelty_factor",
     "AchMatrix",
     "AchRow",
     "IntelReport",
