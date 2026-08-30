@@ -3,7 +3,14 @@
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 
-import { api, type AnatomyData, type EvidenceRow, type NdiPoint, type SpectrumDoc } from "@/lib/api";
+import {
+  api,
+  type AnatomyData,
+  type AssessmentRow,
+  type EvidenceRow,
+  type NdiPoint,
+  type SpectrumDoc,
+} from "@/lib/api";
 import { divergenceLevel, divergenceTrend, FRAME_ZH } from "@/lib/insight";
 
 type EventMeta = {
@@ -14,6 +21,7 @@ type EventMeta = {
   ndi: number | null;
   ndi_status: string;
   n_sources: number;
+  assessment?: AssessmentRow | null;
 };
 
 const TIER_GROUP: Record<string, { label: string; zh: string; order: number }> = {
@@ -24,6 +32,21 @@ const TIER_GROUP: Record<string, { label: string; zh: string; order: number }> =
 };
 
 const LANG_ZH: Record<string, string> = { zh: "中文语料", en: "英文语料" };
+
+/* M2 评估层四态（EventAssessment.status）用户语言映射 */
+const ASSESS_STATUS_ZH: Record<string, { zh: string; color: string }> = {
+  confirmed: { zh: "已证实", color: "#5e8a5e" },
+  contested: { zh: "存争议", color: "#8b2635" },
+  developing: { zh: "进展中", color: "#b08d3f" },
+  unverified: { zh: "未证实", color: "#6e7781" },
+};
+
+const STRENGTH_ZH: Record<string, string> = {
+  strong: "证据充分",
+  moderate: "证据中等",
+  limited: "证据有限",
+  insufficient: "证据不足",
+};
 
 function SectionHead({ no, en, zh }: { no: string; en: string; zh: string }) {
   return (
@@ -37,6 +60,11 @@ function SectionHead({ no, en, zh }: { no: string; en: string; zh: string }) {
 
 function statusOf(meta: EventMeta | null): { label: string; color: string } {
   if (!meta) return { label: "…", color: "#6e7781" };
+  /* 优先用 M2 评估层四态（有评估时），否则回退 NDI 状态推断 */
+  if (meta.assessment) {
+    const s = ASSESS_STATUS_ZH[meta.assessment.status] ?? { zh: meta.assessment.status, color: "#6e7781" };
+    return { label: `${s.zh} · ${meta.assessment.status}`, color: s.color };
+  }
   if (meta.ndi_status === "ok") return { label: "Developing · 发展中", color: "#8b2635" };
   return { label: "Emerging · 新出现", color: "#b08d3f" };
 }
@@ -165,6 +193,33 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
             弃权语义：样本不足时不产出数值
           </p>
         </details>
+
+        {/* M2 评估层：状态/置信/证据强度/观察（engine=offline 确定性规则） */}
+        {meta.assessment && (
+          <div className="mt-4 border border-border/60 p-3">
+            <div className="flex flex-wrap items-baseline gap-3 text-xs">
+              <span className="font-medium" style={{ color: ASSESS_STATUS_ZH[meta.assessment.status]?.color }}>
+                ● {ASSESS_STATUS_ZH[meta.assessment.status]?.zh ?? meta.assessment.status}
+              </span>
+              <span className="text-muted-foreground">
+                置信 {meta.assessment.confidence.toFixed(2)}
+              </span>
+              <span className="text-muted-foreground">
+                {STRENGTH_ZH[meta.assessment.evidence_strength] ?? meta.assessment.evidence_strength} ·{" "}
+                {meta.assessment.n_independent_sources} 独立源（官方 {meta.assessment.n_primary_sources}）
+              </span>
+              <span className="ml-auto border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                {meta.assessment.engine}
+              </span>
+            </div>
+            <p className="mt-2 font-paper text-sm leading-6">{meta.assessment.observation}</p>
+            {meta.assessment.what_to_watch_next && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                观察：{meta.assessment.what_to_watch_next}
+              </p>
+            )}
+          </div>
+        )}
 
         <SectionHead no="04" en="Who disagrees" zh="谁和谁存在分歧" />
         {(anatomy?.entity_opposition ?? []).length === 0 ? (

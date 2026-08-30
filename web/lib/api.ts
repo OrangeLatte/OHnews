@@ -21,6 +21,20 @@ export type NdiPoint = {
 };
 
 /** GET /api/events/{id} 单事件详情（R0：详情页不再拉全量列表） */
+export type AssessmentRow = {
+  event_id: string;
+  status: "confirmed" | "contested" | "developing" | "unverified";
+  confidence: number;
+  evidence_strength: "strong" | "moderate" | "limited" | "insufficient";
+  n_independent_sources: number;
+  n_primary_sources: number;
+  observation: string;
+  interpretation: string | null;
+  alternative_explanation: string | null;
+  what_to_watch_next: string | null;
+  engine: string;
+};
+
 export type EventDetailRow = {
   event_id: string;
   title: string;
@@ -31,6 +45,7 @@ export type EventDetailRow = {
   ndi: number | null;
   ndi_status: string;
   n_sources: number;
+  assessment: AssessmentRow | null;
 };
 
 export type EvidenceRow = {
