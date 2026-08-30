@@ -313,7 +313,9 @@ async def run_chat(
     if tier is None:
         from oh_contracts.enums import Tier
 
-        tier = Tier.EXECUTE
+        # 对话=检索+汇总（io 语义）：glm-5.3-flash 一轮 15-50s×多轮循环不可接受，
+        # 默认走 deepseek-v4-flash（json_mode 后单轮 1-2s，实测全链 6.4s）。
+        tier = Tier.IO
     deps = _ChatDeps(
         bronze=bronze,
         store=store,
