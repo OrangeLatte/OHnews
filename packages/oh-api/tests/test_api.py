@@ -397,3 +397,35 @@ def test_keys_roundtrip_and_llm_ready(client: TestClient) -> None:
     assert "sk-test-abc" not in str(r3)
     # repo 真实 config/models.yaml 存在 → key 注入后 router 可构造（llm_ready=True 热生效）
     assert r3["llm_ready"] is True
+
+
+def test_event_detail_endpoint(client: TestClient) -> None:
+    """/api/events/{id} 单事件详情（R0：详情页不再拉全量列表 .find）。"""
+    r = client.get("/api/events/E01")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["event_id"] == "E01" and d["entities"] == ["fed"]
+    assert d["title"] == "事件E01"
+    assert d["ndi"] is not None and d["ndi_status"] in {"ok", "low_confidence", "abstain"}
+    assert d["n_sources"] >= 1
+    assert client.get("/api/events/NOPE").status_code == 404
+
+
+def test_evidence_by_keys_endpoint(client: TestClient) -> None:
+    """/api/evidence/by_keys item_key 反查（R0：narrative_shift 证据链入口）。"""
+    rows = client.get("/api/events/E01/evidence").json()
+    keys = [x["item_key"] for x in rows]
+    assert keys
+    r = client.post("/api/evidence/by_keys", json={"item_keys": [keys[0], "ghost-key"]})
+    assert r.status_code == 200
+    out = r.json()
+    assert len(out) == 1  # 未命中跳过
+    assert out[0]["item_key"] == keys[0]
+    assert out[0]["source_id"] in {"gov", "wscn"}
+    assert out[0]["quote"]  # LOSS/GAIN body 非空
+    # 去重保序
+    r2 = client.post("/api/evidence/by_keys", json={"item_keys": [keys[0], keys[0]]}).json()
+    assert [x["item_key"] for x in r2] == [keys[0]]
+    # 校验：空列表 / 超限
+    assert client.post("/api/evidence/by_keys", json={"item_keys": []}).status_code == 422
+    assert client.post("/api/evidence/by_keys", json={"item_keys": ["k"] * 201}).status_code == 422

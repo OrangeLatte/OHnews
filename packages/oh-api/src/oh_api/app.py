@@ -764,6 +764,61 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             )
         return out
 
+    @app.get("/api/events/{event_id}")
+    def event_detail(event_id: str) -> dict[str, Any]:
+        """单事件详情（R0 断点修复：详情页不再拉全量列表 .find）。"""
+        now = _now()
+        store = _store()
+        for e in store.events_asof(now):
+            if e.event_id == event_id:
+                series = store.ndi_series(event_id)
+                latest = series[-1] if series else None
+                return {
+                    "event_id": e.event_id,
+                    "title": e.title,
+                    "summary": e.summary,
+                    "entities": e.entities,
+                    "as_of": e.as_of.isoformat(),
+                    "first_seen": e.first_seen.isoformat() if e.first_seen else None,
+                    "ndi": latest.ndi if latest else None,
+                    "ndi_status": latest.status if latest else "none",
+                    "n_sources": latest.n_sources if latest else 0,
+                }
+        raise HTTPException(404, f"event not found: {event_id}")
+
+    @app.post("/api/evidence/by_keys")
+    def evidence_by_keys(body: dict[str, Any]) -> list[dict[str, Any]]:
+        """item_key 反查原始文章摘录（R0 断点修复：narrative_shift 证据链入口）。
+
+        body: {"item_keys": [...]}；按入参顺序返回，未命中跳过；上限 200。
+        """
+        keys = body.get("item_keys") or []
+        if not isinstance(keys, list) or not keys or len(keys) > 200:
+            raise HTTPException(422, "item_keys must be a non-empty list of <=200 ids")
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for k in keys:
+            ks = str(k)
+            if ks not in seen:
+                seen.add(ks)
+                ordered.append(ks)
+        out: dict[str, dict[str, Any]] = {}
+        for rec in _bronze().iter_records():
+            if rec.item_key not in seen:
+                continue
+            n = rec.normalized
+            out[rec.item_key] = {
+                "item_key": rec.item_key,
+                "source_id": rec.source_id,
+                "title": str(n.get("title") or ""),
+                "url": str(n.get("url") or ""),
+                "published_at": str(n.get("published_at") or ""),
+                "quote": strip_html(str(n.get("body") or n.get("title") or ""))[:400],
+            }
+            if len(out) == len(seen):
+                break
+        return [out[k] for k in ordered if k in out]
+
     @app.get("/api/events/{event_id}/ndi")
     def event_ndi(event_id: str, language: str | None = None) -> list[dict[str, Any]]:
         return [
@@ -933,7 +988,10 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                     gdelt_proxy=os.getenv("OHNEWS_GDELT_PROXY"),
                     now=now,
                 )
-                degraded = f"（模型调用未成功，以下为确定性数据摘要。\n失败原因节选：{str(exc)[:160]}）\n\n"
+                degraded = (
+                    f"（模型调用未成功，以下为确定性数据摘要。\n"
+                    f"失败原因节选：{str(exc)[:160]}）\n\n"
+                )
                 result = {
                     **fallback,
                     "reply": degraded + fallback["reply"],
