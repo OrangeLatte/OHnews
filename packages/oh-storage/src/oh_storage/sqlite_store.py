@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS null_events (
     distance      REAL,
     registered_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS annotations (
+    item_key     TEXT PRIMARY KEY,
+    payload      TEXT NOT NULL,
+    engine       TEXT NOT NULL,
+    annotated_at TEXT NOT NULL
+);
 """
 
 _MIGRATE_NDI_LANGUAGE = """
@@ -321,6 +328,59 @@ class SqliteStore:
     def null_distances(self) -> list[float]:
         cur = self._conn.execute("SELECT distance FROM null_events WHERE distance IS NOT NULL")
         return [float(r["distance"]) for r in cur.fetchall()]
+
+    # -- 语义标注层（M3-S1：annotations 表，payload=SemanticAnnotation JSON） ----
+
+    def upsert_annotation(
+        self,
+        item_key: str,
+        payload: dict[str, object],
+        engine: str,
+        annotated_at: datetime,
+    ) -> None:
+        """幂等 upsert（同 item_key 重新标注覆盖；payload 由调用方 model_dump）。"""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO annotations (item_key, payload, engine, annotated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (item_key, json.dumps(payload, ensure_ascii=False), engine, _iso(annotated_at)),
+        )
+        self._conn.commit()
+
+    def get_annotation(self, item_key: str) -> dict[str, object] | None:
+        """单条标注（payload 反序列化；未标注 → None）。"""
+        cur = self._conn.execute(
+            "SELECT payload, engine, annotated_at FROM annotations WHERE item_key = ?",
+            (item_key,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            **json.loads(str(row["payload"])),
+            "engine": str(row["engine"]),
+            "annotated_at": str(row["annotated_at"]),
+        }
+
+    def annotations_asof(self, as_of: datetime) -> list[dict[str, object]]:
+        """PIT 读取：annotated_at ≤ as_of 的标注（ISO 字符串比较即时间序）。"""
+        cur = self._conn.execute(
+            "SELECT item_key, payload, engine, annotated_at FROM annotations "
+            "WHERE annotated_at <= ? ORDER BY item_key",
+            (_iso(as_of),),
+        )
+        return [
+            {
+                "item_key": str(r["item_key"]),
+                **json.loads(str(r["payload"])),
+                "engine": str(r["engine"]),
+                "annotated_at": str(r["annotated_at"]),
+            }
+            for r in cur.fetchall()
+        ]
+
+    def count_annotations(self) -> int:
+        cur = self._conn.execute("SELECT COUNT(*) AS n FROM annotations")
+        return int(cur.fetchone()["n"])
 
     # -- 信息流可视化（/api/flow 聚合面） ---------------------------------------
 
