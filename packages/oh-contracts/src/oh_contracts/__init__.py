@@ -71,6 +71,14 @@ from oh_contracts.schemas import (
     SSEMessage,
     StanceRow,
 )
+from oh_contracts.semantics import (
+    ActionMention,
+    EmotionLabel,
+    EmotionVector,
+    EntityEdge,
+    SemanticAnnotation,
+    SemanticRole,
+)
 from oh_contracts.signals import Signal, SignalKind
 from oh_contracts.text import strip_html
 
@@ -139,4 +147,10 @@ __all__ = [
     "make_item_key",
     "term_for_probability",
     "url_hash",
+    "ActionMention",
+    "EmotionLabel",
+    "EmotionVector",
+    "EntityEdge",
+    "SemanticAnnotation",
+    "SemanticRole",
 ]
