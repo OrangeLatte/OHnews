@@ -933,9 +933,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                     gdelt_proxy=os.getenv("OHNEWS_GDELT_PROXY"),
                     now=now,
                 )
-                degraded = (
-                    f"（模型调用未成功，以下为确定性数据摘要。\n失败原因节选：{str(exc)[:160]}）\n\n"
-                )
+                degraded = f"（模型调用未成功，以下为确定性数据摘要。\n失败原因节选：{str(exc)[:160]}）\n\n"
                 result = {
                     **fallback,
                     "reply": degraded + fallback["reply"],
