@@ -175,6 +175,7 @@ def detect_narrative_shifts(
                 # P8 修复：证据链 = 近窗 stance 行的 item_key provenance
                 # （原实现误挂全事件集合，无法追溯具体来源）
                 evidence_ids=sorted({r.item_key for r in recent}),
+                evidence_kind="item_key",
                 detected_at=now,
                 as_of=now,
             )
@@ -301,8 +302,9 @@ def _enhance_signals(
     - importance: registry.entity_type → entity_importance 先验
     - novelty: novelty_factor(0)=1.0——v1 无信号历史存储，全部信号均为首次检出；
       局限：当前 novelty 无区分度，信号持久化落地后应接真实 first_seen
-    - evidence: evidence_ids（shift=item_key，gap/ndi=event_id）解析为 bronze
-      证据 → assess_strength 分档分；spike 无立场证据 → 0（IS 封顶 40）
+    - evidence: evidence_ids 按 evidence_kind 解析为 bronze 证据
+      （item_key 直查索引；event_id 经 rows_by_event 反查）→ assess_strength 分档分；
+      spike 无立场证据 → 0（IS 封顶 40）
     - persistence: 实体近 PERSIST_WINDOW_DAYS 日 stance 行覆盖天数占比
     - impact: 实体 stance 行温差 temperature_gap → impact_factor（无数据取 0.5）
     """
@@ -310,7 +312,7 @@ def _enhance_signals(
     for sig in sigs:
         rows = rows_by_entity.get(sig.entity_id, ())
         keys: list[str] = []
-        if sig.kind is not SignalKind.ATTENTION_SPIKE:
+        if sig.evidence_ids:
             for ref in sig.evidence_ids:
                 if ref in bronze_index:
                     keys.append(ref)

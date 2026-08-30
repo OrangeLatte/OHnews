@@ -97,6 +97,7 @@ def test_narrative_shift_triggers() -> None:
     s = sigs[0]
     assert s.kind == SignalKind.NARRATIVE_SHIFT and s.entity_id == "fed"
     assert s.metrics["jsd"] >= 0.30
+    assert s.evidence_kind == "item_key"  # R0：双语义显式化
 
 
 def test_narrative_shift_insufficient_rows_abstains() -> None:
