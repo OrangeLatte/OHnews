@@ -23,8 +23,10 @@ from pathlib import Path
 
 import yaml
 from oh_agents.graph import GraphDeps, build_analysis_graph
+from oh_agents.intel_pipeline import build_daily_intel
 from oh_contracts.enums import SourceTier
 from oh_pipeline.divergence import temperature_gap
+from oh_pipeline.entities import DEFAULT_ENTITIES, EntityRegistry
 from oh_pipeline.events import EventBuilder
 from oh_storage.bronze_parquet import ParquetBronzeWriter
 from oh_storage.connection import connect
@@ -174,6 +176,30 @@ def main(argv: list[str] | None = None) -> int:
         ndi_s = f"{point.ndi:.3f}" if point and point.ndi is not None else "abstain"
         gap_s = f"{gap:.2f}" if isinstance(gap, float) else "-"
         print(f"{eid:<28} {b.n_articles:>8} {b.n_sources:>7} {ndi_s:>8} {gap_s:>8}")
+
+    # —— M2 情报层：Status → Signal(IS 排序) → Narrative → Insight（RECONSTRUCTION §D）——
+    intel = build_daily_intel(
+        records,
+        store,
+        EntityRegistry(DEFAULT_ENTITIES),
+        tier_map,
+        as_of=now,
+        lookback_days=args.days,
+        min_per_source=args.min_per_source,
+    )
+    print(
+        f"\n== M2 情报层（as_of={now:%Y-%m-%d %H:%M} UTC，engine=offline）"
+        f"assessments={len(intel.assessments)} signals={len(intel.signals)} "
+        f"narratives={len(intel.narratives)} insights={len(intel.insights)} =="
+    )
+    for s in intel.signals:
+        is_s = s.metrics.get("intelligence_score")
+        print(f"  [signal] {s.signal_id} {s.kind} IS={is_s}: {s.what_changed}")
+    for i in intel.insights:
+        print(f"  [insight] {i.headline}")
+        print(f"    {i.observation}")
+    for n in intel.narratives:
+        print(f"  [narrative] {n.narrative_id}: {n.statement}")
     return 0
 
 
