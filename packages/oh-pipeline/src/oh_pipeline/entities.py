@@ -13,10 +13,16 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class EntitySpec:
-    """canonical 实体：稳定 entity_id + 多语言别名 + 可选父子关系。"""
+    """canonical 实体：稳定 entity_id + 多语言别名 + 可选父子关系 + 类型先验。
+
+    entity_type 对应 ranking.entity_importance 的先验键
+    （central_bank/government/company_systemic/company/person/other），
+    供 Intelligence Score 的 importance 因子消费。
+    """
 
     entity_id: str
     aliases: tuple[str, ...]
+    entity_type: str = "other"
     parent_id: str | None = None
     wikidata_qid: str | None = None
 
@@ -25,74 +31,89 @@ DEFAULT_ENTITIES: tuple[EntitySpec, ...] = (
     EntitySpec(
         "fed",
         ("Federal Reserve", "the Fed", "US central bank", "Fed", "美联储", "美国联储", "联储局"),
+        entity_type="central_bank",
         wikidata_qid="Q16554",
     ),
     EntitySpec(
         "fomc",
         ("FOMC", "Federal Open Market Committee", "联邦公开市场委员会", "联储议息会议"),
+        entity_type="central_bank",
         parent_id="fed",
         wikidata_qid="Q11417",
     ),
     EntitySpec(
         "pboc",
         ("People's Bank of China", "PBoC", "PBOC", "中国人民银行", "中国央行"),
+        entity_type="central_bank",
         wikidata_qid="Q1624368",
     ),
     EntitySpec(
         "ecb",
         ("European Central Bank", "ECB", "欧洲央行", "欧央行", "欧元区央行"),
+        entity_type="central_bank",
         wikidata_qid="Q217344",
     ),
     EntitySpec(
         "boj",
         ("Bank of Japan", "BOJ", "日本央行", "日银", "日本银行"),
+        entity_type="central_bank",
         wikidata_qid="Q844731",
     ),
     EntitySpec(
         "boe",
         ("Bank of England", "BoE", "英格兰银行", "英国央行"),
+        entity_type="central_bank",
         wikidata_qid="Q178845",
     ),
     EntitySpec(
         "us_treasury",
         ("U.S. Treasury", "US Treasury", "Treasury Department", "美国财政部"),
+        entity_type="government",
         wikidata_qid="Q51011",
     ),
     EntitySpec(
         "china_mof",
         ("中国财政部", "财政部", "Ministry of Finance of China", "PRC Ministry of Finance"),
+        entity_type="government",
     ),
     EntitySpec(
         "state_council",
         ("State Council", "中国国务院", "国务院"),
+        entity_type="government",
         wikidata_qid="Q165345",
     ),
     EntitySpec(
         "ndrc",
         ("NDRC", "国家发改委", "国家发展和改革委员会", "发改委"),
+        entity_type="government",
     ),
     EntitySpec(
         "csrc",
         ("CSRC", "证监会", "中国证监会", "China Securities Regulatory Commission"),
+        entity_type="government",
     ),
     EntitySpec(
         "white_house",
         ("White House", "白宫", "the Biden administration", "the Trump administration"),
+        entity_type="government",
         wikidata_qid="Q35731",
     ),
     EntitySpec(
         "us_congress",
         ("US Congress", "U.S. Congress", "Congress", "美国国会", "参议院", "众议院"),
+        entity_type="government",
         wikidata_qid="Q11268",
     ),
     EntitySpec(
         "trump",
         ("Trump", "特朗普", "川普", "Donald Trump"),
+        entity_type="person",
         wikidata_qid="Q22686",
     ),
     EntitySpec(
         "xi_jinping",
         ("Xi Jinping", "习近平"),
+        entity_type="person",
         wikidata_qid="Q15933",
     ),
     EntitySpec(
@@ -114,41 +135,49 @@ DEFAULT_ENTITIES: tuple[EntitySpec, ...] = (
     EntitySpec(
         "powell",
         ("Jerome Powell", "Jay Powell", "Powell", "鲍威尔", "鲍尔"),
+        entity_type="person",
         wikidata_qid="Q1088480",
     ),
     EntitySpec(
         "musk",
         ("Elon Musk", "Musk", "马斯克"),
+        entity_type="person",
         wikidata_qid="Q317521",
     ),
     EntitySpec(
         "nvidia",
         ("Nvidia", "NVIDIA", "英伟达"),
+        entity_type="company_systemic",
         wikidata_qid="Q1162163",
     ),
     EntitySpec(
         "tesla",
         ("Tesla", "特斯拉"),
+        entity_type="company_systemic",
         wikidata_qid="Q478214",
     ),
     EntitySpec(
         "apple",
         ("Apple", "苹果公司"),
+        entity_type="company_systemic",
         wikidata_qid="Q312",
     ),
     EntitySpec(
         "microsoft",
         ("Microsoft", "微软"),
+        entity_type="company_systemic",
         wikidata_qid="Q2283",
     ),
     EntitySpec(
         "google",
         ("Google", "Alphabet", "谷歌"),
+        entity_type="company_systemic",
         wikidata_qid="Q95",
     ),
     EntitySpec(
         "openai",
         ("OpenAI", "Sam Altman", "Altman", "奥尔特曼", "奥特曼"),
+        entity_type="company_systemic",
         wikidata_qid="Q19864517",
     ),
     EntitySpec(
@@ -159,11 +188,13 @@ DEFAULT_ENTITIES: tuple[EntitySpec, ...] = (
             "美国贸易代表办公室",
             "贸易代表",
         ),
+        entity_type="government",
         wikidata_qid="Q17149786",
     ),
     EntitySpec(
         "sec",
         ("Securities and Exchange Commission", "美国证券交易委员会"),
+        entity_type="government",
         wikidata_qid="Q568481",
     ),
 )
@@ -195,6 +226,14 @@ class EntityRegistry:
 
     def ids(self) -> tuple[str, ...]:
         return tuple(self._by_id)
+
+    def entity_type(self, entity_id: str) -> str:
+        """实体类型先验键（ranking.entity_importance 消费）。"""
+        return self._by_id[entity_id].entity_type
+
+    def types(self) -> dict[str, str]:
+        """全量 entity_id → entity_type 映射（entity_id 确定性排序）。"""
+        return {eid: spec.entity_type for eid, spec in sorted(self._by_id.items())}
 
     def match(self, text: str) -> list[str]:
         """返回文本命中的 entity_id（去重保序；子实体与父实体可同时命中）。"""
