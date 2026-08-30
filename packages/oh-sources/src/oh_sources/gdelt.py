@@ -17,7 +17,9 @@ from oh_contracts.schemas import SourceMeta
 
 from oh_sources.base import USER_AGENT, Draft, SourceAdapter
 
-GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+# 2026-08-30 实测：443 HTTPS 在本地网络环境被墙（TLS ClientHello 黑洞，直连与代理出口皆然），
+# 80 HTTP 直连 4s 稳定返回合法 JSON——默认走 http（公开聚合 API，无敏感载荷）。
+GDELT_DOC_URL = "http://api.gdeltproject.org/api/v2/doc/doc"
 
 
 def _parse_seendate(value: str) -> datetime | None:
