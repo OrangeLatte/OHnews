@@ -506,3 +506,74 @@ def test_graph_endpoint(client: TestClient, tmp_path: Path) -> None:
     assert fed["entity_type"] == "central_bank" and fed["degree"] == 1
     assert data["edges"][0]["kind"] == "parent_of"
     assert data["edges"][0]["n_evidence"] == 1
+
+
+def test_briefing_endpoint(client: TestClient) -> None:
+    """/api/briefing：DataFreshness + ChangeBrief（人话字段，禁内部指标泄漏）。"""
+    r = client.get("/api/briefing", params={"min_per_source": 1})
+    assert r.status_code == 200
+    data = r.json()
+    fresh = data["freshness"]
+    assert fresh["as_of"] and fresh["staleness"] in {"fresh", "aging", "stale"}
+    assert fresh["note"]
+    changes = data["changes"]
+    assert changes, "极化种子事件应产出至少一张变化卡"
+    for c in changes:
+        assert c["change_id"].startswith("sig-")
+        assert c["headline"] and c["what"] and c["why_now"]
+        assert c["strength_word"] in {"strong", "notable", "minor", "insufficient"}
+        assert c["subjects"] and c["subjects"][0]["kind"] == "entity"
+        assert c["subjects"][0]["label"] == "美联储"
+    kinds = {c["kind"] for c in changes}
+    assert "divergence_rise" in kinds
+
+
+def test_change_dossier_endpoint(client: TestClient) -> None:
+    """/api/changes/{id}：Dossier 三桶证据 + 缺口 + 覆盖摘要 + 技术附页。"""
+    changes = client.get("/api/briefing", params={"min_per_source": 1}).json()["changes"]
+    cid = changes[0]["change_id"]
+    r = client.get(f"/api/changes/{cid}")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["change_id"] == cid
+    assert d["status"] in {"confirmed", "contested", "developing", "unverified"}
+    ev = d["evidence"]
+    assert ev["supporting"] or ev["contradicting"] or ev["context"]
+    assert all(c["quote"] for c in ev["supporting"] + ev["contradicting"] + ev["context"])
+    assert d["coverage"]["n_independent_sources"] >= 2
+    assert d["freshness"]["as_of"]
+    assert d["technical"]["signal_id"] == cid
+    missing = client.get("/api/changes/sig-nope-x")
+    assert missing.status_code == 404
+
+
+def test_change_evidence_bucket_endpoint(client: TestClient) -> None:
+    """/api/changes/{id}/evidence?bucket=：三桶惰性加载 + 非法桶 422。"""
+    changes = client.get("/api/briefing", params={"min_per_source": 1}).json()["changes"]
+    cid = changes[0]["change_id"]
+    ctx = client.get(f"/api/changes/{cid}/evidence", params={"bucket": "context"})
+    assert ctx.status_code == 200
+    assert isinstance(ctx.json(), list)
+    bad = client.get(f"/api/changes/{cid}/evidence", params={"bucket": "noise"})
+    assert bad.status_code == 422
+
+
+def test_track_endpoint(client: TestClient) -> None:
+    """阶段 1-e：主路径埋点闭集 + 匿名 session 必填。"""
+    r = client.post("/api/track", json={"event": "briefing_viewed", "session": "s-1"})
+    assert r.status_code == 204
+    r = client.post(
+        "/api/track",
+        json={
+            "event": "change_opened",
+            "session": "s-1",
+            "object_id": "sig-x",
+            "from_page": "/",
+        },
+    )
+    assert r.status_code == 204
+    # 闭集违规 422
+    bad = client.post("/api/track", json={"event": "page_view", "session": "s-1"})
+    assert bad.status_code == 422
+    # session 必填
+    assert client.post("/api/track", json={"event": "change_opened"}).status_code == 422

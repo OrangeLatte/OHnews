@@ -16,11 +16,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import yaml
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from oh_agents.alerts import check_alerts
 from oh_agents.chat import ChatStore, run_chat
@@ -34,6 +34,8 @@ from oh_agents.orchestrator import (
     run_intent,
 )
 from oh_agents.research import run_research
+from oh_api.briefing import build_briefing, build_dossier
+from oh_contracts.briefing import BriefingResponse, ChangeDossier, EvidenceCitation
 from oh_contracts.enums import SourceTier
 from oh_contracts.intents import Intent
 from oh_contracts.schemas import NDIPoint
@@ -155,6 +157,12 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         db = paths.library_db or (paths.root / "library.sqlite")
         return _lazy("library_store", lambda: LibraryStore(db))
 
+    def _product_events() -> Any:
+        from oh_agents.product_events import ProductEventStore
+
+        db = paths.root / "product_events.sqlite"
+        return _lazy("product_events", lambda: ProductEventStore(db))
+
     # ---- 运行时 API keys（UI 配置 → data/runtime_keys.json，gitignored；env 优先）----
     def _runtime_keys_path() -> Path:
         return paths.root / "runtime_keys.json"
@@ -256,6 +264,60 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             "total": len(sigs),
             "signals": [s.model_dump(mode="json") for s in sigs],
         }
+
+    @app.get("/api/briefing", response_model=BriefingResponse)
+    def briefing(days: int = 3, top: int = 5, min_per_source: int = 10) -> BriefingResponse:
+        """产品 Briefing（阶段 1-b）：DataFreshness + ChangeBrief 队列（人话语义）。
+
+        changes 为空 = 「今天没有值得看的变化」显式状态（硬验收 7）。
+        """
+        return build_briefing(
+            bronze_iter=_bronze().iter_records(),
+            store=_store(),
+            registry=_registry(),
+            tier_map=_tier_map(),
+            now=_now(),
+            days=max(1, days),
+            top=top,
+            min_per_source=min_per_source,
+        )
+
+    @app.get("/api/changes/{change_id}", response_model=ChangeDossier)
+    def change_dossier(change_id: str, days: int = 3) -> ChangeDossier:
+        """变化详情包（阶段 1-b）：Dossier 含三桶证据 + 缺口 + 覆盖摘要。"""
+        dossier = build_dossier(
+            change_id,
+            bronze_iter=_bronze().iter_records(),
+            store=_store(),
+            registry=_registry(),
+            tier_map=_tier_map(),
+            now=_now(),
+            days=max(1, days),
+        )
+        if dossier is None:
+            raise HTTPException(404, f"change not found: {change_id}")
+        return dossier
+
+    @app.get("/api/changes/{change_id}/evidence", response_model=list[EvidenceCitation])
+    def change_evidence(
+        change_id: str,
+        bucket: Literal["supporting", "contradicting", "context"],
+    ) -> list[EvidenceCitation]:
+        """分桶证据（阶段 1-b）：Evidence Drawer 惰性加载入口。
+
+        v1 简化：内部复用 Dossier 组装（未做信号级缓存），docstring 记录。
+        """
+        dossier = build_dossier(
+            change_id,
+            bronze_iter=_bronze().iter_records(),
+            store=_store(),
+            registry=_registry(),
+            tier_map=_tier_map(),
+            now=_now(),
+        )
+        if dossier is None:
+            raise HTTPException(404, f"change not found: {change_id}")
+        return list(getattr(dossier.evidence, bucket))
 
     @app.get("/api/entities")
     def entities_list() -> dict[str, Any]:
@@ -549,6 +611,30 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         if not _library_store().remove(item_id):
             raise HTTPException(404, "library item not found")
         return {"removed": item_id}
+
+    @app.post("/api/track", status_code=204)
+    def track(body: dict[str, Any]) -> Response:
+        """产品事件埋点（阶段 1-e）：主路径 7 事件闭集，匿名 session。
+
+        body: {event, session, object_id?, from_page?, freshness?, meta?}。
+        fire-and-forget 语义：任何失败不阻塞用户主路径（422 仅闭集违规）。
+        """
+        event = str(body.get("event") or "")
+        session = str(body.get("session") or "")
+        if not session:
+            raise HTTPException(422, "session required (anonymous client uuid)")
+        try:
+            _product_events().append(
+                event,
+                session,
+                object_id=str(body.get("object_id") or ""),
+                from_page=str(body.get("from_page") or ""),
+                freshness=str(body.get("freshness") or ""),
+                meta=dict(body.get("meta") or {}),
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        return Response(status_code=204)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
