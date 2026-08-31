@@ -75,6 +75,17 @@ CREATE TABLE IF NOT EXISTS annotations (
     engine       TEXT NOT NULL,
     annotated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS entity_edges (
+    edge_key   TEXT PRIMARY KEY,
+    src        TEXT NOT NULL,
+    dst        TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    weight     REAL NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL,
+    evidence   TEXT NOT NULL DEFAULT '[]'
+);
 """
 
 _MIGRATE_NDI_LANGUAGE = """
@@ -202,7 +213,7 @@ class SqliteStore:
 
     def events_asof(self, as_of: datetime) -> list[EventRecord]:
         cur = self._conn.execute(
-            "SELECT event_id, title, summary, entities, as_of, first_seen "
+            "SELECT event_id, title, summary, entities, as_of, first_seen, cluster_key "
             "FROM events WHERE as_of <= ? ORDER BY as_of",
             (_iso(as_of),),
         )
@@ -233,6 +244,7 @@ class SqliteStore:
             entities=json.loads(str(row["entities"])),
             as_of=datetime.fromisoformat(str(row["as_of"])),
             first_seen=datetime.fromisoformat(first_seen) if first_seen else None,
+            cluster_key=row["cluster_key"],
         )
 
     @staticmethod
@@ -394,6 +406,59 @@ class SqliteStore:
 
     def count_annotations(self) -> int:
         cur = self._conn.execute("SELECT COUNT(*) AS n FROM annotations")
+        return int(cur.fetchone()["n"])
+
+    # -- 知识图谱（M3-S3：entity_edges 类型化边表） -----------------------------
+
+    def upsert_edges(self, edges: Sequence[dict[str, object]]) -> int:
+        """批量幂等 upsert（同 edge_key 覆盖；聚合权重由调用方计算好）。"""
+        if not edges:
+            return 0
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO entity_edges "
+            "(edge_key, src, dst, kind, weight, first_seen, last_seen, evidence) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    str(e["edge_key"]),
+                    str(e["src"]),
+                    str(e["dst"]),
+                    str(e["kind"]),
+                    float(e["weight"]),  # type: ignore[arg-type]
+                    str(e["first_seen"]),
+                    str(e["last_seen"]),
+                    json.dumps(e.get("evidence", []), ensure_ascii=False),
+                )
+                for e in edges
+            ],
+        )
+        self._conn.commit()
+        return len(edges)
+
+    def edges_asof(self, as_of: datetime) -> list[dict[str, object]]:
+        """PIT 读取：last_seen ≤ as_of 的边（权重降序确定性排序）。"""
+        cur = self._conn.execute(
+            "SELECT edge_key, src, dst, kind, weight, first_seen, last_seen, evidence "
+            "FROM entity_edges WHERE last_seen <= ? "
+            "ORDER BY weight DESC, src, dst, kind",
+            (_iso(as_of),),
+        )
+        return [
+            {
+                "edge_key": str(r["edge_key"]),
+                "src": str(r["src"]),
+                "dst": str(r["dst"]),
+                "kind": str(r["kind"]),
+                "weight": float(r["weight"]),
+                "first_seen": str(r["first_seen"]),
+                "last_seen": str(r["last_seen"]),
+                "evidence": json.loads(str(r["evidence"])),
+            }
+            for r in cur.fetchall()
+        ]
+
+    def count_edges(self) -> int:
+        cur = self._conn.execute("SELECT COUNT(*) AS n FROM entity_edges")
         return int(cur.fetchone()["n"])
 
     # -- 信息流可视化（/api/flow 聚合面） ---------------------------------------
