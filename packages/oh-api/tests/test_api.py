@@ -463,3 +463,46 @@ def test_intel_daily_endpoint(client: TestClient) -> None:
         assert i["insight_id"].startswith("ins-")
         assert len(i["alternative_explanations"]) >= 1
         assert i["engine"] == "offline"
+
+
+def test_graph_endpoint(client: TestClient, tmp_path: Path) -> None:
+    """/api/graph：entity_edges 表只读投影（种子库空图 → 手动 upsert 后可见）。"""
+    r = client.get("/api/graph")
+    assert r.status_code == 200
+    base = r.json()
+    assert set(base) == {"generated_at", "nodes", "edges"}
+    assert base["nodes"] == [] and base["edges"] == []
+
+    store = SqliteStore(connect(tmp_path / "silver.sqlite"))
+    store.upsert_edges(
+        [
+            {
+                "edge_key": "fed|fomc|parent_of",
+                "src": "fed",
+                "dst": "fomc",
+                "kind": "parent_of",
+                "weight": 2.0,
+                "first_seen": "2026-08-27T00:00:00+00:00",
+                "last_seen": "2026-08-28T00:00:00+00:00",
+                "evidence": ["fed"],
+            },
+            {
+                "edge_key": "fed|ecb|co_occurs",
+                "src": "fed",
+                "dst": "ecb",
+                "kind": "co_occurs",
+                "weight": 0.5,
+                "first_seen": "2026-08-27T00:00:00+00:00",
+                "last_seen": "2026-08-28T00:00:00+00:00",
+                "evidence": ["evt-1"],
+            },
+        ]
+    )
+    r2 = client.get("/api/graph", params={"min_weight": 1.0})
+    data = r2.json()
+    ids = {n["id"] for n in data["nodes"]}
+    assert ids == {"fed", "fomc"}  # 0.5 权重边被 min_weight 滤除
+    fed = next(n for n in data["nodes"] if n["id"] == "fed")
+    assert fed["entity_type"] == "central_bank" and fed["degree"] == 1
+    assert data["edges"][0]["kind"] == "parent_of"
+    assert data["edges"][0]["n_evidence"] == 1

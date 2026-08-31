@@ -11,7 +11,7 @@ import asyncio
 import json
 import os
 import threading
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -668,8 +668,6 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         daily：published_at（PIT 视角，缺失回落 fetched_at）按 日期×层级×语言 聚合；
         sources：近窗口每源产出量（星系图节点大小）；frames/ndi 来自 Silver/Gold。
         """
-        from collections import Counter
-
         now = _now()
         cutoff = now - timedelta(days=days)
         tier_map = _tier_map()
@@ -1173,6 +1171,53 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         if not reps:
             raise HTTPException(404, "no intel reports")
         return reps[0].model_dump(mode="json")
+
+    @app.get("/api/graph")
+    def knowledge_graph(
+        min_weight: float = 1.0,
+        max_nodes: int = 30,
+    ) -> dict[str, Any]:
+        """KG v2 类型化实体边（M3-S3：entity_edges 表只读投影）。"""
+        now = _now()
+        registry = EntityRegistry(DEFAULT_ENTITIES)
+        raw = [e for e in _store().edges_asof(now) if float(e["weight"]) >= min_weight]
+        strength: dict[str, float] = defaultdict(float)
+        neighbors: dict[str, dict[str, float]] = defaultdict(dict)
+        for e in raw:
+            s, d, w = str(e["src"]), str(e["dst"]), float(e["weight"])
+            strength[s] += w
+            strength[d] += w
+            neighbors[s][d] = neighbors[s].get(d, 0.0) + w
+            neighbors[d][s] = neighbors[d].get(s, 0.0) + w
+        nodes = sorted(strength, key=lambda n: (-strength[n], n))[:max_nodes]
+        keep = set(nodes)
+        return {
+            "generated_at": now.isoformat(),
+            "nodes": [
+                {
+                    "id": n,
+                    "entity_type": registry.entity_type(n),
+                    "strength": round(strength[n], 1),
+                    "degree": len(neighbors[n]),
+                    "top_neighbors": sorted(neighbors[n], key=lambda x: (-neighbors[n][x], x))[:5],
+                }
+                for n in nodes
+            ],
+            "edges": [
+                {
+                    "src": e["src"],
+                    "dst": e["dst"],
+                    "kind": e["kind"],
+                    "weight": e["weight"],
+                    "first_seen": e["first_seen"],
+                    "last_seen": e["last_seen"],
+                    "n_evidence": len(e["evidence"]),
+                    "evidence": e["evidence"],
+                }
+                for e in raw
+                if str(e["src"]) in keep and str(e["dst"]) in keep
+            ],
+        }
 
     @app.get("/api/intel/reports")
     def intel_reports(n: int = 10) -> list[dict[str, Any]]:
