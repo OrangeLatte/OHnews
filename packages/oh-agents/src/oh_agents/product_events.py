@@ -36,6 +36,7 @@ CREATE INDEX IF NOT EXISTS idx_product_events_session ON product_events(session)
 """
 
 _TRACKED_EVENTS = (
+    # 阶段 1 主路径
     "briefing_viewed",
     "change_opened",
     "change_dismissed_as_noise",
@@ -43,6 +44,10 @@ _TRACKED_EVENTS = (
     "source_opened",
     "counter_evidence_requested",
     "insufficient_evidence_seen",
+    # 阶段 2 判断闭环
+    "investigation_started",
+    "judgment_saved",
+    "judgment_change_type",
 )
 
 

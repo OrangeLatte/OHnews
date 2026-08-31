@@ -35,6 +35,7 @@ from oh_agents.orchestrator import (
 )
 from oh_agents.research import run_research
 from oh_api.briefing import build_briefing, build_dossier
+from oh_contracts.belief import BeliefCreate, BeliefSnapshot
 from oh_contracts.briefing import BriefingResponse, ChangeDossier, EvidenceCitation
 from oh_contracts.enums import SourceTier
 from oh_contracts.intents import Intent
@@ -162,6 +163,12 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
         db = paths.root / "product_events.sqlite"
         return _lazy("product_events", lambda: ProductEventStore(db))
+
+    def _beliefs() -> Any:
+        from oh_agents.beliefs import BeliefStore
+
+        db = paths.root / "belief.sqlite"
+        return _lazy("beliefs", lambda: BeliefStore(db))
 
     # ---- 运行时 API keys（UI 配置 → data/runtime_keys.json，gitignored；env 优先）----
     def _runtime_keys_path() -> Path:
@@ -611,6 +618,41 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         if not _library_store().remove(item_id):
             raise HTTPException(404, "library item not found")
         return {"removed": item_id}
+
+    # ---- 认知快照（阶段 2 判断闭环：仅用户确认写入）----
+    @app.post("/api/beliefs", response_model=BeliefSnapshot, status_code=201)
+    def create_belief(body: BeliefCreate) -> BeliefSnapshot:
+        """保存一次用户判断：snapshot_id/change_type/believed_at 服务端生成。
+
+        change_type 由该 change 的既有快照自动判定（首条=new，否则=revised）。
+        """
+        from uuid import uuid4
+
+        store = _beliefs()
+        prev = store.latest_for_change(body.change_id)
+        snap = BeliefSnapshot(
+            snapshot_id=f"bs-{uuid4().hex[:8]}",
+            change_id=body.change_id,
+            subject_id=body.subject_id,
+            subject_label=body.subject_label,
+            stance=body.stance,
+            confidence=body.confidence,
+            rationale=body.rationale,
+            change_type="revised" if prev is not None else "new",
+            believed_at=_now(),
+        )
+        store.save(snap)
+        return snap
+
+    @app.get("/api/beliefs", response_model=list[BeliefSnapshot])
+    def beliefs_for_change(change_id: str) -> list[BeliefSnapshot]:
+        """某变化的全部认知快照（believed_at 升序，前端展示差异用）。"""
+        return _beliefs().for_change(change_id)
+
+    @app.get("/api/beliefs/timeline", response_model=list[BeliefSnapshot])
+    def beliefs_timeline(subject_id: str) -> list[BeliefSnapshot]:
+        """某实体的认知时间线（跨变化，believed_at 升序）。"""
+        return _beliefs().timeline(subject_id)
 
     @app.post("/api/track", status_code=204)
     def track(body: dict[str, Any]) -> Response:

@@ -577,3 +577,56 @@ def test_track_endpoint(client: TestClient) -> None:
     assert bad.status_code == 422
     # session 必填
     assert client.post("/api/track", json={"event": "change_opened"}).status_code == 422
+
+
+def test_beliefs_flow(client: TestClient) -> None:
+    """POST /api/beliefs：change_type 自动判定（new→revised）+ 快照可回读。"""
+    changes = client.get("/api/briefing", params={"min_per_source": 1}).json()["changes"]
+    cid = changes[0]["change_id"]
+    body = {
+        "change_id": cid,
+        "subject_id": "fed",
+        "subject_label": "美联储",
+        "stance": "maintain",
+        "confidence": 0.6,
+        "rationale": "官方与市场口径一致",
+    }
+    r1 = client.post("/api/beliefs", json=body)
+    assert r1.status_code == 201
+    b1 = r1.json()
+    assert b1["change_type"] == "new"
+    assert b1["snapshot_id"].startswith("bs-")
+    r2 = client.post(
+        "/api/beliefs",
+        json={**body, "stance": "reverse", "confidence": 0.3},
+    )
+    assert r2.json()["change_type"] == "revised"
+    rows = client.get("/api/beliefs", params={"change_id": cid}).json()
+    assert [b["stance"] for b in rows] == ["maintain", "reverse"]
+    tl = client.get("/api/beliefs/timeline", params={"subject_id": "fed"}).json()
+    assert len(tl) == 2
+
+
+def test_beliefs_validation(client: TestClient) -> None:
+    """stance 闭集与 confidence 值域 422；timeline 空列表。"""
+    bad = client.post(
+        "/api/beliefs",
+        json={
+            "change_id": "sig-x",
+            "subject_id": "fed",
+            "stance": "agree",
+            "confidence": 0.5,
+        },
+    )
+    assert bad.status_code == 422
+    assert client.post(
+        "/api/beliefs",
+        json={
+            "change_id": "sig-x",
+            "subject_id": "fed",
+            "stance": "maintain",
+            "confidence": 1.5,
+        },
+    ).status_code == 422
+    empty = client.get("/api/beliefs/timeline", params={"subject_id": "nobody"}).json()
+    assert empty == []
