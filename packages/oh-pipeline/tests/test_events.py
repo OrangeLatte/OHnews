@@ -45,6 +45,9 @@ def test_aggregates_entity_day_window() -> None:
     assert b.n_sources == 2
     assert b.event.title == "美联储声明 0"  # 最早文章标题（确定性）
     assert b.event.as_of.date() == DAY.date()
+    # M3-S2：单桶独立成簇也有内容寻址簇键
+    assert b.cluster_key is not None and b.cluster_key.startswith("evt-")
+    assert b.event.cluster_key == b.cluster_key
 
 
 def test_below_min_articles_no_event() -> None:
@@ -80,6 +83,9 @@ def test_days_split_into_separate_events() -> None:
     built = EventBuilder().build(records)
     ids = {b.event.event_id for b in built}
     assert ids == {"ev-fed-20260826", "ev-fed-20260827"}
+    # 簇键含日期：跨日不合并
+    cks = {b.event.cluster_key for b in built}
+    assert len(cks) == 2
 
 
 def test_multi_entity_articles_counted_per_entity() -> None:
@@ -89,6 +95,75 @@ def test_multi_entity_articles_counted_per_entity() -> None:
     entities = {b.event.entities[0] for b in built}
     assert entities == {"fed", "trump"}
     assert all(b.n_articles == 5 for b in built)
+    # M3-S2：同一篇文章命中两实体 → item_key 交集非空 → 同簇
+    cks = {b.cluster_key for b in built}
+    assert len(cks) == 1
+    assert all(b.event.cluster_key == built[0].cluster_key for b in built)
+
+
+def test_cross_entity_merge_by_shingle_similarity() -> None:
+    """无共享文章但标题相同、仅实体词段不同（Jaccard ≥ τ）→ 同日跨实体合并。
+
+    A 只命中 fed（body 提 Federal Reserve），B 只命中 ecb（body 提 European
+    Central Bank），标题互不提及对方实体词 → 两桶无 item_key 交集，
+    仅 shingle 相似分支可触发合并。
+    """
+    title_a = "Global markets tumble after central bank decision shocks investors worldwide"
+    records = [
+        _rec("gov", i, title_a, "Federal Reserve policy path remains data dependent")
+        for i in range(3)
+    ]
+    records += [
+        _rec("x", 10 + i, title_a, "European Central Bank policy path remains data dependent")
+        for i in range(3)
+    ]
+    built = EventBuilder().build(records)
+    assert {b.event.entities[0] for b in built} == {"fed", "ecb"}
+    cks = {b.cluster_key for b in built}
+    assert len(cks) == 1, f"expected merged cluster, got {cks}"
+
+
+def test_dissimilar_same_day_buckets_not_merged() -> None:
+    """同日跨实体但文本不相似 → 保持独立簇（不硬凑合并）。"""
+    records = [
+        _rec(
+            "gov",
+            i,
+            "Fed holds rates steady amid calm markets",
+            "Federal Reserve officials outlined a patient stance on future adjustments",
+        )
+        for i in range(3)
+    ]
+    records += [
+        _rec(
+            "govcn",
+            5 + i,
+            "Fed holds rates steady amid calm markets",
+            "Federal Reserve officials outlined a patient stance on future adjustments",
+        )
+        for i in range(2)
+    ]
+    records += [
+        _rec(
+            "x",
+            10 + i,
+            "Parliament debates annual budget proposal",
+            "European Central Bank watch closely as fiscal talks continue this week",
+        )
+        for i in range(3)
+    ]
+    records += [
+        _rec(
+            "y",
+            15 + i,
+            "Parliament debates annual budget proposal",
+            "European Central Bank watch closely as fiscal talks continue this week",
+        )
+        for i in range(2)
+    ]
+    built = EventBuilder().build(records)
+    assert {b.event.entities[0] for b in built} == {"fed", "ecb"}
+    assert len({b.cluster_key for b in built}) == 2
 
 
 def test_output_deterministic_order() -> None:
