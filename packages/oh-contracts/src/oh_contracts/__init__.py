@@ -104,6 +104,11 @@ from oh_contracts.semantics import (
 )
 from oh_contracts.signals import Signal, SignalKind
 from oh_contracts.text import strip_html
+from oh_contracts.watching import (
+    WatchKind,
+    WatchReview,
+    WatchUpdate,
+)
 
 __all__ = [
     "AnalysisArtifact",
@@ -195,4 +200,7 @@ __all__ = [
     "StrengthWord",
     "SubjectRef",
     "TechnicalAnnex",
+    "WatchKind",
+    "WatchReview",
+    "WatchUpdate",
 ]
