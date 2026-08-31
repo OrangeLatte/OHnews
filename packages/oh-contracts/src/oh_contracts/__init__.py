@@ -6,6 +6,22 @@
 - 仅存放 Pydantic schema、StrEnum 枚举与常量。
 """
 
+from oh_contracts.briefing import (
+    BriefingResponse,
+    ChangeBrief,
+    ChangeDossier,
+    ChangeKind,
+    CoverageSummary,
+    DataFreshness,
+    EvidenceBucket,
+    EvidenceCitation,
+    EvidenceGap,
+    EvidenceSet,
+    StalenessLevel,
+    StrengthWord,
+    SubjectRef,
+    TechnicalAnnex,
+)
 from oh_contracts.constants import (
     BOOTSTRAP_RESAMPLES,
     CONF_TAU_RULE,
@@ -153,4 +169,18 @@ __all__ = [
     "EntityEdge",
     "SemanticAnnotation",
     "SemanticRole",
+    "BriefingResponse",
+    "ChangeBrief",
+    "ChangeDossier",
+    "ChangeKind",
+    "CoverageSummary",
+    "DataFreshness",
+    "EvidenceBucket",
+    "EvidenceCitation",
+    "EvidenceGap",
+    "EvidenceSet",
+    "StalenessLevel",
+    "StrengthWord",
+    "SubjectRef",
+    "TechnicalAnnex",
 ]
