@@ -6,6 +6,13 @@
 - 仅存放 Pydantic schema、StrEnum 枚举与常量。
 """
 
+from oh_contracts.belief import (
+    BeliefChangeType,
+    BeliefCreate,
+    BeliefSnapshot,
+    BeliefStance,
+    stance_zh,
+)
 from oh_contracts.briefing import (
     BriefingResponse,
     ChangeBrief,
@@ -119,6 +126,7 @@ __all__ = [
     "VERIFY_PENALTY_UNVERIFIED",
     "ArticleType",
     "BronzeRecord",
+    "stance_zh",
     "Claim",
     "ClaimKind",
     "EpistemicStatus",
@@ -169,6 +177,10 @@ __all__ = [
     "EntityEdge",
     "SemanticAnnotation",
     "SemanticRole",
+    "BeliefChangeType",
+    "BeliefCreate",
+    "BeliefSnapshot",
+    "BeliefStance",
     "BriefingResponse",
     "ChangeBrief",
     "ChangeDossier",

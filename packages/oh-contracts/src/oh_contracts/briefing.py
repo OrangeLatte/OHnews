@@ -16,9 +16,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import Field, StringConstraints
 
 from oh_contracts.enums import SourceTier
+from oh_contracts.strict import HeadlineStr, NonEmptyStr, _StrictBase  # noqa: F401 (re-export)
 
 EvidenceBucket = Literal["supporting", "contradicting", "context"]
 
@@ -32,15 +33,6 @@ ChangeKind = Literal[
 ]
 
 StrengthWord = Literal["strong", "notable", "minor", "insufficient"]
-
-NonEmptyStr = Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
-HeadlineStr = Annotated[str, StringConstraints(min_length=8, strip_whitespace=True)]
-
-
-class _StrictBase(BaseModel):
-    """产品层统一严格模型：多余字段拒绝。"""
-
-    model_config = {"extra": "forbid"}
 
 
 class DataFreshness(_StrictBase):
