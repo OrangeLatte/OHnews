@@ -1,4 +1,7 @@
 // 用户语言映射层（重构指令 §三/§六）：工程指标降为解释层，默认界面只说人话。
+// R5a：色值单一来源 = lib/tokens.ts（SIGNAL/NDI_LEVELS）。
+
+import { NDI_LEVELS, SIGNAL } from "@/lib/tokens";
 
 export type DivergenceLevel = {
   label: string;
@@ -10,12 +13,12 @@ export type DivergenceLevel = {
 /** NDI → 四档语言（重构指令固定分档，解释层才展示数值）。 */
 export function divergenceLevel(ndi: number | null | undefined): DivergenceLevel {
   if (ndi === null || ndi === undefined) {
-    return { label: "Insufficient Data", zh: "证据不足（官方簇样本过少，系统弃权）", color: "#8a8378", rank: -1 };
+    return { label: "Insufficient Data", zh: "证据不足（官方簇样本过少，系统弃权）", color: NDI_LEVELS.abstain, rank: -1 };
   }
-  if (ndi < 0.15) return { label: "Narrative Consensus", zh: "叙事共识", color: "#7d8a6a", rank: 0 };
-  if (ndi < 0.35) return { label: "Emerging Differences", zh: "分歧初现", color: "#b08d3f", rank: 1 };
-  if (ndi < 0.6) return { label: "Clear Divergence", zh: "明显分歧", color: "#a34a2a", rank: 2 };
-  return { label: "Narrative Conflict", zh: "叙事冲突", color: "#8b2635", rank: 3 };
+  if (ndi < 0.15) return { label: "Narrative Consensus", zh: "叙事共识", color: NDI_LEVELS.consensus, rank: 0 };
+  if (ndi < 0.35) return { label: "Emerging Differences", zh: "分歧初现", color: NDI_LEVELS.emerging, rank: 1 };
+  if (ndi < 0.6) return { label: "Clear Divergence", zh: "明显分歧", color: NDI_LEVELS.clear, rank: 2 };
+  return { label: "Narrative Conflict", zh: "叙事冲突", color: NDI_LEVELS.conflict, rank: 3 };
 }
 
 /** 趋势词（delta=较前值变化）。 */
@@ -32,15 +35,15 @@ export type SignalKindMeta = { label: string; zh: string; color: string };
 export function signalKindMeta(kind: string): SignalKindMeta {
   switch (kind) {
     case "attention_spike":
-      return { label: "Attention Surge", zh: "关注度骤增", color: "#b08d3f" };
+      return { label: "Attention Surge", zh: "关注度骤增", color: SIGNAL.attention };
     case "ndi_alert":
-      return { label: "Narrative Divergence", zh: "叙事分歧", color: "#8b2635" };
+      return { label: "Narrative Divergence", zh: "叙事分歧", color: SIGNAL.divergence };
     case "expectation_gap":
-      return { label: "Expectation Shift", zh: "预期落差", color: "#a34a2a" };
+      return { label: "Expectation Shift", zh: "预期落差", color: SIGNAL.warning };
     case "narrative_shift":
-      return { label: "Narrative Shift", zh: "叙事迁移", color: "#6b5b95" };
+      return { label: "Narrative Shift", zh: "叙事迁移", color: SIGNAL.narrative };
     default:
-      return { label: kind, zh: kind, color: "#8a8378" };
+      return { label: kind, zh: kind, color: SIGNAL.muted };
   }
 }
 
@@ -61,25 +64,18 @@ export function attentionPhrase(z: number): string {
 export type WatchStatus = { label: string; zh: string; color: string };
 
 export function watchStatus(summary: Record<string, unknown> | null): WatchStatus {
-  if (!summary) return { label: "Quiet", zh: "平静", color: "#8a8378" };
+  if (!summary) return { label: "Quiet", zh: "平静", color: SIGNAL.muted };
   const signals = (summary.signals as { kind: string }[] | undefined) ?? [];
   const kinds = new Set(signals.map((s) => s.kind));
   if (kinds.has("ndi_alert"))
-    return { label: "Narrative Divergence", zh: "叙事分歧", color: "#8b2635" };
+    return { label: "Narrative Divergence", zh: "叙事分歧", color: SIGNAL.divergence };
   if (kinds.has("attention_spike"))
-    return { label: "Attention Spike", zh: "关注度骤增", color: "#b08d3f" };
+    return { label: "Attention Spike", zh: "关注度骤增", color: SIGNAL.attention };
   if (kinds.has("expectation_gap") || kinds.has("narrative_shift"))
-    return { label: "Developing", zh: "发展中", color: "#a34a2a" };
+    return { label: "Developing", zh: "发展中", color: SIGNAL.warning };
   const nEvents = (summary.n_events as number | undefined) ?? 0;
-  if (nEvents > 0) return { label: "Developing", zh: "发展中", color: "#a34a2a" };
-  return { label: "Quiet", zh: "平静", color: "#8a8378" };
+  if (nEvents > 0) return { label: "Developing", zh: "发展中", color: SIGNAL.warning };
+  return { label: "Quiet", zh: "平静", color: SIGNAL.muted };
 }
 
-export const FRAME_ZH: Record<string, string> = {
-  loss: "损失",
-  gain: "收益",
-  responsibility: "责任",
-  conflict: "冲突",
-  human_interest: "人情味",
-  other: "其他",
-};
+export { FRAME_ZH } from "@/lib/tokens";

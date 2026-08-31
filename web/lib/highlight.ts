@@ -47,27 +47,5 @@ export function highlightFrames(rawText: string): Segment[] {
   return segs;
 }
 
-export const FRAME_BG: Record<string, string> = {
-  loss: "#b3543f1a",
-  gain: "#5e8a5e1a",
-  responsibility: "#b08d3e1a",
-  conflict: "#8a6fae1a",
-  human_interest: "#5e83a81a",
-};
-
-export const FRAME_TEXT: Record<string, string> = {
-  loss: "#b3543f",
-  gain: "#5e8a5e",
-  responsibility: "#b08d3e",
-  conflict: "#8a6fae",
-  human_interest: "#5e83a8",
-};
-
-export const FRAME_ZH: Record<string, string> = {
-  loss: "损失",
-  gain: "收益",
-  responsibility: "责任",
-  conflict: "冲突",
-  human_interest: "人情味",
-  other: "其他",
-};
+// R5a 收敛：色板/中文名单一来源 = lib/tokens.ts（此处仅 re-export 保持既有 import 路径）。
+export { FRAME_BG, FRAME_TEXT, FRAME_ZH } from "@/lib/tokens";

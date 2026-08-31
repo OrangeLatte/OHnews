@@ -14,6 +14,13 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      // R5e 路由收敛：暗色指挥舱移除（用户裁决）、研究台并入 RESEARCH
+      { source: "/command", destination: "/", permanent: false },
+      { source: "/agent", destination: "/research", permanent: false },
+    ];
+  },
 };
 
 export default nextConfig;

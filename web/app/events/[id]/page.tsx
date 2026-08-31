@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
+import { ASSESS_STATUS as ASSESS, SIGNAL } from "@/lib/tokens";
 
 import {
   api,
@@ -35,10 +36,10 @@ const LANG_ZH: Record<string, string> = { zh: "中文语料", en: "英文语料"
 
 /* M2 评估层四态（EventAssessment.status）用户语言映射 */
 const ASSESS_STATUS_ZH: Record<string, { zh: string; color: string }> = {
-  confirmed: { zh: "已证实", color: "#5e8a5e" },
-  contested: { zh: "存争议", color: "#8b2635" },
-  developing: { zh: "进展中", color: "#b08d3f" },
-  unverified: { zh: "未证实", color: "#6e7781" },
+  confirmed: { zh: "已证实", color: ASSESS.confirmed },
+  contested: { zh: "存争议", color: ASSESS.contested },
+  developing: { zh: "进展中", color: ASSESS.developing },
+  unverified: { zh: "未证实", color: ASSESS.unverified },
 };
 
 const STRENGTH_ZH: Record<string, string> = {
@@ -59,14 +60,14 @@ function SectionHead({ no, en, zh }: { no: string; en: string; zh: string }) {
 }
 
 function statusOf(meta: EventMeta | null): { label: string; color: string } {
-  if (!meta) return { label: "…", color: "#6e7781" };
+  if (!meta) return { label: "…", color: SIGNAL.muted };
   /* 优先用 M2 评估层四态（有评估时），否则回退 NDI 状态推断 */
   if (meta.assessment) {
-    const s = ASSESS_STATUS_ZH[meta.assessment.status] ?? { zh: meta.assessment.status, color: "#6e7781" };
+    const s = ASSESS_STATUS_ZH[meta.assessment.status] ?? { zh: meta.assessment.status, color: SIGNAL.muted };
     return { label: `${s.zh} · ${meta.assessment.status}`, color: s.color };
   }
-  if (meta.ndi_status === "ok") return { label: "Developing · 发展中", color: "#8b2635" };
-  return { label: "Emerging · 新出现", color: "#b08d3f" };
+  if (meta.ndi_status === "ok") return { label: "Developing · 发展中", color: SIGNAL.divergence };
+  return { label: "Emerging · 新出现", color: SIGNAL.attention };
 }
 
 export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
@@ -273,7 +274,7 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
                   <div className="mt-1 h-2 w-full bg-muted">
                     <div
                       className="h-2"
-                      style={{ width: `${dist * 100}%`, backgroundColor: "#8b2635" }}
+                      style={{ width: `${dist * 100}%`, backgroundColor: SIGNAL.divergence }}
                     />
                   </div>
                 </div>

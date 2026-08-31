@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as echarts from "echarts";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type TimelineResponse } from "@/lib/api";
+import { SIGNAL } from "@/lib/tokens";
+import { ChartBase } from "@/components/visualizations/chart-base";
 
 const GROUPS: { label: string; ids: string[] }[] = [
   { label: "央行", ids: ["fed", "fomc", "pboc", "ecb", "boj", "boe", "rba_au", "boc_ca"] },
@@ -23,32 +25,27 @@ function TimelineChart({
   data: TimelineResponse;
   onPickEvent: (eventId: string) => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!ref.current) return;
+  const option = useMemo<echarts.EChartsOption>(() => {
     const dates = data.points.map((p) => p.date.slice(5));
-    const chart = echarts.init(ref.current);
     const eventDays = data.points
       .map((p, i) => ({ i, n: p.n_events, ids: p.event_ids }))
       .filter((x) => x.n > 0);
-    const eventIds: string[] = [];
-    chart.setOption({
+    return {
       backgroundColor: "transparent",
       tooltip: { trigger: "axis" },
-      legend: { data: ["文章量", "NDI", "事件"], textStyle: { color: "#9ca3af" } },
+      legend: { data: ["文章量", "NDI", "事件"], textStyle: { color: SIGNAL.muted } },
       grid: { left: 48, right: 52, top: 40, bottom: 32 },
-      xAxis: { type: "category", data: dates, axisLabel: { color: "#9ca3af" } },
+      xAxis: { type: "category", data: dates },
       yAxis: [
-        { type: "value", name: "文章", axisLabel: { color: "#9ca3af" }, nameTextStyle: { color: "#9ca3af" } },
-        { type: "value", name: "NDI", min: 0, max: 1, axisLabel: { color: "#9ca3af" }, nameTextStyle: { color: "#9ca3af" } },
+        { type: "value", name: "文章", nameTextStyle: { color: SIGNAL.muted } },
+        { type: "value", name: "NDI", min: 0, max: 1, nameTextStyle: { color: SIGNAL.muted } },
       ],
       series: [
         {
           name: "文章量",
           type: "bar",
           data: data.points.map((p) => p.articles),
-          itemStyle: { color: "#8b949e", opacity: 0.55 },
+          itemStyle: { color: SIGNAL.muted, opacity: 0.55 },
           barMaxWidth: 18,
         },
         {
@@ -57,8 +54,8 @@ function TimelineChart({
           yAxisIndex: 1,
           data: data.points.map((p) => p.ndi),
           connectNulls: true,
-          lineStyle: { width: 2, color: "#3fb950" },
-          itemStyle: { color: "#3fb950" },
+          lineStyle: { width: 2, color: SIGNAL.divergence },
+          itemStyle: { color: SIGNAL.divergence },
         },
         {
           name: "事件",
@@ -67,25 +64,24 @@ function TimelineChart({
             value: [x.i, x.n],
             eventIds: x.ids,
             symbolSize: 10 + x.n * 4,
-            itemStyle: { color: "#f0b429" },
+            itemStyle: { color: SIGNAL.attention },
           })),
         },
       ],
-    });
-    chart.on("click", (p) => {
-      const ids = (p.data as { eventIds?: string[] })?.eventIds;
-      if (ids && ids.length > 0) onPickEvent(ids[0]);
-    });
-    void eventIds;
-    const onResize = () => chart.resize();
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      chart.dispose();
     };
-  }, [data, onPickEvent]);
+  }, [data]);
 
-  return <div ref={ref} className="h-80 w-full" />;
+  return (
+    <ChartBase
+      option={option}
+      height="20rem"
+      state={data.points.length ? "ready" : "empty"}
+      onSeriesClick={(p) => {
+        const ids = (p.data as { eventIds?: string[] })?.eventIds;
+        if (ids && ids.length > 0) onPickEvent(ids[0]);
+      }}
+    />
+  );
 }
 
 export default function TimelinePage() {

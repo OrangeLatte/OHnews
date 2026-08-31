@@ -72,6 +72,13 @@
   --color-ring: var(--ring);
   --color-ok: oklch(0.55 0.12 150);
   --color-abstain: oklch(0.55 0.11 75);
+  /* R5a 信号语义色：与 lib/tokens.ts 同值手工同步（ECharts canvas 无法读 CSS var，TS 为运行时真源） */
+  --color-signal-attention: #b08d3f;
+  --color-signal-narrative: #6b5b95;
+  --color-signal-divergence: #8b2635;
+  --color-signal-confirmed: #7d8a6a;
+  --color-signal-warning: #a34a2a;
+  --color-signal-muted: #8a8378;
   --font-newspaper: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
 }
 

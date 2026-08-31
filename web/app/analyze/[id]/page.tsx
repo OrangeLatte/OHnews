@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useEffect, useMemo, useState } from "react";
+import { FRAME_COLORS, SIGNAL } from "@/lib/tokens";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
@@ -12,12 +13,11 @@ import {
   type EvidenceRow,
   type SpectrumDoc,
   type SpectrumSentence,
-  type SpectrumSpan,
 } from "@/lib/api";
 
 // —— 词级结构配色：主体按实体确定性取色，动作按方向语义 ——
 const ENTITY_PALETTE = [
-  "#f0b429", "#58a6ff", "#3fb950", "#bc8cff", "#39c5cf",
+  "#f0b429", "#58a6ff", "#7d8a6a", "#bc8cff", "#39c5cf",
   "#ff7b72", "#d2a8ff", "#7ee787", "#ffa657", "#79c0ff",
 ];
 export function entityColor(entityId: string): string {
@@ -27,19 +27,19 @@ export function entityColor(entityId: string): string {
 }
 
 const DIRECTION_META: Record<string, { icon: string; color: string; label: string }> = {
-  easing: { icon: "↓", color: "#3fb950", label: "宽松" },
+  easing: { icon: "↓", color: "#7d8a6a", label: "宽松" },
   tightening: { icon: "↑", color: "#f85149", label: "紧缩" },
   hold: { icon: "→", color: "#8b949e", label: "按兵不动" },
   escalate: { icon: "⚔", color: "#f85149", label: "升级" },
-  deescalate: { icon: "🕊", color: "#3fb950", label: "缓和" },
-  beat: { icon: "↗", color: "#3fb950", label: "超预期" },
+  deescalate: { icon: "🕊", color: "#7d8a6a", label: "缓和" },
+  beat: { icon: "↗", color: "#7d8a6a", label: "超预期" },
   miss: { icon: "↘", color: "#f85149", label: "不及预期" },
-  exit: { icon: "⇤", color: "#d29922", label: "离任" },
-  enter: { icon: "⇥", color: "#3fb950", label: "履新" },
-  rally: { icon: "▲", color: "#3fb950", label: "上行" },
+  exit: { icon: "⇤", color: SIGNAL.attention, label: "离任" },
+  enter: { icon: "⇥", color: "#7d8a6a", label: "履新" },
+  rally: { icon: "▲", color: "#7d8a6a", label: "上行" },
   plunge: { icon: "▼", color: "#f85149", label: "下行" },
-  expand: { icon: "⊕", color: "#3fb950", label: "扩张" },
-  restrict: { icon: "⊖", color: "#d29922", label: "收缩" },
+  expand: { icon: "⊕", color: "#7d8a6a", label: "扩张" },
+  restrict: { icon: "⊖", color: SIGNAL.attention, label: "收缩" },
 };
 
 const TIER_LABEL: Record<string, string> = {
@@ -117,14 +117,6 @@ function SentenceView({
 
 // —— 分歧构成：簇对条 + 簇分布堆叠条（纯 CSS，紧凑交互）——
 const FRAME_KEYS = ["loss", "gain", "responsibility", "conflict", "human_interest", "other"] as const;
-const FRAME_COLORS: Record<string, string> = {
-  loss: "#e5534b",
-  gain: "#3fb950",
-  responsibility: "#d29922",
-  conflict: "#bc8cff",
-  human_interest: "#58a6ff",
-  other: "#8b949e",
-};
 
 function FrameBar({ dist }: { dist: Record<string, number> }) {
   const total = FRAME_KEYS.reduce((s, k) => s + (dist[k] ?? 0), 0) || 1;
@@ -158,7 +150,7 @@ function ClusterMatrix({ data }: { data: AnatomyData }) {
               className="h-full rounded-full transition-all"
               style={{
                 width: `${p.jsd * 100}%`,
-                backgroundColor: p.official_vs_market ? "#f0b429" : "#58a6ff",
+                backgroundColor: p.official_vs_market ? SIGNAL.attention : SIGNAL.confirmed,
               }}
             />
           </div>
@@ -278,7 +270,7 @@ function SpectrumPanel({
                     {s.stance && (
                       <sup
                         className="ml-0.5 text-[10px]"
-                        style={{ color: s.stance === "critical" ? "#e5534b" : "#3fb950" }}
+                        style={{ color: s.stance === "critical" ? SIGNAL.divergence : SIGNAL.confirmed }}
                       >
                         {STANCE_CN[s.stance]}
                       </sup>

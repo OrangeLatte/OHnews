@@ -1,46 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as echarts from "echarts";
 
 import { api } from "@/lib/api";
 import { attentionPhrase, divergenceLevel, signalKindMeta, watchStatus } from "@/lib/insight";
+import { FRAME_COLORS, FRAME_ZH, SIGNAL } from "@/lib/tokens";
+import { ChartBase } from "@/components/visualizations/chart-base";
 
 /* ── Observable 风图表基座：细轴/淡网格/低饱和大地色板/线末标注 ── */
-
-const TIER_COLORS: Record<string, string> = {
-  L1: "#a9834f",
-  L2: "#6f87a6",
-  L3: "#7f9a7a",
-  L4: "#a495b8",
-  "?": "#b8b2a5",
-};
-const TIER_LABELS: Record<string, string> = {
-  L1: "官方 L1",
-  L2: "通讯社 L2",
-  L3: "财经媒体 L3",
-  L4: "社媒 L4",
-  "?": "未分级",
-};
-
-const FRAME_COLORS: Record<string, string> = {
-  loss: "#b3543f",
-  gain: "#5e8a5e",
-  responsibility: "#b08d3e",
-  conflict: "#8a6fae",
-  human_interest: "#5e83a8",
-  other: "#9a948a",
-};
-const FRAME_LABELS: Record<string, string> = {
-  loss: "损失",
-  gain: "收益",
-  responsibility: "责任",
-  conflict: "冲突",
-  human_interest: "人情味",
-  other: "其他",
-};
 
 const BASE = {
   textStyle: { fontFamily: "inherit", color: "#6e675c" },
@@ -67,67 +37,6 @@ const BASE = {
   },
 };
 
-function Chart({
-  option,
-  height = 300,
-  onSeriesClick,
-}: {
-  option: echarts.EChartsOption;
-  height?: number;
-  onSeriesClick?: (params: echarts.ECElementEvent) => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const cbRef = useRef(onSeriesClick);
-  useEffect(() => {
-    cbRef.current = onSeriesClick;
-  }, [onSeriesClick]);
-  useEffect(() => {
-    if (!ref.current) return;
-    const chart = echarts.init(ref.current);
-    chart.setOption(option);
-    if (cbRef.current) {
-      chart.on("click", (params: echarts.ECElementEvent) => cbRef.current?.(params));
-    }
-    const onResize = () => chart.resize();
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      chart.dispose();
-    };
-  }, [option]);
-  return <div ref={ref} style={{ width: "100%", height }} />;
-}
-
-function Panel({
-  title,
-  subtitle,
-  legend,
-  children,
-}: {
-  title: string;
-  subtitle: string;
-  legend?: { label: string; color: string }[];
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="border-t border-foreground/20 pt-3">
-      <h2 className="font-paper text-lg">{title}</h2>
-      <p className="mb-2 text-xs leading-5 text-muted-foreground">{subtitle}</p>
-      {legend && (
-        <div className="mb-1 flex flex-wrap gap-4">
-          {legend.map((l) => (
-            <span key={l.label} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <span className="inline-block h-2 w-2.5" style={{ backgroundColor: l.color }} />
-              {l.label}
-            </span>
-          ))}
-        </div>
-      )}
-      {children}
-    </section>
-  );
-}
-
 /* ── 数据面 ── */
 
 type FlowSummary = {
@@ -137,20 +46,6 @@ type FlowSummary = {
   ndi: { event_id: string; ts: string; ndi: number | null; status: string; language: string }[];
   event_links: { event_id: string; entity: string; title: string; as_of: string }[];
 };
-type TimelineResponse = {
-  points: { date: string; articles: number; ndi: number | null; event_ids: string[] }[];
-  events: { event_id: string; title: string; as_of: string; ndi: number | null; dominant_frame?: string | null }[];
-};
-
-const ENTITIES = [
-  ["fed", "美联储"],
-  ["ecb", "欧央行"],
-  ["boe", "英央行"],
-  ["boj", "日央行"],
-  ["trump", "Trump"],
-  ["china_mof", "中国财政部"],
-  ["opec", "OPEC"],
-] as const;
 
 /* ── 数据面 ── */
 
@@ -349,13 +244,13 @@ export default function IntelligencePage() {
           data: ndiLine,
           smooth: false,
           step: "end" as const,
-          lineStyle: { color: "#8b2635", width: 2 },
-          itemStyle: { color: "#8b2635" },
+          lineStyle: { color: SIGNAL.divergence, width: 2 },
+          itemStyle: { color: SIGNAL.divergence },
           symbolSize: 6,
           endLabel: {
             show: true,
             fontSize: 10,
-            color: "#8b2635",
+            color: SIGNAL.divergence,
             formatter: () => "分歧",
           },
         },
@@ -372,7 +267,7 @@ export default function IntelligencePage() {
       xAxis: { type: "value" as const, splitLine: { show: false }, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false } },
       yAxis: {
         type: "category" as const,
-        data: shifts.map((s) => FRAME_LABELS[s.frame]),
+        data: shifts.map((s) => FRAME_ZH[s.frame]),
         axisLine: { show: false },
         axisTick: { show: false },
         axisLabel: { fontSize: 12, color: "#3a352c" },
@@ -383,7 +278,7 @@ export default function IntelligencePage() {
           type: "bar",
           data: shifts.map((s) => ({
             value: s.delta,
-            itemStyle: { color: s.delta >= 0 ? "#5e8a5e" : "#b3543f", borderRadius: 1 },
+            itemStyle: { color: s.delta >= 0 ? FRAME_COLORS.gain : FRAME_COLORS.loss, borderRadius: 1 },
           })),
           label: {
             show: true,
@@ -479,7 +374,7 @@ export default function IntelligencePage() {
             question="Question：关注何时激增？分歧何时出现？｜Action：点击虚线事件标记下钻"
           />
           {flow && (
-            <Chart
+            <ChartBase
               option={timelineOption}
               height={280}
               onSeriesClick={(params) => {
@@ -501,13 +396,13 @@ export default function IntelligencePage() {
             zh="叙事迁移（近 7 天 vs 前 7 天）"
             question="Question：哪个叙事在上升、哪个在消失？｜Action：进入事件页查看证据"
           />
-          {shifts.length > 0 ? <Chart option={shiftOption} height={170} /> : (
+          {shifts.length > 0 ? <ChartBase option={shiftOption} height={170} /> : (
             <p className="text-sm text-muted-foreground">窗口内框架数据不足。</p>
           )}
           <div className="mt-1 flex flex-wrap gap-3">
             {shifts.slice(0, 3).map((s) => (
               <span key={s.frame} className="text-[11px] text-muted-foreground">
-                {FRAME_LABELS[s.frame]}：{s.prev}→{s.cur} 篇（{s.delta >= 0 ? "+" : ""}{s.delta}）
+                {FRAME_ZH[s.frame]}：{s.prev}→{s.cur} 篇（{s.delta >= 0 ? "+" : ""}{s.delta}）
               </span>
             ))}
           </div>

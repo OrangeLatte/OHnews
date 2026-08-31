@@ -159,7 +159,7 @@ export default function SourcesManager() {
               </span>
               {!s.enabled && <span className="text-[11px] text-muted-foreground">已停用</span>}
               <span
-                className={`h-1.5 w-1.5 rounded-full ${s.n_7d > 0 ? "bg-[#5e8a5e]" : "bg-border"}`}
+                className={`h-1.5 w-1.5 rounded-full ${s.n_7d > 0 ? "bg-[var(--color-ok)]" : "bg-border"}`}
                 title={s.n_7d > 0 ? "近7日有产出" : "近7日无产出"}
               />
               <span className="text-xs text-muted-foreground">{openId === s.source_id ? "收起" : "展开"}</span>

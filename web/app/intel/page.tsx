@@ -1,17 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { SIGNAL } from "@/lib/tokens";
 import * as echarts from "echarts";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api, type IntelReport } from "@/lib/api";
+import { ChartBase } from "@/components/visualizations/chart-base";
 
 const TERM_META: Record<string, { zh: string; color: string }> = {
   almost_certain: { zh: "几乎必然 ≥95%", color: "#1a7f37" },
   highly_likely: { zh: "极可能 80-95%", color: "#56d364" },
   likely: { zh: "可能 55-80%", color: "#d29922" },
-  roughly_even: { zh: "大致对半 45-55%", color: "#6e7781" },
+  roughly_even: { zh: "大致对半 45-55%", color: SIGNAL.muted },
   unlikely: { zh: "不太可能 20-45%", color: "#d29922" },
   highly_unlikely: { zh: "极不可能 5-20%", color: "#b45309" },
   almost_impossible: { zh: "几乎不可能 <5%", color: "#c93c37" },
@@ -24,11 +26,8 @@ const KIND_META: Record<string, string> = {
 };
 
 function NetworkChart({ report }: { report: IntelReport }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!ref.current || !report.network.nodes.length) return;
-    const chart = echarts.init(ref.current);
-    chart.setOption({
+  const option = useMemo<echarts.EChartsOption>(
+    () => ({
       backgroundColor: "transparent",
       tooltip: {},
       series: [
@@ -36,30 +35,31 @@ function NetworkChart({ report }: { report: IntelReport }) {
           type: "graph",
           layout: "force",
           roam: true,
-          label: { show: true, color: "#c9d1d9" },
+          label: { show: true, color: SIGNAL.muted },
           force: { repulsion: 260, edgeLength: 90 },
           data: report.network.nodes.map((n) => ({
             id: n.id,
             name: n.id,
             symbolSize: 14 + Math.sqrt(n.strength) * 5,
-            itemStyle: { color: "#f0b429" },
+            itemStyle: { color: SIGNAL.attention },
           })),
           links: report.network.edges.map((e) => ({
             source: e.source,
             target: e.target,
-            lineStyle: { width: 1 + e.weight, opacity: 0.5, color: "#58a6ff" },
+            lineStyle: { width: 1 + e.weight, opacity: 0.5, color: SIGNAL.narrative },
           })),
         },
       ],
-    });
-    const onResize = () => chart.resize();
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      chart.dispose();
-    };
-  }, [report]);
-  return <div ref={ref} className="h-80 w-full" />;
+    }),
+    [report],
+  );
+  return (
+    <ChartBase
+      option={option}
+      height="20rem"
+      state={report.network.nodes.length ? "ready" : "empty"}
+    />
+  );
 }
 
 function AchMatrixTable({ report }: { report: IntelReport }) {
@@ -164,8 +164,8 @@ export function IntelPanel() {
               variant="outline"
               className="text-[10px]"
               style={{
-                color: report.engine === "llm" ? "#1a7f37" : "#6e7781",
-                borderColor: report.engine === "llm" ? "#1a7f3755" : "#6e778155",
+                color: report.engine === "llm" ? SIGNAL.confirmed : SIGNAL.muted,
+                borderColor: report.engine === "llm" ? `${SIGNAL.confirmed}55` : `${SIGNAL.muted}55`,
               }}
             >
               {report.engine === "llm" ? "LLM 增强" : "离线降级"}
@@ -204,7 +204,7 @@ export function IntelPanel() {
               </h2>
               <div className="grid gap-3 md:grid-cols-2">
                 {report.key_judgments.map((k, i) => {
-                  const meta = TERM_META[k.term] ?? { zh: k.term, color: "#6e7781" };
+                  const meta = TERM_META[k.term] ?? { zh: k.term, color: SIGNAL.muted };
                   return (
                     <div
                       key={i}
