@@ -12,6 +12,7 @@ import { use, useEffect, useRef, useState } from "react";
 
 import {
   api,
+  type BeliefSnapshot,
   type ChangeDossier,
   type CoverageSummary,
   type DataFreshness,
@@ -209,6 +210,205 @@ function Coverage({ c }: { c: CoverageSummary }) {
   );
 }
 
+/** 阶段 2：stance 四值人话（展示与表单共用）。 */
+const STANCE_OPTIONS: { key: BeliefSnapshot["stance"]; zh: string }[] = [
+  { key: "maintain", zh: "维持原判" },
+  { key: "adjust", zh: "调整看法" },
+  { key: "reverse", zh: "反转看法" },
+  { key: "uncertain", zh: "存疑待查" },
+];
+
+const STANCE_ZH_MAP = Object.fromEntries(
+  STANCE_OPTIONS.map((o) => [o.key, o.zh])
+) as Record<BeliefSnapshot["stance"], string>;
+
+/** 与前一版本差异（系统计算仅供展示；判定规则与契约 diff_from 一致）。 */
+function beliefDiff(prev: BeliefSnapshot, cur: BeliefSnapshot): string {
+  const parts: string[] = [];
+  if (prev.stance !== cur.stance) {
+    parts.push(
+      `立场由「${STANCE_ZH_MAP[prev.stance]}」变为「${STANCE_ZH_MAP[cur.stance]}」`
+    );
+  }
+  const delta = cur.confidence - prev.confidence;
+  if (Math.abs(delta) >= 0.05) {
+    parts.push(
+      `信心${delta > 0 ? "上升" : "下降"} ${Math.round(Math.abs(delta) * 100)}%`
+    );
+  }
+  return parts.length ? parts.join("；") : "与前一版本一致";
+}
+
+function fmtTs(iso: string): string {
+  return new Date(iso).toLocaleString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** 我的判断（阶段 2 判断闭环）：仅用户主动确认写入；历史差异可见。 */
+function MyJudgment({ changeId, dossier }: { changeId: string; dossier: ChangeDossier }) {
+  const subject = (dossier.subjects ?? [])[0];
+  const subjectId = subject?.id ?? "unknown";
+  const subjectLabel = subject?.label ?? "";
+  const [beliefs, setBeliefs] = useState<BeliefSnapshot[]>([]);
+  const [stance, setStance] = useState<BeliefSnapshot["stance"] | null>(null);
+  const [confidence, setConfidence] = useState(60);
+  const [rationale, setRationale] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const investigatingRef = useRef(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .beliefsForChange(changeId)
+      .then((rows) => {
+        if (!alive) return;
+        setBeliefs(rows);
+        const last = rows[rows.length - 1];
+        if (last) {
+          setStance(last.stance);
+          setConfidence(Math.round(last.confidence * 100));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [changeId]);
+
+  function pickStance(v: BeliefSnapshot["stance"]) {
+    setStance(v);
+    if (!investigatingRef.current) {
+      investigatingRef.current = true;
+      track("investigation_started", { objectId: changeId });
+    }
+  }
+
+  function submit() {
+    if (!stance || saving) return;
+    setSaving(true);
+    api
+      .saveBelief({
+        change_id: changeId,
+        subject_id: subjectId,
+        subject_label: subjectLabel,
+        stance,
+        confidence: confidence / 100,
+        rationale,
+      })
+      .then((snap) => {
+        setSaving(false);
+        setSavedMsg("已保存。你的判断只属于你——系统不会改写它。");
+        setRationale("");
+        track("judgment_saved", { objectId: changeId });
+        track("judgment_change_type", {
+          objectId: changeId,
+          meta: { change_type: snap.change_type, stance: snap.stance },
+        });
+        return api.beliefsForChange(changeId).then(setBeliefs);
+      })
+      .catch(() => {
+        setSaving(false);
+        setSavedMsg("保存失败，请稍后重试。");
+      });
+  }
+
+  const prev = beliefs.length >= 2 ? beliefs[beliefs.length - 2] : undefined;
+  const last = beliefs[beliefs.length - 1];
+
+  return (
+    <section className="mt-8">
+      <h2 className="font-paper text-base">我的判断</h2>
+      <p className="mt-1 text-[13px] text-muted-foreground">
+        看完证据后，你对这个变化的看法是什么？判断由你确认后才会记录。
+      </p>
+
+      {beliefs.length > 0 && (
+        <div className="mt-3 border border-foreground/15 bg-foreground/[0.03] p-3 text-[13px]">
+          <p className="paper-kicker">你的认知轨迹</p>
+          <ul className="mt-2 space-y-1.5">
+            {beliefs.map((b, i) => (
+              <li key={b.snapshot_id}>
+                <span className="text-muted-foreground">{fmtTs(b.believed_at)}</span>
+                {" · "}
+                {STANCE_ZH_MAP[b.stance]}
+                {" · 信心 "}
+                {Math.round(b.confidence * 100)}%
+                {b.rationale && <span className="text-muted-foreground"> · {b.rationale}</span>}
+                {i > 0 && (
+                  <span style={{ color: SIGNAL.confirmed }}>
+                    （{beliefDiff(beliefs[i - 1], b)}）
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-4 space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {STANCE_OPTIONS.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => pickStance(o.key)}
+              className={`border px-3 py-1.5 text-[13px] transition-colors ${
+                stance === o.key
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-foreground/25 hover:border-foreground/60"
+              }`}
+            >
+              {o.zh}
+            </button>
+          ))}
+        </div>
+
+        <label className="block text-[13px]">
+          <span className="text-muted-foreground">你的信心：{confidence}%</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={confidence}
+            onChange={(e) => setConfidence(Number(e.target.value))}
+            className="mt-1 w-full accent-foreground"
+          />
+        </label>
+
+        <textarea
+          value={rationale}
+          onChange={(e) => setRationale(e.target.value)}
+          placeholder="依据是什么？（可选，帮助未来的你回溯当时的理由）"
+          rows={2}
+          className="w-full border border-foreground/25 bg-transparent px-3 py-2 text-[14px] outline-none focus:border-foreground/60"
+        />
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!stance || saving}
+            className="border border-foreground bg-foreground px-4 py-1.5 text-[13px] text-background disabled:opacity-40"
+          >
+            {saving ? "保存中…" : last ? "更新判断" : "保存判断"}
+          </button>
+          {savedMsg && <span className="text-[12px]" style={{ color: SIGNAL.confirmed }}>{savedMsg}</span>}
+        </div>
+        {prev && last && (
+          <p className="text-[12px] text-muted-foreground">
+            保存后将与前一版本（{fmtTs(last.believed_at)}）对比展示差异。
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function ChangeDetailPage({
   params,
 }: PageProps<"/changes/[id]">) {
@@ -320,6 +520,8 @@ export default function ChangeDetailPage({
           <Drawer d={dossier} changeId={id} />
         </div>
       </section>
+
+      <MyJudgment changeId={id} dossier={dossier} />
 
       {dossier.technical && (
         <details className="mt-10 border-t border-foreground/20 pt-3">

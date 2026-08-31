@@ -24,7 +24,11 @@ export type TrackedEvent =
   | "evidence_opened"
   | "source_opened"
   | "counter_evidence_requested"
-  | "insufficient_evidence_seen";
+  | "insufficient_evidence_seen"
+  // 阶段 2 判断闭环
+  | "investigation_started"
+  | "judgment_saved"
+  | "judgment_change_type";
 
 export function track(
   event: TrackedEvent,

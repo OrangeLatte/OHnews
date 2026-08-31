@@ -15,6 +15,9 @@ export type EvidenceGap = components["schemas"]["EvidenceGap"];
 export type EvidenceSet = components["schemas"]["EvidenceSet"];
 export type CoverageSummary = components["schemas"]["CoverageSummary"];
 export type SubjectRef = components["schemas"]["SubjectRef"];
+// 阶段 2 判断闭环
+export type BeliefSnapshot = components["schemas"]["BeliefSnapshot"];
+export type BeliefCreate = components["schemas"]["BeliefCreate"];
 export type EvidenceBucket = "supporting" | "contradicting" | "context";
 
 export type EventRow = {
@@ -456,5 +459,13 @@ export const api = {
   changeEvidence: (changeId: string, bucket: EvidenceBucket) =>
     get<EvidenceCitation[]>(
       `/changes/${encodeURIComponent(changeId)}/evidence?bucket=${bucket}`
+    ),
+  // —— 阶段 2 判断闭环（类型真源 = OpenAPI 生成） ——
+  saveBelief: (body: BeliefCreate) => post<BeliefSnapshot>("/beliefs", body),
+  beliefsForChange: (changeId: string) =>
+    get<BeliefSnapshot[]>(`/beliefs?change_id=${encodeURIComponent(changeId)}`),
+  beliefsTimeline: (subjectId: string) =>
+    get<BeliefSnapshot[]>(
+      `/beliefs/timeline?subject_id=${encodeURIComponent(subjectId)}`
     ),
 };

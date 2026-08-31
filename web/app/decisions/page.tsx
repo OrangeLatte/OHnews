@@ -15,7 +15,64 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { api, type DecisionRow } from "@/lib/api";
+import { api, type BeliefSnapshot, type DecisionRow } from "@/lib/api";
+
+const BELIEF_STANCE_ZH: Record<BeliefSnapshot["stance"], string> = {
+  maintain: "维持原判",
+  adjust: "调整看法",
+  reverse: "反转看法",
+  uncertain: "存疑待查",
+};
+
+/** 阶段 2：认知时间线（BeliefSnapshot 跨变化序列，回答「我的看法如何演变」）。 */
+function BeliefTimeline({ subjectId }: { subjectId: string }) {
+  const [rows, setRows] = useState<BeliefSnapshot[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .beliefsTimeline(subjectId || "fed")
+      .then((r) => alive && setRows(r))
+      .catch(() => alive && setRows([]));
+    return () => {
+      alive = false;
+    };
+  }, [subjectId]);
+
+  if (rows === null) return <p className="text-sm text-muted-foreground">加载中…</p>;
+  if (rows.length === 0)
+    return (
+      <p className="text-sm text-muted-foreground">
+        暂无认知记录——在变化详情页保存判断后会出现在这里。
+      </p>
+    );
+  return (
+    <ol className="space-y-2">
+      {rows.map((b, i) => (
+        <li key={b.snapshot_id} className="text-sm">
+          <span className="font-mono text-xs text-muted-foreground">
+            {b.believed_at.replace("T", " ").slice(0, 16)}
+          </span>{" "}
+          · {BELIEF_STANCE_ZH[b.stance]} · 信心 {Math.round(b.confidence * 100)}%
+          {b.rationale && <span className="text-muted-foreground"> · {b.rationale}</span>}
+          {i > 0 && (
+            <span className="text-muted-foreground">
+              {" "}
+              （相对上一条：
+              {b.stance !== rows[i - 1].stance
+                ? `立场 ${BELIEF_STANCE_ZH[rows[i - 1].stance]}→${BELIEF_STANCE_ZH[b.stance]}`
+                : "立场不变"}
+              ）
+            </span>
+          )}
+          <div className="text-xs text-muted-foreground">
+            变化：{b.change_id}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 export default function DecisionsPage() {
   const [entityId, setEntityId] = useState("fed");
@@ -60,6 +117,15 @@ export default function DecisionsPage() {
       <h1 className="text-xl font-semibold">
         决策日志（记录判断 → 回填结果 = 个人资产 + 校准数据）
       </h1>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">认知时间线（实体：{entityId || "fed"}）</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <BeliefTimeline subjectId={entityId || "fed"} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
