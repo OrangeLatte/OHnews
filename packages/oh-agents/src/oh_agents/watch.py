@@ -102,3 +102,12 @@ class WatchStore:
             (now.isoformat(), json.dumps(summary, ensure_ascii=False), watch_id),
         )
         self._conn.commit()
+
+    def mark_reviewed(self, watch_id: str, *, now: datetime) -> bool:
+        """显式复核（阶段 3 Review Judgment）：仅推进 last_checked_at，不写 summary。"""
+        cur = self._conn.execute(
+            "UPDATE watches SET last_checked_at = ? WHERE watch_id = ?",
+            (now.isoformat(), watch_id),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
