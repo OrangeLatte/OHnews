@@ -1,5 +1,22 @@
 /** OH!News API 客户端（浏览器侧 fetch，经 next rewrites 代理到 oh-api） */
 
+/**
+ * 阶段 1-c 类型真源：产品契约类型从 FastAPI OpenAPI 生成（npm run generate:api），
+ * Pydantic 是唯一契约真源；本文件手写类型仅限旧端点，新增端点一律走 schema。
+ */
+import type { components } from "@/lib/api-schema";
+
+export type BriefingResponse = components["schemas"]["BriefingResponse"];
+export type DataFreshness = components["schemas"]["DataFreshness"];
+export type ChangeBrief = components["schemas"]["ChangeBrief"];
+export type ChangeDossier = components["schemas"]["ChangeDossier"];
+export type EvidenceCitation = components["schemas"]["EvidenceCitation"];
+export type EvidenceGap = components["schemas"]["EvidenceGap"];
+export type EvidenceSet = components["schemas"]["EvidenceSet"];
+export type CoverageSummary = components["schemas"]["CoverageSummary"];
+export type SubjectRef = components["schemas"]["SubjectRef"];
+export type EvidenceBucket = "supporting" | "contradicting" | "context";
+
 export type EventRow = {
   event_id: string;
   title: string;
@@ -431,4 +448,13 @@ export const api = {
   alertHits: (limit = 50) => get<AlertHit[]>(`/alerts/hits?limit=${limit}`),
   alertCheck: () =>
     post<{ triggered: number; hits: AlertHit[] }>("/alerts/check", {}),
+  // —— 阶段 1 黄金路径（类型真源 = OpenAPI 生成） ——
+  briefing: (days = 3, top = 5) =>
+    get<BriefingResponse>(`/briefing?days=${days}&top=${top}`),
+  changeDossier: (changeId: string) =>
+    get<ChangeDossier>(`/changes/${encodeURIComponent(changeId)}`),
+  changeEvidence: (changeId: string, bucket: EvidenceBucket) =>
+    get<EvidenceCitation[]>(
+      `/changes/${encodeURIComponent(changeId)}/evidence?bucket=${bucket}`
+    ),
 };

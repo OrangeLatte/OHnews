@@ -51,7 +51,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               叙事分歧 · 每日监测
             </p>
           </div>
-          <nav className="paper-rule flex items-center gap-5 pb-2">
+          <nav className="paper-rule flex flex-wrap items-center gap-x-5 gap-y-1.5 pb-2">
             {NAV.map((n) => (
               <Link
                 key={n.href}
@@ -67,7 +67,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               NDI = EPU 式条件变量，非收益预测器
             </span>
           </nav>
-          <div className="flex items-center gap-4 border-b border-foreground/10 py-1.5">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-foreground/10 py-1.5">
             <span className="paper-kicker !text-muted-foreground/60">TOOLS</span>
             {TOOLS.map((t) => (
               <Link
