@@ -619,14 +619,42 @@ def test_beliefs_validation(client: TestClient) -> None:
         },
     )
     assert bad.status_code == 422
-    assert client.post(
-        "/api/beliefs",
-        json={
-            "change_id": "sig-x",
-            "subject_id": "fed",
-            "stance": "maintain",
-            "confidence": 1.5,
-        },
-    ).status_code == 422
+    assert (
+        client.post(
+            "/api/beliefs",
+            json={
+                "change_id": "sig-x",
+                "subject_id": "fed",
+                "stance": "maintain",
+                "confidence": 1.5,
+            },
+        ).status_code
+        == 422
+    )
     empty = client.get("/api/beliefs/timeline", params={"subject_id": "nobody"}).json()
     assert empty == []
+
+
+def test_watch_update_and_review(client: TestClient) -> None:
+    """增量更新（只读）+ 显式复核（阶段 3）：查看 ≠ 复核。"""
+    w = client.post("/api/watches", json={"type": "entity", "query": "fed"}).json()
+    wid = w["watch_id"]
+    u = client.get(f"/api/watches/{wid}/update").json()
+    assert u["kind"] == "entity" and u["watch_id"] == wid
+    assert isinstance(u["has_changes"], bool) and "自" in u["summary"]
+    assert u["since"] is None  # 无复核/无判断 → 无基线（全量为新）
+    assert u["freshness"]["staleness"] in {"fresh", "aging", "stale"}
+    # topic：命中计数分支
+    t = client.post("/api/watches", json={"type": "topic", "query": "衰退,增长"}).json()
+    ut = client.get(f"/api/watches/{t['watch_id']}/update").json()
+    assert ut["kind"] == "topic" and ut["new_articles"] >= 1
+    # question：诚实边界
+    q = client.post("/api/watches", json={"type": "question", "query": "事件"}).json()
+    uq = client.get(f"/api/watches/{q['watch_id']}/update").json()
+    assert uq["kind"] == "question" and "暂不支持" in uq["summary"]
+    # 复核：推进 last_checked_at；404
+    rv = client.post(f"/api/watches/{wid}/review")
+    assert rv.status_code == 200 and rv.json()["watch_id"] == wid
+    u2 = client.get(f"/api/watches/{wid}/update").json()
+    assert u2["since"] is not None  # 复核后出现基线
+    assert client.post("/api/watches/NOPE/review").status_code == 404

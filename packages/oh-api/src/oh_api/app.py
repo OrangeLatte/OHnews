@@ -34,6 +34,7 @@ from oh_agents.orchestrator import (
     run_intent,
 )
 from oh_agents.research import run_research
+from oh_agents.watch_update import compute_watch_update
 from oh_api.briefing import build_briefing, build_dossier
 from oh_contracts.belief import BeliefCreate, BeliefSnapshot
 from oh_contracts.briefing import BriefingResponse, ChangeDossier, EvidenceCitation
@@ -41,6 +42,7 @@ from oh_contracts.enums import SourceTier
 from oh_contracts.intents import Intent
 from oh_contracts.schemas import NDIPoint
 from oh_contracts.text import strip_html
+from oh_contracts.watching import WatchReview, WatchUpdate
 from oh_pipeline.anatomy import cluster_distributions, cluster_pairwise, entity_opposition
 from oh_pipeline.detect import detect_signals
 from oh_pipeline.entities import DEFAULT_ENTITIES, EntityRegistry
@@ -589,6 +591,55 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         if w is None:
             raise HTTPException(404, "watch not found")
         return await _refresh_one(w, min_per_source, _now())
+
+    def _topic_hits(query: str, now: datetime) -> int:
+        """topic 订阅命中计数（7 天窗标题/正文，与 refresh 快照同语义）。"""
+        terms = [t.strip().lower() for t in query.split(",") if t.strip()]
+        if not terms:
+            return 0
+        cutoff = now - timedelta(days=7)
+        n = 0
+        for rec in _bronze().iter_records():
+            pub = rec.published_at or rec.fetched_at
+            if pub < cutoff:
+                continue
+            text = (
+                str(rec.normalized.get("title", "")) + "\n" + str(rec.normalized.get("body", ""))
+            ).lower()
+            if any(t in text for t in terms):
+                n += 1
+        return n
+
+    @app.get("/api/watches/{watch_id}/update", response_model=WatchUpdate)
+    def watch_update(watch_id: str) -> WatchUpdate:
+        """增量更新预览（阶段 3）：只读计算，查看 ≠ 复核。
+
+        since = max(上次复核, 该主体最新判断时间)；写回仅由显式 review 触发。
+        """
+        w = _watch_store().get(watch_id)
+        if w is None:
+            raise HTTPException(404, "watch not found")
+        now = _now()
+        briefing = build_briefing(
+            bronze_iter=_bronze().iter_records(),
+            store=_store(),
+            registry=_registry(),
+            tier_map=_tier_map(),
+            now=now,
+            days=3,
+            top=30,
+        )
+        beliefs = _beliefs() if w.type == "entity" else None
+        topic_hits = _topic_hits(w.query, now) if w.type == "topic" else None
+        return compute_watch_update(w, briefing, beliefs=beliefs, now=now, topic_hits=topic_hits)
+
+    @app.post("/api/watches/{watch_id}/review", response_model=WatchReview)
+    def watch_review(watch_id: str) -> WatchReview:
+        """标记已复核（阶段 3）：仅推进 last_checked_at，不写摘要。"""
+        now = _now()
+        if not _watch_store().mark_reviewed(watch_id, now=now):
+            raise HTTPException(404, "watch not found")
+        return WatchReview(watch_id=watch_id, reviewed_at=now.isoformat())
 
     @app.get("/api/library")
     def library_list(item_type: str | None = None) -> dict[str, Any]:
