@@ -226,6 +226,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/watches/{watch_id}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Watch Update
+         * @description 增量更新预览（阶段 3）：只读计算，查看 ≠ 复核。
+         *
+         *     since = max(上次复核, 该主体最新判断时间)；写回仅由显式 review 触发。
+         */
+        get: operations["watch_update_api_watches__watch_id__update_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/watches/{watch_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Watch Review
+         * @description 标记已复核（阶段 3）：仅推进 last_checked_at，不写摘要。
+         */
+        post: operations["watch_review_api_watches__watch_id__review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library": {
         parameters: {
             query?: never;
@@ -1330,6 +1372,61 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /**
+         * WatchReview
+         * @description 复核确认回执：仅用户显式动作写入（Review Judgment）。
+         */
+        WatchReview: {
+            /** Watch Id */
+            watch_id: string;
+            /** Reviewed At */
+            reviewed_at: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
+         * WatchUpdate
+         * @description 单条 watch 的增量视图（阶段 3：自上次认知快照以来的变化）。
+         *
+         *     - entity 类型：new_changes 携带新 ChangeBrief 队列（可下钻 /changes/{id}）；
+         *     - topic 类型：new_articles 给出窗口内命中计数；
+         *     - question 类型：v1 不做增量计算，note 说明（诚实边界）。
+         */
+        WatchUpdate: {
+            /** Watch Id */
+            watch_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "entity" | "topic" | "question";
+            /** Query */
+            query: string;
+            /** Since */
+            since?: string | null;
+            /** Has Changes */
+            has_changes: boolean;
+            /** Summary */
+            summary: string;
+            /**
+             * Review Hint
+             * @default
+             */
+            review_hint: string;
+            freshness?: components["schemas"]["DataFreshness"] | null;
+            /** New Changes */
+            new_changes?: components["schemas"]["ChangeBrief"][];
+            /** New Articles */
+            new_articles?: number | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -1736,6 +1833,68 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    watch_update_api_watches__watch_id__update_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                watch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchUpdate"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    watch_review_api_watches__watch_id__review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                watch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchReview"];
                 };
             };
             /** @description Validation Error */

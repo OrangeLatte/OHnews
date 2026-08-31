@@ -372,6 +372,10 @@ export const api = {
   libraryRemove: (id: string) => del<{ removed: string }>(`/library/${id}`),
   watchRefresh: (id: string, minPerSource = 10) =>
     post<WatchRow>(`/watches/${id}/refresh?min_per_source=${minPerSource}`, {}),
+  watchUpdate: (id: string) =>
+    get<components["schemas"]["WatchUpdate"]>(`/watches/${encodeURIComponent(id)}/update`),
+  watchReview: (id: string) =>
+    post<components["schemas"]["WatchReview"]>(`/watches/${encodeURIComponent(id)}/review`, {}),
   eventSpectrum: (id: string) =>
     get<SpectrumDoc[]>(`/events/${encodeURIComponent(id)}/spectrum`),
   eventAnatomy: (id: string) =>

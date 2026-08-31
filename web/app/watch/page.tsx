@@ -16,6 +16,9 @@ import { watchStatus } from "@/lib/insight";
 import SourcesManager from "@/app/watch/sources-manager";
 
 import { api, type SignalRow, type WatchRow } from "@/lib/api";
+import { track } from "@/lib/track";
+
+type WatchUpdateRow = Awaited<ReturnType<typeof api.watchUpdate>>;
 
 const TYPE_META: Record<string, { label: string; hint: string; color: string }> = {
   entity: { label: "实体", hint: "实体 id（如 fed / ecb / trump）", color: "#58a6ff" },
@@ -69,6 +72,7 @@ export default function WatchPage() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [updates, setUpdates] = useState<Record<string, WatchUpdateRow | null>>({});
 
   const load = useCallback(() => {
     api.watches().then((r) => setWatches(r.watches)).catch((e) => setError(String(e)));
@@ -80,6 +84,7 @@ export default function WatchPage() {
     setBusy("add");
     try {
       await api.watchAdd(type, query);
+      track("watch_created", { objectId: query.trim(), fromPage: "/watch" });
       setQuery("");
       load();
     } catch (e) {
@@ -93,6 +98,37 @@ export default function WatchPage() {
     setBusy(id);
     try {
       await api.watchRefresh(id);
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // 阶段 3：查看更新 = 只读计算；复核 = 用户显式动作才推进基线
+  async function toggleUpdate(id: string) {
+    if (updates[id]) {
+      setUpdates((m) => ({ ...m, [id]: null }));
+      return;
+    }
+    setBusy(id);
+    try {
+      const u = await api.watchUpdate(id);
+      setUpdates((m) => ({ ...m, [id]: u }));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function review(id: string) {
+    setBusy(id);
+    try {
+      await api.watchReview(id);
+      track("watch_update_reviewed", { objectId: id, fromPage: "/watch" });
+      setUpdates((m) => ({ ...m, [id]: null }));
       load();
     } catch (e) {
       setError(String(e));
@@ -199,6 +235,14 @@ export default function WatchPage() {
                       size="sm"
                       variant="outline"
                       disabled={busy === w.watch_id}
+                      onClick={() => toggleUpdate(w.watch_id)}
+                    >
+                      {updates[w.watch_id] ? "收起" : busy === w.watch_id ? "…" : "查看更新"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy === w.watch_id}
                       onClick={() => refresh(w.watch_id)}
                     >
                       {busy === w.watch_id ? "…" : "刷新"}
@@ -226,6 +270,51 @@ export default function WatchPage() {
                       </li>
                     ))}
                   </ul>
+                  {updates[w.watch_id] && (
+                    <div className="mt-3 rounded border border-dashed border-border bg-muted/30 px-3 py-3">
+                      <p className="font-paper text-sm text-foreground">
+                        {updates[w.watch_id]!.summary}
+                      </p>
+                      {updates[w.watch_id]!.review_hint && (
+                        <p className="mt-1 text-xs" style={{ color: "#b08d3f" }}>
+                          ⚠ {updates[w.watch_id]!.review_hint}
+                        </p>
+                      )}
+                      {updates[w.watch_id]!.note && (
+                        <p className="mt-1 text-xs text-muted-foreground">{updates[w.watch_id]!.note}</p>
+                      )}
+                      {(updates[w.watch_id]!.new_changes ?? []).length > 0 && (
+                        <ul className="mt-2 space-y-1">
+                          {(updates[w.watch_id]!.new_changes ?? []).map((c) => (
+                            <li key={c.change_id} className="text-sm">
+                              <Link href={`/changes/${c.change_id}`} className="hover:underline">
+                                {c.headline}
+                              </Link>
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                {c.strength_word === "strong"
+                                  ? "显著变化"
+                                  : c.strength_word === "notable"
+                                    ? "值得关注"
+                                    : c.strength_word === "minor"
+                                      ? "轻微迹象"
+                                      : "证据不足"}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="mt-3 flex items-center gap-2">
+                        <Button size="sm" variant="outline" onClick={() => review(w.watch_id)}>
+                          标记已复核
+                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                          {updates[w.watch_id]!.since
+                            ? `基线：${updates[w.watch_id]!.since!.replace("T", " ").slice(0, 16)}`
+                            : "无基线——全部视为新变化"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
                 );
