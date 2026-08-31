@@ -55,7 +55,11 @@ class BronzeRecord(_Strict):
 
 
 class EventRecord(_Strict):
-    """Silver 层事件（as_of 为 PIT 锚点：一切下游指标只用 as_of 之前信息）。"""
+    """Silver 层事件（as_of 为 PIT 锚点：一切下游指标只用 as_of 之前信息）。
+
+    cluster_key（M3-S2）：同日跨实体语义聚类簇键 evt-{hash8}；同簇多行共享，
+    行级 event_id 保留 ev-{entity}-{date} 作为簇成员 id（内容寻址，重跑幂等）。
+    """
 
     event_id: str
     title: str
@@ -63,6 +67,7 @@ class EventRecord(_Strict):
     entities: list[str] = Field(default_factory=list)
     as_of: datetime
     first_seen: datetime | None = None
+    cluster_key: str | None = None
 
 
 class StanceRow(_Strict):
