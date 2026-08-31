@@ -23,12 +23,13 @@ from oh_contracts.schemas import EventRecord, NDIPoint, StanceRow
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS events (
-    event_id   TEXT PRIMARY KEY,
-    title      TEXT NOT NULL,
-    summary    TEXT NOT NULL DEFAULT '',
-    entities   TEXT NOT NULL DEFAULT '[]',
-    as_of      TEXT NOT NULL,
-    first_seen TEXT
+    event_id    TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    summary     TEXT NOT NULL DEFAULT '',
+    entities    TEXT NOT NULL DEFAULT '[]',
+    as_of       TEXT NOT NULL,
+    first_seen  TEXT,
+    cluster_key TEXT
 );
 
 CREATE TABLE IF NOT EXISTS stances (
@@ -115,6 +116,15 @@ def _migrate_ndi_low_confidence(conn: Connection) -> None:
     conn.commit()
 
 
+def _migrate_events_cluster_key(conn: Connection) -> None:
+    """events 加 cluster_key 列（M3-S2 语义聚类，幂等 ALTER）。"""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
+    if not cols or "cluster_key" in cols:
+        return
+    conn.execute("ALTER TABLE events ADD COLUMN cluster_key TEXT")
+    conn.commit()
+
+
 def _iso(dt: datetime) -> str:
     return dt.isoformat()
 
@@ -142,15 +152,18 @@ class SqliteStore:
         self._conn.commit()
         _migrate_ndi_language(self._conn)
         _migrate_ndi_low_confidence(self._conn)
+        _migrate_events_cluster_key(self._conn)
 
     # -- Silver -------------------------------------------------------------
 
     def upsert_event(self, event: EventRecord) -> None:
         self._conn.execute(
-            "INSERT INTO events (event_id, title, summary, entities, as_of, first_seen) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
+            "INSERT INTO events "
+            "(event_id, title, summary, entities, as_of, first_seen, cluster_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(event_id) DO UPDATE SET title = excluded.title, "
-            "summary = excluded.summary, entities = excluded.entities, as_of = excluded.as_of",
+            "summary = excluded.summary, entities = excluded.entities, as_of = excluded.as_of, "
+            "cluster_key = excluded.cluster_key",
             (
                 event.event_id,
                 event.title,
@@ -158,6 +171,7 @@ class SqliteStore:
                 json.dumps(event.entities, ensure_ascii=False),
                 _iso(event.as_of),
                 _iso(event.first_seen) if event.first_seen else None,
+                event.cluster_key,
             ),
         )
         self._conn.commit()
