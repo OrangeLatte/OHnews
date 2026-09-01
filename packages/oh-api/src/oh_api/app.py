@@ -37,6 +37,8 @@ from oh_agents.research import run_research
 from oh_agents.watch_update import compute_watch_update
 from oh_api.briefing import build_briefing, build_dossier
 from oh_api.hourglass import build_hourglass, write_flip_anchor
+from oh_api.metrics import build_router as build_metrics_router
+from oh_api.search import build_router as build_search_router
 from oh_contracts.belief import BeliefCreate, BeliefSnapshot
 from oh_contracts.briefing import BriefingResponse, ChangeDossier, EvidenceCitation
 from oh_contracts.enums import SourceTier
@@ -173,6 +175,10 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
         db = paths.root / "belief.sqlite"
         return _lazy("beliefs", lambda: BeliefStore(db))
+
+    # 子路由（全局搜索 / 埋点指标）——模块化 APIRouter，主线统一挂载
+    app.include_router(build_search_router(lambda: _bronze().iter_records()))
+    app.include_router(build_metrics_router(lambda: _product_events()))
 
     # ---- 运行时 API keys（UI 配置 → data/runtime_keys.json，gitignored；env 优先）----
     def _runtime_keys_path() -> Path:

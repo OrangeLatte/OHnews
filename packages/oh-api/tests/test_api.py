@@ -227,7 +227,8 @@ def test_dashboard_pages(client: TestClient) -> None:
 def test_sse_route_registered(client: TestClient) -> None:
     """SSE 流测试改为路由级：长驻流在 TestClient 中不消费（keepalive 会挂）。
     实际连通性由 scripts/dev/serve.py 手动冒烟。"""
-    paths = [r.path for r in client.app.routes]  # type: ignore[attr-defined]
+    # include_router 会产生无 path 属性的 _IncludedRouter 项，过滤后再取
+    paths = [r.path for r in client.app.routes if hasattr(r, "path")]  # type: ignore[attr-defined]
     assert "/api/stream" in paths
 
 
