@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type LogFile } from "@/lib/api";
 import KeySetup from "@/app/investigate/research/key-setup";
+import MetricsSection from "@/app/settings/developer/metrics-section";
 import SourcesManager from "@/app/watch/sources-manager";
 
 export default function DeveloperSettingsPage() {
@@ -20,6 +21,7 @@ export default function DeveloperSettingsPage() {
       </div>
       <KeySetup />
       <SourcesManager />
+      <MetricsSection />
       <DevMonitorSection />
     </div>
   );

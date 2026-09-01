@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { FilterProvider } from "@/components/filters/filter-context";
+import { SearchBar } from "@/components/search/search-bar";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -53,6 +54,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               </Link>
             ))}
             <span className="ml-auto flex items-center gap-4">
+              <SearchBar />
               <span className="paper-kicker hidden md:inline !text-muted-foreground/70">
                 NDI = 叙事分歧指数，非预测器
               </span>
