@@ -345,3 +345,18 @@
     transition: none;
   }
 }
+
+/* ── Narrative Change Field（T8）：报纸风浅色 ── */
+.cf-section { border-top: 1px solid var(--border); padding: 1.25rem 0; }
+.cf-kicker { font-size: 0.7rem; letter-spacing: 0.14em; color: var(--muted-foreground); margin-bottom: 0.35rem; }
+.cf-note { font-size: 0.8rem; color: var(--muted-foreground); margin-bottom: 0.75rem; }
+.cf-body { display: grid; gap: 1rem; }
+@media (min-width: 1024px) { .cf-body { grid-template-columns: 2fr 1fr; } }
+.cf-side-title { font-family: var(--font-newspaper); font-size: 0.85rem; font-weight: 600; margin-bottom: 0.5rem; }
+.cf-change { border-bottom: 1px dotted var(--border); padding: 0.5rem 0; }
+.cf-change-head { text-align: left; width: 100%; font-family: var(--font-newspaper); font-size: 0.88rem; cursor: pointer; }
+.cf-change-head:hover { color: var(--color-signal-divergence); }
+.cf-change-body { padding: 0.4rem 0 0.2rem; font-size: 0.8rem; color: var(--muted-foreground); display: grid; gap: 0.35rem; }
+.cf-why { color: var(--foreground); }
+.cf-link { color: var(--color-signal-divergence); font-size: 0.8rem; }
+@media (prefers-reduced-motion: reduce) { .cf-change-head { transition: none; } }

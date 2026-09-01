@@ -379,6 +379,8 @@ export const api = {
     post<components["schemas"]["WatchReview"]>(`/watches/${encodeURIComponent(id)}/review`, {}),
   home: (days = 7, top = 5) =>
     get<components["schemas"]["HomePayload"]>(`/home?days=${days}&top=${top}`),
+  changeField: (days = 30) =>
+    get<components["schemas"]["ChangeFieldPayload"]>(`/change-field?days=${days}`),
   changeLandscape: (days = 7, top = 5) =>
     get<components["schemas"]["ChangeLandscape"]>(`/change-landscape?days=${days}&top=${top}`),
   eventSpectrum: (id: string) =>

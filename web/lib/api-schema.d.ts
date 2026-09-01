@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Search
-         * @description 子串检索 bronze 文章；limit 超界与缺失 q 由 FastAPI 校验 422。
+         * @description 分词 AND 检索（事件前置 + 文章）；limit 超界与缺失 q 由 FastAPI 校验 422。
          */
         get: operations["search_api_search_get"];
         put?: never;
@@ -102,6 +102,26 @@ export interface paths {
          *     changes 为空 = 「今天没有值得看的变化」显式状态（硬验收 7）。
          */
         get: operations["briefing_api_briefing_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/change-field": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Change Field
+         * @description 叙事场时序（T8）：每日×泳道×框架计数 + 合格变化点（前端只渲染）。
+         */
+        get: operations["change_field_api_change_field_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1292,6 +1312,36 @@ export interface components {
             technical?: components["schemas"]["TechnicalAnnex"] | null;
         };
         /**
+         * ChangeFieldPayload
+         * @description 叙事场时序数据（T8）：前端只渲染不拼图。
+         *
+         *     series 按日期升序；changes 为过 Hero Gate 的合格变化（右栏展开入口）；
+         *     lane 键 = tier 簇（official/press/social/unknown），值 = 框架→文章数。
+         */
+        ChangeFieldPayload: {
+            /** Days */
+            days: number;
+            /** Series */
+            series?: components["schemas"]["ChangeFieldPoint"][];
+            /** Changes */
+            changes?: components["schemas"]["QualifiedChange"][];
+            freshness: components["schemas"]["DataFreshness"];
+        };
+        /**
+         * ChangeFieldPoint
+         * @description Narrative Change Field 单日数据点：泳道(tier 簇)×框架计数矩阵。
+         */
+        ChangeFieldPoint: {
+            /** Date */
+            date: string;
+            /** Lanes */
+            lanes?: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+        };
+        /**
          * ChangeLandscape
          * @description 沙漏场景聚合（/api/change_landscape 唯一出口）。
          */
@@ -1874,6 +1924,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BriefingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_field_api_change_field_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeFieldPayload"];
                 };
             };
             /** @description Validation Error */

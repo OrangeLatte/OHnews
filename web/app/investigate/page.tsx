@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
+import { ChangeFieldPanel } from "@/components/change-field/change-field";
 import { api } from "@/lib/api";
 import { divergenceLevel } from "@/lib/insight";
 
@@ -159,6 +160,7 @@ export default function EventsPage() {
           </div>
         )}
       </section>
+      <ChangeFieldPanel days={30} />
 
       {/* ③ 证据工作区：事件列表（调查优先级=信源数降序） */}
       <section aria-label="证据工作区">
