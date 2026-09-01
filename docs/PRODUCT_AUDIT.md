@@ -136,3 +136,29 @@ OH!News 为**持续跟踪宏观/市场信息的个人研究者**服务：把「�
 | 11 降级可用 | API 失败/LLM 未配/大量 abstain 的真实条件（本环境即真实条件） |
 | 13 390px | nav 折叠 + Briefing 单列（走查已复现溢出） |
 | 14 埋点 | 7 主路径事件（§阶段 1-e） |
+
+## 7. 阶段 1.5 执行结果（IA Surgery + Change Overview）
+
+### 7.1 IA 手术（ec2d2cb）
+- 导航 6+6 → **4 入口**：01 NOW（Briefing）/ 02 INVESTIGATE（调查工作台+Research+Patrol+Timeline）/ 03 WATCH（订阅+预警嵌入）/ 04 MEMORY（决策日志+BeliefTimeline+档案库）；工具区隐藏至 `/settings/developer`（API Keys+信息源+dev 监控）
+- 15 条 redirect 全部旧地址兜底；/events/[id] 详情保留
+
+### 7.2 质量门与信任修复（23b5bc6 + 984faf2）
+- `_relevant_quote`：引文 HTML 清洗 + 实体相关性切取（修复 us_congress 卡混入日元干预引文）
+- coverage 一致性：从分桶引文实算（杜绝「独立源 0 却有三桶」信任矛盾）
+- **Hero Eligibility Gate**（后端）：≥2 独立源 / 实体相关性 / 引文已清洗三道拦截；`gate_insufficient_coverage` 第六警告码显式暴露
+
+### 7.3 Change Overview 变化总览（b49f14b→f3f6707）
+- **HourglassScene 契约**（后端聚合，前端不拼图）：两窗/来源流/叙事流/合格变化/质量警告六码；`/api/hourglass` + `/api/hourglass/flip`（翻转锚点=当前窗设为新基线）
+- **前端**：报纸风浅色「变化总览」——两窗编辑式对比 + 框架迁移哑铃图（冲突 74%→16%、收益 9%→57%）+ 点击聚焦摘要 + 窗口 3/7/14 + 以此为新基线；覆盖不足显式弃权区
+
+### 7.4 决策日志（1.5 段新增）
+1. **沙漏视觉否决**：深墨舞台+暖橙流光违反全站浅色报纸风 → 撤造型隐喻与品牌，改 Change Overview；HourglassScene 数据契约保留（后端资产）
+2. **PixiJS/WebGL 增强 DEFER**：SVG 哑铃图已满足表达需求，避免无谓复杂度
+3. **Hero Gate 放后端**：质量门是数据语义不是 UI 装饰，前端只渲染 warnings
+4. **翻转锚点用 JSON 文件**而非新表：单值状态，可替换性优先
+
+### 7.5 验收状态（1.5-g）
+- 十秒四问 ✓：什么变了（H1+变化卡+总览腰部）/ 何时变（数据截至+窗口）/ 谁叙事变了（框架迁移哑铃）/ 去哪验证（看证据→Dossier→原文 ≤3 步）
+- 桌面 1440 + 390px（scrollW=375）✓；console 0 errors ✓
+- 后端 383 passed；tsc/eslint 0
