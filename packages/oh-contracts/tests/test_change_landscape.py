@@ -59,6 +59,37 @@ def test_narrative_share_bounds_enforced() -> None:
         NarrativeStream(frame="gain", label="收益", share_current=1.5)
 
 
+def test_narrative_adjusted_share_defaults_and_bounds() -> None:
+    """T2 双口径：adjusted 默认 None（cohort 不可算），可算时同受 [0,1] 约束。"""
+    s = NarrativeStream(frame="gain", label="收益", share_baseline=0.4, share_current=0.6)
+    assert s.adjusted_share_baseline is None
+    assert s.adjusted_share_current is None
+    assert s.n_cohort_sources == 0
+    adj = NarrativeStream(
+        frame="gain",
+        label="收益",
+        share_baseline=0.4,
+        share_current=0.6,
+        adjusted_share_baseline=0.45,
+        adjusted_share_current=0.55,
+        n_cohort_sources=9,
+    )
+    assert adj.adjusted_share_current == 0.55
+    assert adj.n_cohort_sources == 9
+    with pytest.raises(ValidationError):
+        NarrativeStream(
+            frame="gain",
+            label="收益",
+            share_baseline=0.4,
+            share_current=0.6,
+            adjusted_share_current=1.5,
+        )
+
+
+def test_source_composition_shift_warning_code() -> None:
+    QualityWarning(code="source_composition_shift", message="两窗来源构成不同，解读以校正份额为准")
+
+
 def test_frame_is_closed_vocabulary() -> None:
     with pytest.raises(ValidationError):
         NarrativeStream(frame="bullish", label="看涨")

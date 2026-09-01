@@ -42,7 +42,13 @@ class SourceStream(_StrictBase):
 
 
 class NarrativeStream(_StrictBase):
-    """叙事流带：颜色=框架，share_* ∈ [0,1] 为该窗内框架份额。"""
+    """叙事流带：颜色=框架，share_* ∈ [0,1] 为该窗内框架份额。
+
+    T2 可比性校正（双口径）：share_* 为未校正原始份额；adjusted_* 为
+    共同来源 cohort（两窗都出现的源）内计算的校正份额——剔除来源结构
+    变化的干扰。cohort 源 <2 时 adjusted_* 为 None（不可算，诚实缺失，
+    禁止用 raw 冒充校正值）。
+    """
 
     frame: FrameKey
     label: str
@@ -52,6 +58,9 @@ class NarrativeStream(_StrictBase):
     n_current: int = 0
     cluster_split_baseline: dict[str, float] = Field(default_factory=dict)
     cluster_split_current: dict[str, float] = Field(default_factory=dict)
+    adjusted_share_baseline: float | None = Field(default=None, ge=0, le=1)
+    adjusted_share_current: float | None = Field(default=None, ge=0, le=1)
+    n_cohort_sources: int = 0
 
 
 class QualifiedChange(_StrictBase):
@@ -78,6 +87,7 @@ class QualityWarning(_StrictBase):
         "stale_data",
         "no_qualified_changes",
         "gate_insufficient_coverage",
+        "source_composition_shift",
     ]
     message: str = Field(min_length=4)
 
