@@ -16,10 +16,42 @@ type EventRow = {
   n_sources: number;
 };
 
+type QualifiedChange = {
+  change_id: string;
+  kind: string;
+  headline: string;
+  what: string;
+  why_now: string;
+  strength_word: string;
+  urgency: string;
+  subjects: string[];
+};
+
+const KIND_ZH: Record<string, string> = {
+  attention_spike: "注意力聚集",
+  narrative_shift: "叙事转变",
+  divergence_rise: "分歧升高",
+  expectation_gap: "预期错位",
+};
+
+const STRENGTH_ZH: Record<string, string> = {
+  strong: "显著变化",
+  notable: "值得关注",
+  minor: "轻微迹象",
+  insufficient: "证据不足",
+};
+
+/**
+ * 调查工作台（T6 任务流重组）：
+ * 当前问题 → 高质量变化（过 Hero Gate）→ 证据工作区 → 用户判断。
+ * v1：问题=本地筛选焦点；判断=MEMORY 时间线入口（ BeliefTimeline 在 /memory）。
+ */
 export default function EventsPage() {
   const [events, setEvents] = useState<EventRow[] | null>(null);
+  const [changes, setChanges] = useState<QualifiedChange[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  const [openChange, setOpenChange] = useState<string | null>(null);
 
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search).get("q");
@@ -30,70 +62,153 @@ export default function EventsPage() {
         if (qs) setQ(qs);
       })
       .catch((err) => setError(String(err)));
+    api
+      .changeLandscape(7, 5)
+      .then((s) =>
+        setChanges((s.qualified_changes ?? []).map((c) => ({ ...c, subjects: c.subjects ?? [] }))),
+      )
+      .catch(() => setChanges([])); // 高质量变化加载失败不阻塞事件区
   }, []);
 
-  if (error) return <p className="text-destructive">加载失败：{error}</p>;
-  if (!events) return <p className="text-sm text-muted-foreground">加载事件中…</p>;
-
   const ql = q.trim().toLowerCase();
-  const filtered = ql
-    ? events.filter(
-        (e) =>
-          e.title.toLowerCase().includes(ql) ||
-          e.entities.some((x) => x.toLowerCase().includes(ql)),
-      )
-    : events;
+  const filtered = events
+    ? ql
+      ? events.filter(
+          (e) =>
+            e.title.toLowerCase().includes(ql) ||
+            e.entities.some((x) => x.toLowerCase().includes(ql)),
+        )
+      : [...events].sort((a, b) => b.n_sources - a.n_sources) // 调查优先级=信源数
+    : [];
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-8">
       <header>
         <p className="paper-kicker">02 / INVESTIGATE</p>
         <h1 className="font-paper mt-1 text-3xl tracking-tight">INVESTIGATE · 调查工作台</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          搜索与探索事件：按信源数与分歧程度排优先级。深度工具：研究工作台 /investigate/research、情报巡逻
-          /investigate/patrol、叙事时间轴 /investigate/timeline。 发生了什么 → 为什么重要 → 谁在分歧 → 证据在哪。
+          从值得验证的变化出发，回到证据，形成自己的判断。
+          深度工具：研究工作台 /investigate/research、情报巡逻 /investigate/patrol、叙事时间轴
+          /investigate/timeline。
         </p>
       </header>
 
-      <input
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="按实体或标题筛选（如 fed / tariff）"
-        className="w-full max-w-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary"
-      />
+      {/* ① 当前问题：调查焦点 */}
+      <section aria-label="当前问题">
+        <p className="paper-kicker mb-2">① 当前问题</p>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="你正在调查什么？（按实体或标题过滤下方事件，如 fed / tariff）"
+          className="w-full max-w-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary"
+        />
+        {ql && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            调查焦点「{q}」——下方证据工作区已按此过滤。
+          </p>
+        )}
+      </section>
 
-      {filtered.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          {ql ? `没有匹配「${q}」的事件。` : "近 30 天无事件（信息量不足时系统选择弃权而非硬凑）。"}
-        </p>
-      ) : (
-        <div className="flex flex-col">
-          {filtered.map((e) => {
-            const lv = divergenceLevel(e.ndi);
-            return (
-              <Link
-                key={e.event_id}
-                href={`/events/${e.event_id}`}
-                className="flex items-baseline gap-4 border-b border-border/60 py-3 hover:bg-muted/30"
-              >
-                <span className="font-mono text-xs text-muted-foreground">
-                  {e.as_of.slice(0, 10)}
-                </span>
-                <span className="flex-1 truncate font-paper text-base">{e.title}</span>
-                <span className="font-mono text-[11px] text-muted-foreground">
-                  {e.n_sources} 源
-                </span>
-                <span
-                  className="w-36 text-right text-xs font-medium"
-                  style={{ color: lv.color }}
+      {/* ② 高质量变化：过 Hero Gate 的变化队列 */}
+      <section aria-label="高质量变化">
+        <p className="paper-kicker mb-2">② 高质量变化（已过覆盖质量门）</p>
+        {changes === null ? (
+          <p className="text-sm text-muted-foreground">加载中…</p>
+        ) : changes.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            当前窗口没有通过质量门的变化——证据还不够说话时，系统选择弃权而非硬凑。
+          </p>
+        ) : (
+          <div className="flex flex-col">
+            {changes.map((c) => {
+              const open = openChange === c.change_id;
+              return (
+                <div key={c.change_id} className="border-b border-border/60 py-3">
+                  <button
+                    type="button"
+                    className="flex w-full items-baseline gap-3 text-left"
+                    onClick={() => setOpenChange(open ? null : c.change_id)}
+                  >
+                    <span className="shrink-0 border border-border px-1.5 py-0.5 text-[11px]">
+                      {KIND_ZH[c.kind] ?? c.kind}
+                    </span>
+                    <span className="flex-1 font-paper text-base">{c.headline}</span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground">
+                      {STRENGTH_ZH[c.strength_word] ?? c.strength_word}
+                    </span>
+                  </button>
+                  {open && (
+                    <div className="mt-2 ml-1 flex flex-col gap-1 border-l-2 border-primary/40 pl-3">
+                      <p className="text-sm">{c.what}</p>
+                      <p className="text-sm text-muted-foreground">为什么是现在：{c.why_now}</p>
+                      {c.subjects.length > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          涉及：{c.subjects.join("、")}
+                        </p>
+                      )}
+                      <p className="mt-1 text-xs">
+                        <Link href={`/changes/${c.change_id}`} className="text-primary underline">
+                          打开证据链（支持 / 反对 / 缺失）→
+                        </Link>
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* ③ 证据工作区：事件列表（调查优先级=信源数降序） */}
+      <section aria-label="证据工作区">
+        <p className="paper-kicker mb-2">③ 证据工作区（事件 × 来源 × 分歧）</p>
+        {error && <p className="text-destructive">加载失败：{error}</p>}
+        {!events && !error && <p className="text-sm text-muted-foreground">加载事件中…</p>}
+        {events && filtered.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            {ql ? `没有匹配「${q}」的事件。` : "近 30 天无事件（信息量不足时系统选择弃权而非硬凑）。"}
+          </p>
+        )}
+        {events && filtered.length > 0 && (
+          <div className="flex flex-col">
+            {filtered.map((e) => {
+              const lv = divergenceLevel(e.ndi);
+              return (
+                <Link
+                  key={e.event_id}
+                  href={`/events/${e.event_id}`}
+                  className="flex items-baseline gap-4 border-b border-border/60 py-3 hover:bg-muted/30"
                 >
-                  {lv.zh}
-                </span>
-              </Link>
-            );
-          })}
-        </div>
-      )}
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {e.as_of.slice(0, 10)}
+                  </span>
+                  <span className="flex-1 truncate font-paper text-base">{e.title}</span>
+                  <span className="font-mono text-[11px] text-muted-foreground">
+                    {e.n_sources} 源
+                  </span>
+                  <span className="w-36 text-right text-xs font-medium" style={{ color: lv.color }}>
+                    {lv.zh}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* ④ 用户判断：认知档案入口 */}
+      <section aria-label="用户判断">
+        <p className="paper-kicker mb-2">④ 你的判断</p>
+        <p className="text-sm text-muted-foreground">
+          在任一变化的证据链页面底部保存判断（维持 / 调整 / 反转 / 不确定）。
+          历史判断与变化轨迹在{" "}
+          <Link href="/memory" className="text-primary underline">
+            MEMORY · 认知档案
+          </Link>{" "}
+          查看。你的判断只属于你——系统不会改写它。
+        </p>
+      </section>
     </div>
   );
 }
