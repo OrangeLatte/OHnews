@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import React from "react";
 
-import { ChatPanel } from "@/app/chat/page";
-import KeySetup from "@/app/agent/key-setup";
-import { IntentPanel } from "@/app/agent/intent-panel";
+import { ChatPanel } from "@/app/investigate/research/chat-panel";
+import KeySetup from "@/app/investigate/research/key-setup";
+import { IntentPanel } from "@/app/investigate/research/intent-panel";
 import type { AgentInvokeResponse } from "@/lib/api";
 import { api } from "@/lib/api";
 
@@ -163,10 +163,10 @@ function StructuredResearch({
           <div>
             <p className="paper-kicker">Next investigation</p>
             <div className="flex flex-wrap gap-2 text-xs">
-              <Link className="text-primary hover:underline" href="/events">
+              <Link className="text-primary hover:underline" href="/investigate">
                 浏览事件 →
               </Link>
-              <Link className="text-primary hover:underline" href="/library">
+              <Link className="text-primary hover:underline" href="/memory">
                 存入档案 →
               </Link>
             </div>
@@ -185,7 +185,7 @@ function StructuredResearch({
 
 export default function ResearchPage({
   searchParams,
-}: PageProps<"/research">) {
+}: PageProps<"/investigate/research">) {
   const sp = React.use(searchParams);
   const q = typeof sp.q === "string" ? sp.q : undefined;
   const event = typeof sp.event === "string" ? sp.event : undefined;
@@ -213,7 +213,7 @@ export default function ResearchPage({
     <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
       <section className="flex flex-col gap-4 lg:col-span-8">
         <header>
-          <p className="paper-kicker">05 / Research</p>
+          <p className="paper-kicker">02 / INVESTIGATE · Research</p>
           <h1 className="font-paper text-3xl tracking-tight">研究一个</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             围绕事件、叙事、实体、趋势或历史模式提问；Agent

@@ -6,8 +6,26 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type LogFile } from "@/lib/api";
+import KeySetup from "@/app/investigate/research/key-setup";
+import SourcesManager from "@/app/watch/sources-manager";
 
-export default function DevMonitorPage() {
+export default function DeveloperSettingsPage() {
+  return (
+    <div className="flex flex-col gap-10">
+      <div>
+        <h1 className="font-paper text-3xl tracking-tight">DEVELOPER · 系统设置</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          信息源管理、LLM Keys 与运行监控——产品前台不展示的工程面。
+        </p>
+      </div>
+      <KeySetup />
+      <SourcesManager />
+      <DevMonitorSection />
+    </div>
+  );
+}
+
+function DevMonitorSection() {
   const [dir, setDir] = useState("");
   const [files, setFiles] = useState<LogFile[]>([]);
   const [preview, setPreview] = useState<{ file: string; lines: string[] } | null>(null);

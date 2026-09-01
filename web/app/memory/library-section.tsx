@@ -33,7 +33,7 @@ function payloadLines(item: LibraryItem): string[] {
   return String(p.text ?? "").split("\n").filter(Boolean);
 }
 
-export default function LibraryPage() {
+export function LibrarySection() {
   const [items, setItems] = useState<LibraryItem[] | null>(null);
   const [filter, setFilter] = useState<string>("all");
   const [noteText, setNoteText] = useState("");
@@ -72,8 +72,8 @@ export default function LibraryPage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10">
-      <h1 className="font-paper text-3xl tracking-tight">研究档案库</h1>
+    <section className="flex flex-col gap-4">
+      <h2 className="font-paper text-xl">研究档案库</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         沉淀研究对象：Agent 分析结论、收藏事件、手写笔记（REMEMBER）。
       </p>
@@ -124,11 +124,11 @@ export default function LibraryPage() {
             追溯的研究记忆。从研究台生成结构化分析后点「保存到档案库」，即可开始积累。
           </p>
           <div className="mt-4 flex justify-center gap-3 text-xs">
-            <Link href="/events" className="border border-border px-3 py-1.5 hover:border-primary/40">
+            <Link href="/investigate" className="border border-border px-3 py-1.5 hover:border-primary/40">
               Explore Events
             </Link>
             <Link
-              href="/research"
+              href="/investigate/research"
               className="bg-primary px-3 py-1.5 text-primary-foreground hover:bg-primary/90"
             >
               Start Research
@@ -177,6 +177,6 @@ export default function LibraryPage() {
           })}
         </div>
       )}
-    </div>
+    </section>
   );
 }

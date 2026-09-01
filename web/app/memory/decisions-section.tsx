@@ -74,7 +74,7 @@ function BeliefTimeline({ subjectId }: { subjectId: string }) {
   );
 }
 
-export default function DecisionsPage() {
+export function DecisionsSection() {
   const [entityId, setEntityId] = useState("fed");
   const [decision, setDecision] = useState("");
   const [eventId, setEventId] = useState("");
@@ -114,9 +114,9 @@ export default function DecisionsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">
+      <h2 className="font-paper text-xl">
         决策日志（记录判断 → 回填结果 = 个人资产 + 校准数据）
-      </h1>
+      </h2>
 
       <Card>
         <CardHeader>

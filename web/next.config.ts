@@ -16,9 +16,22 @@ const nextConfig: NextConfig = {
   },
   async redirects() {
     return [
-      // R5e 路由收敛：暗色指挥舱移除（用户裁决）、研究台并入 RESEARCH
+      // 阶段 1.5 IA 手术：19 路由 → NOW/WATCH/INVESTIGATE/MEMORY + settings
       { source: "/command", destination: "/", permanent: false },
-      { source: "/agent", destination: "/research", permanent: false },
+      { source: "/today", destination: "/", permanent: false },
+      { source: "/brief", destination: "/", permanent: false },
+      { source: "/alerts", destination: "/watch", permanent: false },
+      { source: "/agent", destination: "/investigate/research", permanent: false },
+      { source: "/research", destination: "/investigate/research", permanent: false },
+      { source: "/chat", destination: "/investigate/research", permanent: false },
+      { source: "/intel", destination: "/investigate/patrol", permanent: false },
+      { source: "/timeline", destination: "/investigate/timeline", permanent: false },
+      { source: "/events", destination: "/investigate", permanent: false },
+      { source: "/analyze", destination: "/investigate", permanent: false },
+      { source: "/analyze/:id", destination: "/events/:id", permanent: false },
+      { source: "/library", destination: "/memory", permanent: false },
+      { source: "/decisions", destination: "/memory", permanent: false },
+      { source: "/dev/monitor", destination: "/settings/developer", permanent: false },
     ];
   },
 };

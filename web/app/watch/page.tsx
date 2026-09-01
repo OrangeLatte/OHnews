@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { watchStatus } from "@/lib/insight";
-import SourcesManager from "@/app/watch/sources-manager";
+import AlertsSection from "@/app/watch/alerts-section";
 
 import { api, type SignalRow, type WatchRow } from "@/lib/api";
 import { track } from "@/lib/track";
@@ -139,11 +139,12 @@ export default function WatchPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <SourcesManager />
       <div>
         <h2 className="font-paper text-xl">我的订阅</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           订阅实体、主题与研究问题——系统在你关心的方向上持续监测变化。
+          分位数预警规则与触发记录在页面下方。
+          信息源管理已移至 <Link href="/settings/developer" className="underline">开发者设置</Link>。
         </p>
       </div>
 
@@ -190,7 +191,7 @@ export default function WatchPage() {
               订阅实体（如 fed、nvidia）、主题（如「关税、降息」）或研究问题后，系统会在每次刷新时汇报它们的状态：安静、发展中、关注度骤增或叙事分歧。订阅将成为你的个人情报雷达。
             </p>
             <div className="mt-3 flex justify-center gap-2 text-xs">
-              <Link href="/events" className="text-primary hover:underline">
+              <Link href="/investigate" className="text-primary hover:underline">
                 先看看有什么事件 →
               </Link>
             </div>
@@ -324,6 +325,7 @@ export default function WatchPage() {
         })
         )}
       </div>
+      <AlertsSection />
     </div>
   );
 }

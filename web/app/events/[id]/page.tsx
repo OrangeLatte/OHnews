@@ -138,7 +138,7 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
     <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
       <article className="lg:col-span-8">
         <header className="border-b border-foreground/20 pb-4">
-          <p className="paper-kicker">03 / EVENTS · {id}</p>
+          <p className="paper-kicker">02 / INVESTIGATE · {id}</p>
           <h1 className="font-paper mt-2 text-3xl leading-tight tracking-tight">{meta.title}</h1>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             <span className="font-medium" style={{ color: status.color }}>

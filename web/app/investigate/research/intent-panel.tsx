@@ -170,7 +170,7 @@ function ArtifactView({
             {savedId ? "已存入档案库" : "保存到档案库"}
           </button>
           {savedId && (
-            <a href="/library" className="text-xs text-muted-foreground hover:underline">
+            <a href="/memory" className="text-xs text-muted-foreground hover:underline">
               查看 →
             </a>
           )}

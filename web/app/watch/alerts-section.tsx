@@ -19,7 +19,7 @@ import { api, type AlertHit, type AlertRule } from "@/lib/api";
 
 const PERCENTILES = [0.8, 0.9, 0.95];
 
-export default function AlertsPage() {
+export default function AlertsSection() {
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [hits, setHits] = useState<AlertHit[]>([]);
   const [entityId, setEntityId] = useState("fed");

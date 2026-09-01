@@ -47,11 +47,11 @@ export default function EventsPage() {
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <p className="paper-kicker">03 / EVENTS</p>
-        <h1 className="font-paper mt-1 text-3xl tracking-tight">事件与叙事</h1>
+        <p className="paper-kicker">02 / INVESTIGATE</p>
+        <h1 className="font-paper mt-1 text-3xl tracking-tight">INVESTIGATE · 调查工作台</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          每个事件 = 一组被不同来源共同报道的变化。点击进入七段式解读：
-          发生了什么 → 为什么重要 → 谁在分歧 → 证据在哪。
+          搜索与探索事件：按信源数与分歧程度排优先级。深度工具：研究工作台 /investigate/research、情报巡逻
+          /investigate/patrol、叙事时间轴 /investigate/timeline。 发生了什么 → 为什么重要 → 谁在分歧 → 证据在哪。
         </p>
       </header>
 

@@ -282,7 +282,7 @@ export default function IntelligencePage() {
             })}
             {events.length === 0 && <p className="text-sm text-muted-foreground">近 7 日无成组事件。</p>}
           </div>
-          <Link href="/events" className="mt-1 inline-block text-xs text-muted-foreground hover:text-primary">
+          <Link href="/investigate" className="mt-1 inline-block text-xs text-muted-foreground hover:text-primary">
             全部事件 →
           </Link>
         </section>
