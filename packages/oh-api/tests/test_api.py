@@ -678,3 +678,48 @@ def test_watch_update_and_review(client: TestClient) -> None:
     u2 = client.get(f"/api/watches/{wid}/update").json()
     assert u2["since"] is not None  # 复核后出现基线
     assert client.post("/api/watches/NOPE/review").status_code == 404
+
+
+def test_hourglass_endpoint(client: TestClient) -> None:
+    """沙漏场景聚合（阶段 1.5-c）：后端拼图，前端渲染；scene_id 确定性。"""
+    a = client.get("/api/hourglass").json()
+    assert set(a) >= {
+        "scene_id",
+        "generated_at",
+        "baseline_window",
+        "current_window",
+        "source_streams",
+        "narrative_streams",
+        "qualified_changes",
+        "evidence_refs",
+        "freshness",
+        "quality_warnings",
+    }
+    # 两窗等长且基线在前
+    assert a["baseline_window"]["end"] == a["current_window"]["start"]
+    assert a["baseline_window"]["start"] < a["baseline_window"]["end"]
+    # 流带结构
+    for s in a["source_streams"]:
+        assert s["cluster"] in {"official", "market"}
+        assert s["n_baseline"] >= 0 and s["n_current"] >= 0
+    for n in a["narrative_streams"]:
+        assert 0.0 <= n["share_current"] <= 1.0
+        assert 0.0 <= n["share_baseline"] <= 1.0
+    # 腰部变化与 briefing 同源（同一次 detect 的人话管道）
+    b = client.get("/api/briefing?top=5").json()
+    brief_ids = [c["change_id"] for c in b["changes"][:5]]
+    scene_ids = [c["change_id"] for c in a["qualified_changes"]]
+    assert scene_ids == brief_ids[: len(scene_ids)]
+    # 质量门告警码闭集
+    valid = {
+        "low_coverage",
+        "single_source_dominant",
+        "window_empty",
+        "stale_data",
+        "no_qualified_changes",
+    }
+    assert all(w["code"] in valid for w in a["quality_warnings"])
+    # 确定性：同 now 重跑 scene_id 与窗口统计稳定
+    b2 = client.get("/api/hourglass").json()
+    assert b2["scene_id"] == a["scene_id"]
+    assert b2["current_window"]["n_articles"] == a["current_window"]["n_articles"]

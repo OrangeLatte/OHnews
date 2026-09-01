@@ -36,9 +36,11 @@ from oh_agents.orchestrator import (
 from oh_agents.research import run_research
 from oh_agents.watch_update import compute_watch_update
 from oh_api.briefing import build_briefing, build_dossier
+from oh_api.hourglass import build_hourglass
 from oh_contracts.belief import BeliefCreate, BeliefSnapshot
 from oh_contracts.briefing import BriefingResponse, ChangeDossier, EvidenceCitation
 from oh_contracts.enums import SourceTier
+from oh_contracts.hourglass import HourglassScene
 from oh_contracts.intents import Intent
 from oh_contracts.schemas import NDIPoint
 from oh_contracts.text import strip_html
@@ -281,6 +283,20 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         changes 为空 = 「今天没有值得看的变化」显式状态（硬验收 7）。
         """
         return build_briefing(
+            bronze_iter=_bronze().iter_records(),
+            store=_store(),
+            registry=_registry(),
+            tier_map=_tier_map(),
+            now=_now(),
+            days=max(1, days),
+            top=top,
+            min_per_source=min_per_source,
+        )
+
+    @app.get("/api/hourglass", response_model=HourglassScene)
+    def hourglass(days: int = 7, top: int = 5, min_per_source: int = 10) -> HourglassScene:
+        """Orange Hourglass 场景聚合（阶段 1.5-c）：后端拼图，前端只渲染。"""
+        return build_hourglass(
             bronze_iter=_bronze().iter_records(),
             store=_store(),
             registry=_registry(),

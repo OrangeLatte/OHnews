@@ -159,6 +159,36 @@ def _brief(signal: Signal, registry: EntityRegistry) -> ChangeBrief:
     )
 
 
+def build_briefing_with_signals(
+    *,
+    bronze_iter: Iterable[BronzeRecord],
+    store: SqliteStore,
+    registry: EntityRegistry,
+    tier_map: dict[str, SourceTier],
+    now: datetime,
+    days: int = 3,
+    top: int = 5,
+    min_per_source: int = 10,
+) -> tuple[BriefingResponse, list[Signal]]:
+    """Briefing 数据面 + 对应 Signal 对象（沙漏聚合等需要证据链回查的场景）。"""
+    records = list(bronze_iter)
+    fresh = data_freshness(records, now=now, lookback_days=days)
+    signals = detect_signals(
+        iter(records),
+        store,
+        registry,
+        tier_map,
+        now,
+        min_per_source=min_per_source,
+        top_n=max(1, min(top, 30)),
+    )
+    response = BriefingResponse(
+        freshness=fresh,
+        changes=[_brief(s, registry) for s in signals],
+    )
+    return response, signals
+
+
 def build_briefing(
     *,
     bronze_iter: Iterable[BronzeRecord],
@@ -175,21 +205,17 @@ def build_briefing(
     changes 为空 =「今天没有值得看的变化」（硬验收 7：no change 显式状态，
     前端按 changes 为空 + freshness 渲染，而非空白页）。
     """
-    records = list(bronze_iter)
-    fresh = data_freshness(records, now=now, lookback_days=days)
-    signals = detect_signals(
-        iter(records),
-        store,
-        registry,
-        tier_map,
-        now,
+    response, _ = build_briefing_with_signals(
+        bronze_iter=bronze_iter,
+        store=store,
+        registry=registry,
+        tier_map=tier_map,
+        now=now,
+        days=days,
+        top=top,
         min_per_source=min_per_source,
-        top_n=max(1, min(top, 30)),
     )
-    return BriefingResponse(
-        freshness=fresh,
-        changes=[_brief(s, registry) for s in signals],
-    )
+    return response
 
 
 def _relevant_quote(
