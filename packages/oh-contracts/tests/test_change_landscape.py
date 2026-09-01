@@ -1,8 +1,8 @@
-"""HourglassScene 契约测试（阶段 1.5-c）。"""
+"""ChangeLandscape 契约测试（阶段 1.5-c）。"""
 
 import pytest
-from oh_contracts.hourglass import (
-    HourglassScene,
+from oh_contracts.change_landscape import (
+    ChangeLandscape,
     NarrativeStream,
     QualityWarning,
     SourceStream,
@@ -11,10 +11,10 @@ from oh_contracts.hourglass import (
 from pydantic import ValidationError
 
 
-def _scene() -> HourglassScene:
+def _scene() -> ChangeLandscape:
     from oh_contracts.briefing import DataFreshness
 
-    return HourglassScene(
+    return ChangeLandscape(
         scene_id="hg-20260901-abcd1234",
         generated_at="2026-09-01T00:00:00+00:00",
         baseline_window=TimeWindow(
@@ -48,7 +48,7 @@ def _scene() -> HourglassScene:
 def test_roundtrip_preserves_streams() -> None:
     s = _scene()
     data = s.model_dump(mode="json")
-    again = HourglassScene.model_validate(data)
+    again = ChangeLandscape.model_validate(data)
     assert again == s
     assert again.source_streams[0].cluster == "official"
     assert again.narrative_streams[0].label == "收益"
@@ -72,7 +72,7 @@ def test_warning_code_closed_vocabulary() -> None:
 
 
 def test_qualified_change_headline_gate() -> None:
-    from oh_contracts.hourglass import QualifiedChange
+    from oh_contracts.change_landscape import QualifiedChange
 
     with pytest.raises(ValidationError):
         QualifiedChange(change_id="sig-x", kind="narrative_shift", headline="太短")

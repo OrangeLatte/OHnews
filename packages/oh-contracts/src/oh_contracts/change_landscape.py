@@ -82,8 +82,8 @@ class QualityWarning(_StrictBase):
     message: str = Field(min_length=4)
 
 
-class HourglassScene(_StrictBase):
-    """沙漏场景聚合（/api/hourglass 唯一出口）。"""
+class ChangeLandscape(_StrictBase):
+    """沙漏场景聚合（/api/change_landscape 唯一出口）。"""
 
     scene_id: str
     generated_at: str

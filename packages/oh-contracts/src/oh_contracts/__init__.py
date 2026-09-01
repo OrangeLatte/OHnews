@@ -29,6 +29,14 @@ from oh_contracts.briefing import (
     SubjectRef,
     TechnicalAnnex,
 )
+from oh_contracts.change_landscape import (
+    ChangeLandscape,
+    NarrativeStream,
+    QualifiedChange,
+    QualityWarning,
+    SourceStream,
+    TimeWindow,
+)
 from oh_contracts.constants import (
     BOOTSTRAP_RESAMPLES,
     CONF_TAU_RULE,
@@ -53,14 +61,6 @@ from oh_contracts.enums import (
     SSEEvent,
     StanceLabel,
     Tier,
-)
-from oh_contracts.hourglass import (
-    HourglassScene,
-    NarrativeStream,
-    QualifiedChange,
-    QualityWarning,
-    SourceStream,
-    TimeWindow,
 )
 from oh_contracts.icd203 import PROBABILITY_RANGES, ProbabilityTerm, term_for_probability
 from oh_contracts.ids import content_hash, make_item_key, url_hash
@@ -150,7 +150,7 @@ __all__ = [
     "Evidence",
     "ExtractionEngine",
     "FrameLabel",
-    "HourglassScene",
+    "ChangeLandscape",
     "Hypothesis",
     "NDIPoint",
     "PROBABILITY_RANGES",
