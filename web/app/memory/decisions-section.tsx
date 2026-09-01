@@ -115,12 +115,12 @@ export function DecisionsSection() {
   return (
     <div className="flex flex-col gap-6">
       <h2 className="font-paper text-xl">
-        决策日志（记录判断 → 回填结果 = 个人资产 + 校准数据）
+        认知档案：判断史与决策记录（T7：Belief Timeline 为第一公民）
       </h2>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">认知时间线（实体：{entityId || "fed"}）</CardTitle>
+          <CardTitle className="text-base">认知时间线 · 你的判断史（实体：{entityId || "fed"}）</CardTitle>
         </CardHeader>
         <CardContent>
           <BeliefTimeline subjectId={entityId || "fed"} />

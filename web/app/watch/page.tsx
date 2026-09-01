@@ -259,7 +259,7 @@ export default function WatchPage() {
                   </div>
                   {w.last_checked_at && (
                     <p className="text-xs text-muted-foreground">
-                      最近刷新 {w.last_checked_at.replace("T", " ").slice(0, 16)}
+                      上次复核 {w.last_checked_at.replace("T", " ").slice(0, 16)}
                     </p>
                   )}
                 </CardHeader>
@@ -310,7 +310,7 @@ export default function WatchPage() {
                         </Button>
                         <span className="text-xs text-muted-foreground">
                           {updates[w.watch_id]!.since
-                            ? `基线：${updates[w.watch_id]!.since!.replace("T", " ").slice(0, 16)}`
+                            ? `认知基线（上次复核或判断）：${updates[w.watch_id]!.since!.replace("T", " ").slice(0, 16)}`
                             : "无基线——全部视为新变化"}
                         </span>
                       </div>
