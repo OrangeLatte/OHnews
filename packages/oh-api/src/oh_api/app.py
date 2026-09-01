@@ -57,6 +57,7 @@ from oh_pipeline.svo import parse_passage
 from oh_storage.bronze_parquet import ParquetBronzeWriter
 from oh_storage.connection import connect
 from oh_storage.sqlite_store import SqliteStore
+from pydantic import BaseModel
 
 # --- SSE 总线 v0 ------------------------------------------------------------
 
@@ -104,6 +105,14 @@ def _load_tier_map(path: Path) -> dict[str, SourceTier]:
         for s in doc.get("sources", [])
         if s.get("source_id") and s.get("tier")
     }
+
+
+class HomePayload(BaseModel):
+    """首页单次聚合响应（T4）：消除前端多请求竞态与重复 briefing_viewed。"""
+
+    briefing: BriefingResponse
+    landscape: ChangeLandscape
+    watches: list[dict[str, Any]]
 
 
 def create_app(paths: AppPaths | None = None) -> FastAPI:
@@ -311,6 +320,34 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             days=max(1, days),
             top=top,
             min_per_source=min_per_source,
+        )
+
+    @app.get("/api/home", response_model=HomePayload)
+    def home(days: int = 7, top: int = 5) -> HomePayload:
+        """首页单次聚合（T4）：briefing + 变化场 + watchlist 一次返回。
+
+        消除前端 4 并发请求竞态；briefing_viewed 去重到前端单一数据源。
+        """
+        return HomePayload(
+            briefing=build_briefing(
+                bronze_iter=_bronze().iter_records(),
+                store=_store(),
+                registry=_registry(),
+                tier_map=_tier_map(),
+                now=_now(),
+                days=max(1, days),
+                top=top,
+            ),
+            landscape=build_change_landscape(
+                bronze_iter=_bronze().iter_records(),
+                store=_store(),
+                registry=_registry(),
+                tier_map=_tier_map(),
+                now=_now(),
+                days=max(1, days),
+                top=top,
+            ),
+            watches=[w.__dict__ for w in _watch_store().list()],
         )
 
     @app.get("/api/changes/{change_id}", response_model=ChangeDossier)

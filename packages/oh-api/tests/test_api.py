@@ -683,6 +683,22 @@ def test_watch_update_and_review(client: TestClient) -> None:
     assert client.post("/api/watches/NOPE/review").status_code == 404
 
 
+def test_home_endpoint(client: TestClient) -> None:
+    """首页单次聚合（T4）：briefing + 变化场 + watchlist 一次返回。"""
+    h = client.get("/api/home?days=7").json()
+    assert set(h) == {"briefing", "landscape", "watches"}
+    # briefing 嵌套完整
+    assert set(h["briefing"]) >= {"freshness", "changes"}
+    # landscape 嵌套完整（两窗等长基线在前）
+    ls = h["landscape"]
+    assert ls["baseline_window"]["end"] == ls["current_window"]["start"]
+    # 与独立端点同源（days 相同则变化队列一致）
+    b = client.get("/api/briefing?days=7").json()
+    assert [c["change_id"] for c in h["briefing"]["changes"]] == [
+        c["change_id"] for c in b["changes"]
+    ]
+
+
 def test_change_landscape_endpoint(client: TestClient) -> None:
     """变化场场景聚合（阶段 1.5-c，T1 更名）：后端拼图，前端渲染；scene_id 确定性。"""
     a = client.get("/api/change-landscape").json()
