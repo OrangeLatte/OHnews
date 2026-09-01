@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -170,9 +171,9 @@ function ArtifactView({
             {savedId ? "已存入档案库" : "保存到档案库"}
           </button>
           {savedId && (
-            <a href="/memory" className="text-xs text-muted-foreground hover:underline">
+            <Link href="/memory" className="text-xs text-muted-foreground hover:underline">
               查看 →
-            </a>
+            </Link>
           )}
         </div>
       </CardContent>
