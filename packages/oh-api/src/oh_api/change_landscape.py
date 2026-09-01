@@ -1,16 +1,14 @@
 """Orange Hourglass 场景聚合（阶段 1.5-c）。
 
 把两窗 bronze 覆盖、stance 框架份额、过质量门变化与引文
-聚合为单一 HourglassScene——前端只渲染不拼图。
+聚合为单一 ChangeLandscape——前端只渲染不拼图。
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 from collections import Counter
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from oh_api.briefing import (
     bucket_evidence,
@@ -18,15 +16,15 @@ from oh_api.briefing import (
     data_freshness,
 )
 from oh_contracts.briefing import BriefingResponse, EvidenceCitation, EvidenceSet
-from oh_contracts.enums import SourceTier
-from oh_contracts.hourglass import (
-    HourglassScene,
+from oh_contracts.change_landscape import (
+    ChangeLandscape,
     NarrativeStream,
     QualifiedChange,
     QualityWarning,
     SourceStream,
     TimeWindow,
 )
+from oh_contracts.enums import SourceTier
 from oh_contracts.schemas import BronzeRecord
 from oh_contracts.signals import Signal
 from oh_pipeline.entities import EntityRegistry
@@ -45,34 +43,6 @@ _MAX_SOURCE_STREAMS = 12
 _MAX_QUALIFIED = 5
 _MAX_EVIDENCE_REFS = 20
 _LOW_COVERAGE_FLOOR = 5
-
-
-def _anchor_path(root: Path) -> Path:
-    """翻转锚点文件路径（hourglass_anchor.json，与产品库同级）。"""
-    return root / "hourglass_anchor.json"
-
-
-def read_flip_anchor(root: Path) -> tuple[datetime, int] | None:
-    """读取翻转锚点：返回 (flipped_at, window_days)；不存在或损坏返回 None。"""
-    p = _anchor_path(root)
-    if not p.exists():
-        return None
-    try:
-        d = json.loads(p.read_text(encoding="utf-8"))
-        return datetime.fromisoformat(str(d["flipped_at"])), int(d["window_days"])
-    except (OSError, ValueError, KeyError):
-        return None
-
-
-def write_flip_anchor(root: Path, *, flipped_at: datetime, window_days: int) -> None:
-    """写入翻转锚点（翻转沙漏 = 当前窗设为新基线）。"""
-    _anchor_path(root).write_text(
-        json.dumps(
-            {"flipped_at": flipped_at.isoformat(), "window_days": max(1, window_days)},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
 
 
 def _iso_window(now: datetime, days: int) -> tuple[datetime, datetime, datetime]:
@@ -313,7 +283,7 @@ def _warnings(
     return out
 
 
-def build_hourglass(
+def build_change_landscape(
     *,
     bronze_iter,
     store: SilverStore,
@@ -323,21 +293,15 @@ def build_hourglass(
     days: int = 7,
     min_per_source: int = 10,
     top: int = 5,
-    anchor_root: Path | None = None,
-) -> HourglassScene:
-    """沙漏场景唯一聚合入口（后端拼图，前端渲染）。
+) -> ChangeLandscape:
+    """变化场场景唯一聚合入口（后端拼图，前端渲染）。
 
-    anchor_root 提供时优先使用翻转锚点：baseline = 翻转时刻的当前窗
-    （[flipped_at-d, flipped_at)），current = 翻转后新积累（[flipped_at, now]）。
+    v2（T2 待做）：两窗需按共同来源 cohort 校正可比性，raw 与
+    composition-adjusted 双口径并列，避免把来源结构变化误读为叙事迁移。
     """
     records = list(bronze_iter)
     d = max(1, days)
-    anchor = read_flip_anchor(anchor_root) if anchor_root is not None else None
-    if anchor is not None and anchor[1] == d:
-        flipped_at, _ = anchor
-        lo_base, lo_cur = flipped_at - timedelta(days=d), flipped_at
-    else:
-        lo_base, lo_cur, _ = _iso_window(now, d)
+    lo_base, lo_cur, _ = _iso_window(now, d)
     base = _split_window(records, lo_base, lo_cur)
     cur = _split_window(records, lo_cur, now)
 
@@ -382,7 +346,7 @@ def build_hourglass(
 
     seed = f"{baseline_w.start}|{current_w.end}"
     scene_id = f"hg-{now:%Y%m%d}-{hashlib.sha1(seed.encode()).hexdigest()[:8]}"
-    return HourglassScene(
+    return ChangeLandscape(
         scene_id=scene_id,
         generated_at=now.isoformat(),
         baseline_window=baseline_w,

@@ -683,9 +683,9 @@ def test_watch_update_and_review(client: TestClient) -> None:
     assert client.post("/api/watches/NOPE/review").status_code == 404
 
 
-def test_hourglass_endpoint(client: TestClient) -> None:
-    """沙漏场景聚合（阶段 1.5-c）：后端拼图，前端渲染；scene_id 确定性。"""
-    a = client.get("/api/hourglass").json()
+def test_change_landscape_endpoint(client: TestClient) -> None:
+    """变化场场景聚合（阶段 1.5-c，T1 更名）：后端拼图，前端渲染；scene_id 确定性。"""
+    a = client.get("/api/change-landscape").json()
     assert set(a) >= {
         "scene_id",
         "generated_at",
@@ -724,7 +724,7 @@ def test_hourglass_endpoint(client: TestClient) -> None:
     }
     assert all(w["code"] in valid for w in a["quality_warnings"])
     # 确定性：同 now 重跑 scene_id 与窗口统计稳定
-    b2 = client.get("/api/hourglass").json()
+    b2 = client.get("/api/change-landscape").json()
     assert b2["scene_id"] == a["scene_id"]
     assert b2["current_window"]["n_articles"] == a["current_window"]["n_articles"]
 
@@ -754,22 +754,9 @@ def _cite(item_key: str, source_id: str, quote: str) -> EvidenceCitation:
     )
 
 
-def test_hourglass_flip(client: TestClient) -> None:
-    """翻转沙漏（阶段 1.5-f）：当前窗设为新基线，两窗边界=翻转时刻。"""
-    before = client.get("/api/hourglass").json()
-    flipped = client.post("/api/hourglass/flip?days=7").json()
-    # 翻转后 baseline.end == current.start == 翻转时刻（服务端锚）
-    assert flipped["baseline_window"]["end"] == flipped["current_window"]["start"]
-    # 翻转时 baseline 语义 = 翻转前的 current 窗（起点=原 current 起点）
-    assert flipped["baseline_window"]["start"] == before["baseline_window"]["end"]
-    # 锚点持久化：再 GET 仍用翻转边界
-    again = client.get("/api/hourglass").json()
-    assert again["baseline_window"]["end"] == flipped["baseline_window"]["end"]
-
-
 def test_hero_gate_blocks_insufficient_evidence() -> None:
     """Hero Gate（1.5-d）：单源/HTML/无关引文拦，双源干净引文过。"""
-    from oh_api.hourglass import _hero_gate
+    from oh_api.change_landscape import _hero_gate
     from oh_pipeline.entities import DEFAULT_ENTITIES, EntityRegistry
 
     registry = EntityRegistry(DEFAULT_ENTITIES)

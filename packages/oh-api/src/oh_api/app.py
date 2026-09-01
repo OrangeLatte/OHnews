@@ -36,13 +36,13 @@ from oh_agents.orchestrator import (
 from oh_agents.research import run_research
 from oh_agents.watch_update import compute_watch_update
 from oh_api.briefing import build_briefing, build_dossier
-from oh_api.hourglass import build_hourglass, write_flip_anchor
+from oh_api.change_landscape import build_change_landscape
 from oh_api.metrics import build_router as build_metrics_router
 from oh_api.search import build_router as build_search_router
 from oh_contracts.belief import BeliefCreate, BeliefSnapshot
 from oh_contracts.briefing import BriefingResponse, ChangeDossier, EvidenceCitation
+from oh_contracts.change_landscape import ChangeLandscape
 from oh_contracts.enums import SourceTier
-from oh_contracts.hourglass import HourglassScene
 from oh_contracts.intents import Intent
 from oh_contracts.schemas import NDIPoint
 from oh_contracts.text import strip_html
@@ -299,10 +299,10 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             min_per_source=min_per_source,
         )
 
-    @app.get("/api/hourglass", response_model=HourglassScene)
-    def hourglass(days: int = 7, top: int = 5, min_per_source: int = 10) -> HourglassScene:
-        """Orange Hourglass 场景聚合（阶段 1.5-c）：后端拼图，前端只渲染。"""
-        return build_hourglass(
+    @app.get("/api/change-landscape", response_model=ChangeLandscape)
+    def change_landscape(days: int = 7, top: int = 5, min_per_source: int = 10) -> ChangeLandscape:
+        """叙事变化场聚合（阶段 1.5-c，T1 更名去沙漏）：后端拼图，前端只渲染。"""
+        return build_change_landscape(
             bronze_iter=_bronze().iter_records(),
             store=_store(),
             registry=_registry(),
@@ -311,24 +311,6 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             days=max(1, days),
             top=top,
             min_per_source=min_per_source,
-            anchor_root=paths.root,
-        )
-
-    @app.post("/api/hourglass/flip", response_model=HourglassScene)
-    def hourglass_flip(days: int = 7, top: int = 5, min_per_source: int = 10) -> HourglassScene:
-        """翻转沙漏（阶段 1.5-f）：当前窗设为新基线，此后 current 从翻转时刻重新积累。"""
-        now = _now()
-        write_flip_anchor(paths.root, flipped_at=now, window_days=max(1, days))
-        return build_hourglass(
-            bronze_iter=_bronze().iter_records(),
-            store=_store(),
-            registry=_registry(),
-            tier_map=_tier_map(),
-            now=now,
-            days=max(1, days),
-            top=top,
-            min_per_source=min_per_source,
-            anchor_root=paths.root,
         )
 
     @app.get("/api/changes/{change_id}", response_model=ChangeDossier)
