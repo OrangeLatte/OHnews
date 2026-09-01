@@ -54,6 +54,14 @@ from oh_contracts.enums import (
     StanceLabel,
     Tier,
 )
+from oh_contracts.hourglass import (
+    HourglassScene,
+    NarrativeStream,
+    QualifiedChange,
+    QualityWarning,
+    SourceStream,
+    TimeWindow,
+)
 from oh_contracts.icd203 import PROBABILITY_RANGES, ProbabilityTerm, term_for_probability
 from oh_contracts.ids import content_hash, make_item_key, url_hash
 from oh_contracts.intel import AchCell, AchMatrix, AchRow, IntelReport, KeyJudgment
@@ -116,6 +124,8 @@ __all__ = [
     "ContextPacket",
     "Intent",
     "IntentKind",
+    "QualifiedChange",
+    "QualityWarning",
     "TargetKind",
     "strip_html",
     "BOOTSTRAP_RESAMPLES",
@@ -125,6 +135,7 @@ __all__ = [
     "N_MIN_SAMPLES",
     "PIT_LOOKBACK_DAYS",
     "PSI_ALERT_THRESHOLD",
+    "TimeWindow",
     "TYPE_FACTOR",
     "VERIFY_BONUS_CORROBORATED",
     "VERIFY_PENALTY_SINGLE",
@@ -139,15 +150,18 @@ __all__ = [
     "Evidence",
     "ExtractionEngine",
     "FrameLabel",
+    "HourglassScene",
     "Hypothesis",
     "NDIPoint",
     "PROBABILITY_RANGES",
     "ProbabilityTerm",
     "NarrativeCard",
+    "NarrativeStream",
     "SOStrategy",
     "SSEEvent",
     "SSEMessage",
     "SourceMeta",
+    "SourceStream",
     "SourceTier",
     "StanceLabel",
     "StanceRow",
