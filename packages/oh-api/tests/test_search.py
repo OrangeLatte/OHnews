@@ -156,3 +156,59 @@ def test_router_mounted() -> None:
     # 短 q 空结果、无命中空列表
     assert client.get("/api/search", params={"q": "美"}).json() == []
     assert client.get("/api/search", params={"q": "不存在的词"}).json() == []
+
+
+def test_multi_term_and_semantics() -> None:
+    """T5 分词 AND：两词分别命中才算；只命中一词不算。"""
+    recs = [
+        _rec("s1", "both", title="美联储发布利率决议", body="声明全文"),
+        _rec("s1", "only-one", title="美联储例行会议", body="无关正文"),
+    ]
+    out = search_bronze(recs, "美联储 利率")
+    assert len(out) == 1
+    assert out[0]["item_key"].startswith("s1:both")
+
+
+def test_alias_boost_and_url_dedupe() -> None:
+    """T5 别名提升排序；相同 URL 去重保留最前一条。"""
+    old = NOW - timedelta(days=2)
+    recs = [
+        # 同 URL 重复：别名命中但更旧 vs 新且无别名
+        _rec("s1", "dup-old", title="美联储 outlook", body="x", published_at=old),
+        _rec("s2", "dup-new", title="议息决议发布", body="美联储相关表态", published_at=NOW),
+        # 让两条 URL 相同
+    ]
+    recs[1].normalized["url"] = recs[0].normalized["url"]  # type: ignore[index]
+    out = search_bronze(recs, "美联储", boost_terms=["fed", "美联储"])
+    assert len(out) == 1  # 去重
+    assert out[0]["source_id"] == "s1"  # 别名提升的旧记录胜出
+    plain = search_bronze(recs, "美联储")
+    assert plain[0]["source_id"] == "s1"  # 无提升时 title 命中仍优先（既有语义）
+
+
+def test_search_events_kind_and_router_merge() -> None:
+    """T5 事件分类：events_fn 提供时 kind=event 前置，router 合并返回。"""
+    from oh_contracts.schemas import EventRecord
+
+    events = [
+        EventRecord(
+            event_id="ev-fed-20260828",
+            title="美联储利率决议",
+            summary="声明",
+            entities=["fed"],
+            as_of=NOW,
+        )
+    ]
+    recs = [_rec("s1", "a1", title="美联储相关报道", body="")]
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            lambda: iter(recs),
+            events_fn=lambda: events,
+            alias_fn=lambda: ["fed", "美联储"],
+        )
+    )
+    client = TestClient(app)
+    out = client.get("/api/search", params={"q": "美联储"}).json()
+    assert out[0]["kind"] == "event" and out[0]["id"] == "ev-fed-20260828"
+    assert out[1]["kind"] == "article"

@@ -186,7 +186,13 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         return _lazy("beliefs", lambda: BeliefStore(db))
 
     # 子路由（全局搜索 / 埋点指标）——模块化 APIRouter，主线统一挂载
-    app.include_router(build_search_router(lambda: _bronze().iter_records()))
+    app.include_router(
+        build_search_router(
+            lambda: _bronze().iter_records(),
+            events_fn=lambda: _store().events_asof(_now()),
+            alias_fn=lambda: [a for eid in _registry().ids() for a in _registry().get(eid).aliases],
+        )
+    )
     app.include_router(build_metrics_router(lambda: _product_events()))
 
     # ---- 运行时 API keys（UI 配置 → data/runtime_keys.json，gitignored；env 优先）----
