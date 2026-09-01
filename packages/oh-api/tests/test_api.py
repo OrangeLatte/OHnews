@@ -802,3 +802,15 @@ def test_hero_gate_blocks_insufficient_evidence() -> None:
     assert any("相关性" in r for r in _hero_gate(off, _sig(), registry))
     empty = EvidenceSet()
     assert _hero_gate(empty, _sig(), registry) == ["无任何可展示引文"]
+
+
+def test_change_field_endpoint(client: TestClient) -> None:
+    """叙事场时序（T8）：每日×泳道×框架计数矩阵 + 合格变化点。"""
+    r = client.get("/api/change-field?days=30").json()
+    assert {"days", "series", "changes", "freshness"} == set(r)
+    dates = [p["date"] for p in r["series"]]
+    assert dates == sorted(dates)
+    for point in r["series"]:
+        for lane, frames in point["lanes"].items():
+            assert lane in {"official", "press", "market", "social", "unknown"}
+            assert all(v >= 1 for v in frames.values())

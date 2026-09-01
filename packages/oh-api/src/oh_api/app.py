@@ -36,12 +36,12 @@ from oh_agents.orchestrator import (
 from oh_agents.research import run_research
 from oh_agents.watch_update import compute_watch_update
 from oh_api.briefing import build_briefing, build_dossier
-from oh_api.change_landscape import build_change_landscape
+from oh_api.change_landscape import build_change_field, build_change_landscape
 from oh_api.metrics import build_router as build_metrics_router
 from oh_api.search import build_router as build_search_router
 from oh_contracts.belief import BeliefCreate, BeliefSnapshot
 from oh_contracts.briefing import BriefingResponse, ChangeDossier, EvidenceCitation
-from oh_contracts.change_landscape import ChangeLandscape
+from oh_contracts.change_landscape import ChangeFieldPayload, ChangeLandscape
 from oh_contracts.enums import SourceTier
 from oh_contracts.intents import Intent
 from oh_contracts.schemas import NDIPoint
@@ -312,6 +312,28 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             days=max(1, days),
             top=top,
             min_per_source=min_per_source,
+        )
+
+    @app.get("/api/change-field", response_model=ChangeFieldPayload)
+    def change_field(days: int = 30) -> ChangeFieldPayload:
+        """叙事场时序（T8）：每日×泳道×框架计数 + 合格变化点（前端只渲染）。"""
+        now = _now()
+        records = list(_bronze().iter_records())
+        landscape = build_change_landscape(
+            bronze_iter=iter(records),
+            store=_store(),
+            registry=_registry(),
+            tier_map=_tier_map(),
+            now=now,
+            days=7,
+        )
+        return build_change_field(
+            records=records,
+            rows=_store().stances_asof(now),
+            tier_map=_tier_map(),
+            now=now,
+            days=max(1, days),
+            changes=landscape.qualified_changes,
         )
 
     @app.get("/api/change-landscape", response_model=ChangeLandscape)

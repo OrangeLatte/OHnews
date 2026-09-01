@@ -17,6 +17,8 @@ from oh_api.briefing import (
 )
 from oh_contracts.briefing import BriefingResponse, EvidenceCitation, EvidenceSet
 from oh_contracts.change_landscape import (
+    ChangeFieldPayload,
+    ChangeFieldPoint,
     ChangeLandscape,
     NarrativeStream,
     QualifiedChange,
@@ -424,4 +426,50 @@ def build_change_landscape(
         evidence_refs=refs,
         freshness=freshness,
         quality_warnings=warnings,
+    )
+
+
+_LANE_BY_TIER: dict[str, str] = {
+    "L1": "official",
+    "L2": "press",
+    "L3": "market",
+    "L4": "social",
+}
+
+
+def build_change_field(
+    *,
+    records: list,
+    rows: list,
+    tier_map: dict[str, SourceTier],
+    now: datetime,
+    days: int = 30,
+    changes: list[QualifiedChange] | None = None,
+) -> ChangeFieldPayload:
+    """叙事场时序（T8）：每日×泳道(tier 簇)×框架计数矩阵。
+
+    数据源 = stance 行（frame 已知）；未登记 tier 的源归 unknown 泳道。
+    series 按日期升序，仅包含有数据的日期。
+    """
+    d = max(1, min(days, 90))
+    lo = now - timedelta(days=d)
+    buckets: dict[str, dict[str, Counter[str]]] = {}
+    for r in rows:
+        ts = r.ts if hasattr(r, "ts") else None
+        if ts is None or ts > now or ts < lo:
+            continue
+        day = ts.date().isoformat()
+        tier = tier_map.get(r.source_id)
+        lane = _LANE_BY_TIER.get(str(tier) if tier else "", "unknown")
+        lane_map = buckets.setdefault(day, {})
+        lane_map.setdefault(lane, Counter())[str(r.frame)] += 1
+    series = [
+        ChangeFieldPoint(date=day, lanes={k: dict(c) for k, c in lane_map.items()})
+        for day, lane_map in sorted(buckets.items())
+    ]
+    return ChangeFieldPayload(
+        days=d,
+        series=series,
+        changes=list(changes or []),
+        freshness=data_freshness(records, now=now, lookback_days=d),
     )
