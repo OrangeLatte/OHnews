@@ -11,57 +11,20 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 import {
   api,
   type BriefingResponse,
-  type ChangeBrief,
+  type WatchRow,
 } from "@/lib/api";
 import { SIGNAL } from "@/lib/tokens";
 import { track } from "@/lib/track";
-import { divergenceLevel, watchStatus } from "@/lib/insight";
+import { watchStatus } from "@/lib/insight";
 import { ChangeOverview } from "@/components/change-overview/change-overview";
 
 /* ── 数据面（旧端点类型，待统一迁移至 OpenAPI 生成） ── */
 
-type EventRow = {
-  event_id: string;
-  title: string;
-  entities: string[];
-  as_of: string;
-  ndi: number | null;
-  ndi_status: string;
-  n_sources: number;
-};
-type WatchRow = {
-  watch_id: string;
-  type: string;
-  query: string;
-  last_summary: Record<string, unknown> | null;
-};
-
 /* ── 人话映射（硬验收 2：术语不出主路径） ── */
-
-const KIND_ZH: Record<string, string> = {
-  attention_spike: "关注升温",
-  narrative_shift: "叙事转变",
-  divergence_rise: "分歧扩大",
-  expectation_gap: "预期错位",
-};
-
-const STRENGTH_ZH: Record<string, { zh: string; color: string }> = {
-  strong: { zh: "显著变化", color: SIGNAL.divergence },
-  notable: { zh: "值得关注", color: SIGNAL.warning },
-  minor: { zh: "轻微迹象", color: SIGNAL.muted },
-  insufficient: { zh: "证据不足", color: SIGNAL.muted },
-};
-
-const URGENCY_ZH: Record<string, string> = {
-  high: "今天",
-  medium: "48 小时内",
-  low: "本周内",
-};
 
 const STALENESS_ZH: Record<string, string> = {
   fresh: "数据新鲜",
@@ -110,89 +73,19 @@ function FreshnessLine({ b }: { b: BriefingResponse }) {
   );
 }
 
-function ChangeCard({ c, i }: { c: ChangeBrief; i: number }) {
-  const strength = STRENGTH_ZH[c.strength_word] ?? STRENGTH_ZH.minor;
-  const dismiss = () => track("change_dismissed_as_noise", { objectId: c.change_id });
-  return (
-    <article className="border-b border-border/60 py-5 first:pt-1">
-      <div className="flex items-baseline gap-3">
-        <span className="font-paper text-3xl font-semibold text-muted-foreground/35">
-          {String(i + 1).padStart(2, "0")}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="paper-kicker">{KIND_ZH[c.kind] ?? c.kind}</span>
-            <span
-              className="inline-flex items-center gap-1.5 text-[12px]"
-              style={{ color: strength.color }}
-            >
-              <span
-                className="inline-block h-1.5 w-1.5 rounded-full"
-                style={{ background: strength.color }}
-              />
-              {strength.zh}
-            </span>
-            <span className="text-[12px] text-muted-foreground">
-              建议 {URGENCY_ZH[c.urgency] ?? c.urgency}查看
-            </span>
-          </div>
-          <h2 className="mt-1 font-paper text-xl leading-tight">
-            <Link href={`/changes/${encodeURIComponent(c.change_id)}`} className="hover:text-primary">
-              {c.headline}
-            </Link>
-          </h2>
-          <p className="mt-1.5 text-sm leading-6">{c.what}</p>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">{c.why_now}</p>
-          {(c.subjects ?? []).length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {(c.subjects ?? []).map((s) => (
-                <span
-                  key={`${s.kind}-${s.id}`}
-                  className="border border-foreground/20 px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                >
-                  {s.label}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="flex shrink-0 flex-col items-stretch gap-1.5">
-          <Link
-            href={`/changes/${encodeURIComponent(c.change_id)}`}
-            className="border border-foreground/60 px-3 py-1.5 text-center text-xs font-medium hover:bg-foreground hover:text-background"
-          >
-            看证据 →
-          </Link>
-          <button
-            type="button"
-            onClick={dismiss}
-            className="px-3 py-1 text-center text-[11px] text-muted-foreground hover:text-foreground"
-          >
-            不重要
-          </button>
-        </div>
-      </div>
-    </article>
-  );
-}
-
 /* ── 页面 ── */
 
 export default function IntelligencePage() {
   const [briefing, setBriefing] = useState<BriefingResponse | null>(null);
-  const [events, setEvents] = useState<EventRow[]>([]);
   const [watches, setWatches] = useState<WatchRow[]>([]);
-  const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
 
   useEffect(() => {
     let alive = true;
-    Promise.all([api.briefing(), api.events(7), api.watches()])
-      .then(([b, e, w]) => {
+    Promise.all([api.briefing(), api.watches()])
+      .then(([b, w]) => {
         if (!alive) return;
         setBriefing(b);
-        setEvents(e as unknown as EventRow[]);
         setWatches(((w as { watches: WatchRow[] }).watches) ?? []);
         setError(null);
         track("briefing_viewed", { freshness: b.freshness.as_of });
@@ -206,8 +99,6 @@ export default function IntelligencePage() {
     };
   }, []);
 
-  const askHref = (question: string) =>
-    `/research?q=${encodeURIComponent(question)}`;
   const changes = briefing?.changes ?? [];
   const stale = briefing?.freshness.staleness === "stale";
 
@@ -237,10 +128,8 @@ export default function IntelligencePage() {
           )}
         </header>
 
+        {/* T3：变化卡唯一列表在 ChangeOverview（Hero）——此处不再重复渲染同一批 Change */}
         <div className="flex flex-col">
-          {changes.map((c, i) => (
-            <ChangeCard key={c.change_id} c={c} i={i} />
-          ))}
           {briefing && changes.length === 0 && (
             <p className="text-sm leading-6 text-muted-foreground">
               当前信息量不足以支撑任何值得注意的变化判断——系统选择弃权而非硬凑数字。
@@ -260,42 +149,6 @@ export default function IntelligencePage() {
         <section>
           <SectionHead
             no="§1"
-            title="Active events"
-            zh="进行中的事件"
-            question="Question：现在有哪些事件在演化？"
-          />
-          <div className="flex flex-col">
-            {events.slice(0, 6).map((e) => {
-              const lv = divergenceLevel(e.ndi_status === "ok" ? e.ndi : null);
-              return (
-                <Link
-                  key={e.event_id}
-                  href={`/events/${e.event_id}`}
-                  className="border-b border-border/50 py-2 text-sm hover:text-primary"
-                >
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-mono text-[11px] text-muted-foreground">{e.as_of.slice(5, 10)}</span>
-                    <span className="min-w-0 flex-1 truncate">{e.title}</span>
-                  </div>
-                  <div className="mt-0.5 pl-8">
-                    <span className="text-[11px]" style={{ color: lv.color }}>
-                      ● {lv.zh}
-                    </span>
-                    <span className="ml-2 text-[11px] text-muted-foreground">{e.n_sources} 源</span>
-                  </div>
-                </Link>
-              );
-            })}
-            {events.length === 0 && <p className="text-sm text-muted-foreground">近 7 日无成组事件。</p>}
-          </div>
-          <Link href="/investigate" className="mt-1 inline-block text-xs text-muted-foreground hover:text-primary">
-            全部事件 →
-          </Link>
-        </section>
-
-        <section>
-          <SectionHead
-            no="§2"
             title="Your watchlist"
             zh="关注状态"
             question="Question：我关注的东西最近有什么变化？"
@@ -321,39 +174,6 @@ export default function IntelligencePage() {
           </div>
         </section>
 
-        <section>
-          <SectionHead
-            no="§3"
-            title="Ask the analyst"
-            zh="问分析师"
-            question="Agent 从问题出发，产出可归档的研究结论"
-          />
-          <form
-            onSubmit={(ev) => {
-              ev.preventDefault();
-              if (q.trim()) router.push(askHref(q.trim()));
-            }}
-          >
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Why is the Fed narrative changing?"
-              className="w-full border border-border bg-card px-3 py-2 text-sm outline-none focus:border-foreground"
-            />
-          </form>
-          <div className="mt-2 flex flex-col gap-1">
-            {["为什么市场预期和官方表态出现偏离？", "哪些信源正在推动当前叙事？", "这个变化是短期噪声还是持续趋势？"].map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => router.push(askHref(s))}
-                className="text-left text-xs text-muted-foreground hover:text-primary"
-              >
-                · {s}
-              </button>
-            ))}
-          </div>
-        </section>
       </aside>
     </div>
   );
