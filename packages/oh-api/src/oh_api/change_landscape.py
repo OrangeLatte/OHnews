@@ -176,12 +176,8 @@ def _narrative_streams(
             cluster_split_current={
                 k: round(v, 4) for k, v in _share(cur_cluster.get(f, Counter())).items()
             },
-            adjusted_share_baseline=(
-                round(base_share_c.get(f, 0.0), 4) if cohort_ok else None
-            ),
-            adjusted_share_current=(
-                round(cur_share_c.get(f, 0.0), 4) if cohort_ok else None
-            ),
+            adjusted_share_baseline=(round(base_share_c.get(f, 0.0), 4) if cohort_ok else None),
+            adjusted_share_current=(round(cur_share_c.get(f, 0.0), 4) if cohort_ok else None),
             n_cohort_sources=len(cohort),
         )
         for f in frames
@@ -285,8 +281,7 @@ def _composition_shift_warning(narr: list[NarrativeStream]) -> QualityWarning | 
         if (
             n.adjusted_share_baseline is None
             or n.adjusted_share_current is None
-            or abs(n.adjusted_share_current - n.adjusted_share_baseline)
-            < 0.5 * raw_delta
+            or abs(n.adjusted_share_current - n.adjusted_share_baseline) < 0.5 * raw_delta
         ):
             coh = (
                 f"{n.n_cohort_sources} 个共同来源"
