@@ -36,7 +36,7 @@ from oh_agents.orchestrator import (
 from oh_agents.research import run_research
 from oh_agents.watch_update import compute_watch_update
 from oh_api.briefing import build_briefing, build_dossier
-from oh_api.hourglass import build_hourglass
+from oh_api.hourglass import build_hourglass, write_flip_anchor
 from oh_contracts.belief import BeliefCreate, BeliefSnapshot
 from oh_contracts.briefing import BriefingResponse, ChangeDossier, EvidenceCitation
 from oh_contracts.enums import SourceTier
@@ -305,6 +305,24 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             days=max(1, days),
             top=top,
             min_per_source=min_per_source,
+            anchor_root=paths.root,
+        )
+
+    @app.post("/api/hourglass/flip", response_model=HourglassScene)
+    def hourglass_flip(days: int = 7, top: int = 5, min_per_source: int = 10) -> HourglassScene:
+        """翻转沙漏（阶段 1.5-f）：当前窗设为新基线，此后 current 从翻转时刻重新积累。"""
+        now = _now()
+        write_flip_anchor(paths.root, flipped_at=now, window_days=max(1, days))
+        return build_hourglass(
+            bronze_iter=_bronze().iter_records(),
+            store=_store(),
+            registry=_registry(),
+            tier_map=_tier_map(),
+            now=now,
+            days=max(1, days),
+            top=top,
+            min_per_source=min_per_source,
+            anchor_root=paths.root,
         )
 
     @app.get("/api/changes/{change_id}", response_model=ChangeDossier)

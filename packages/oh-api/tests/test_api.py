@@ -753,6 +753,19 @@ def _cite(item_key: str, source_id: str, quote: str) -> EvidenceCitation:
     )
 
 
+def test_hourglass_flip(client: TestClient) -> None:
+    """翻转沙漏（阶段 1.5-f）：当前窗设为新基线，两窗边界=翻转时刻。"""
+    before = client.get("/api/hourglass").json()
+    flipped = client.post("/api/hourglass/flip?days=7").json()
+    # 翻转后 baseline.end == current.start == 翻转时刻（服务端锚）
+    assert flipped["baseline_window"]["end"] == flipped["current_window"]["start"]
+    # 翻转时 baseline 语义 = 翻转前的 current 窗（起点=原 current 起点）
+    assert flipped["baseline_window"]["start"] == before["baseline_window"]["end"]
+    # 锚点持久化：再 GET 仍用翻转边界
+    again = client.get("/api/hourglass").json()
+    assert again["baseline_window"]["end"] == flipped["baseline_window"]["end"]
+
+
 def test_hero_gate_blocks_insufficient_evidence() -> None:
     """Hero Gate（1.5-d）：单源/HTML/无关引文拦，双源干净引文过。"""
     from oh_api.hourglass import _hero_gate
