@@ -379,6 +379,8 @@ export const api = {
     post<components["schemas"]["WatchReview"]>(`/watches/${encodeURIComponent(id)}/review`, {}),
   hourglass: (days = 7, top = 5) =>
     get<components["schemas"]["HourglassScene"]>(`/hourglass?days=${days}&top=${top}`),
+  hourglassFlip: (days = 7, top = 5) =>
+    post<components["schemas"]["HourglassScene"]>(`/hourglass/flip?days=${days}&top=${top}`, {}),
   eventSpectrum: (id: string) =>
     get<SpectrumDoc[]>(`/events/${encodeURIComponent(id)}/spectrum`),
   eventAnatomy: (id: string) =>

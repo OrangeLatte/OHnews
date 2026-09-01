@@ -106,147 +106,234 @@
   color: var(--muted-foreground);
 }
 
-/* ── Orange Hourglass（1.5-e）：深墨舞台 + 暖橙流光，反差纸张排版 ── */
-.hg-stage {
-  background: #0e1116;
-  color: #f5efe2;
-  border-top: 3px double #0e1116;
-  border-bottom: 3px double #0e1116;
+
+/* ── Change Overview（1.5 重做）：浅色报纸风两窗变化总览 ── */
+.ov-section {
+  border-top: 3px double var(--foreground);
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
 }
-.hg-stage-inner {
+.ov-inner {
   max-width: 72rem;
   margin: 0 auto;
   padding: 1.25rem 1rem 1.5rem;
 }
-.hg-loading,
-.hg-empty {
-  padding: 2.5rem 0;
+.ov-note {
+  padding: 2.25rem 0;
   text-align: center;
+  color: var(--muted-foreground);
 }
-.hg-kicker {
+.ov-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+}
+.ov-kicker {
   font-size: 0.65rem;
   letter-spacing: 0.22em;
   text-transform: uppercase;
+  color: var(--muted-foreground);
 }
-.hg-line {
-  margin-top: 0.5rem;
-  font-size: 0.95rem;
+.ov-line {
+  flex: 1 1 100%;
+  height: 1px;
+  background: var(--border);
+  margin: 0.5rem 0;
 }
-.hg-fresh {
-  font-size: 0.7rem;
-  color: #8a919e;
+.ov-fresh {
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
 }
-.hg-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-.hg-svg {
-  width: 100%;
-  height: auto;
-}
-.hg-serif {
-  font-family: var(--font-newspaper);
-}
-.hg-change circle {
-  transition: r 0.25s ease;
-}
-.hg-change:hover circle {
-  r: 9;
-}
-.hg-change-list {
-  margin-top: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  list-style: none;
-  padding: 0;
-}
-.hg-change-list a {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  color: #f5efe2;
-  padding: 0.35rem 0.6rem;
-  border: 1px solid #2a3038;
-  background: rgba(255, 154, 77, 0.04);
-  transition: border-color 0.2s ease, background 0.2s ease;
-}
-.hg-change-list a:hover,
-.hg-change-list a:focus-visible {
-  border-color: #ff9a4d;
-  background: rgba(255, 154, 77, 0.1);
-}
-.hg-change-kind {
-  font-size: 0.65rem;
-  letter-spacing: 0.12em;
-}
-.hg-change-headline {
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-.hg-change-meta {
-  font-size: 0.7rem;
-  color: #8a919e;
-}
-.hg-warnings {
-  margin-top: 0.6rem;
-  font-size: 0.7rem;
-  color: #c9a227;
-  list-style: none;
-  padding: 0;
-}
-.hg-desktop {
-  margin-top: 0.5rem;
-}
-.hg-mobile {
-  display: none;
-  margin-top: 0.75rem;
-}
-.hg-pulse-row {
+.ov-controls {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 0.4rem;
+  margin-left: auto;
 }
-.hg-pulse-label {
-  width: 2.2rem;
+.ov-control select {
+  font-size: 0.72rem;
+  border: 1px solid var(--border);
+  background: var(--background);
+  padding: 0.15rem 0.35rem;
+}
+.ov-flip {
+  font-size: 0.72rem;
+  border: 1px solid var(--border);
+  background: var(--background);
+  padding: 0.15rem 0.55rem;
+  cursor: pointer;
+}
+.ov-flip:hover:not(:disabled) {
+  border-color: var(--foreground);
+}
+.ov-flip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ov-windows {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1.25rem;
+  margin: 0.75rem 0 0.25rem;
+  font-family: var(--font-newspaper);
+}
+.ov-window {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+.ov-window-label {
   font-size: 0.7rem;
-  color: #8a919e;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
 }
-.hg-pulse-bar {
-  flex: 1;
-  height: 8px;
-  background: #1c222b;
-  border-radius: 4px;
-  overflow: hidden;
-}
-.hg-pulse-bar i {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, #e2762d, #ff9a4d);
-  border-radius: 4px;
-}
-.hg-pulse-num {
-  width: 3.2rem;
-  text-align: right;
-  font-size: 0.75rem;
+.ov-window-num {
+  font-size: 1.15rem;
   font-variant-numeric: tabular-nums;
 }
-@media (max-width: 767px) {
-  .hg-desktop {
-    display: none;
-  }
-  .hg-mobile {
-    display: block;
-  }
+.ov-window-num.ov-now {
+  color: var(--color-signal-divergence);
+}
+.ov-arrow {
+  color: var(--muted-foreground);
+}
+.ov-frames {
+  margin: 0.75rem 0 0.5rem;
+  display: grid;
+  gap: 0.3rem;
+}
+.ov-frame-track {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr 7.5rem;
+  align-items: center;
+  gap: 0.6rem;
+}
+.ov-frame-label {
+  font-size: 0.75rem;
+}
+.ov-frame-moved .ov-frame-label {
+  color: var(--color-signal-divergence);
+  font-weight: 600;
+}
+.ov-frame-num {
+  font-size: 0.72rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.ov-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.ov-dot-base {
+  background: var(--muted-foreground);
+  opacity: 0.55;
+}
+.ov-dot-cur {
+  box-shadow: 0 0 0 2px var(--background);
+}
+.ov-line-seg {
+  height: 2px;
+  background: var(--border);
+}
+.ov-change-list {
+  margin: 0.9rem 0 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.ov-change-list button {
+  text-align: left;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--background);
+  padding: 0.55rem 0.7rem;
+  cursor: pointer;
+}
+.ov-change-list button:hover,
+.ov-change-list button:focus-visible,
+.ov-change-list button[data-active="true"] {
+  border-color: var(--color-signal-divergence);
+  outline: none;
+}
+.ov-change-kind {
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.ov-change-headline {
+  font-family: var(--font-newspaper);
+  font-size: 1.02rem;
+  margin: 0.15rem 0;
+}
+.ov-change-meta {
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+}
+.ov-summary {
+  margin-top: 0.9rem;
+  border: 1px solid var(--foreground);
+  background: var(--background);
+  padding: 0.75rem 0.9rem;
+  position: relative;
+}
+.ov-summary-close {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.55rem;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--muted-foreground);
+}
+.ov-summary-close:hover {
+  color: var(--foreground);
+}
+.ov-summary-kind {
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-signal-divergence);
+}
+.ov-summary-headline {
+  font-family: var(--font-newspaper);
+  font-size: 1.1rem;
+  margin: 0.2rem 0 0.4rem;
+}
+.ov-summary-text {
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+.ov-summary-meta {
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  margin-top: 0.45rem;
+}
+.ov-summary-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--foreground);
+}
+.ov-summary-link:hover {
+  color: var(--color-signal-divergence);
+  border-color: var(--color-signal-divergence);
+}
+.ov-warnings {
+  margin-top: 0.8rem;
+  border-left: 3px solid var(--color-signal-warning);
+  padding: 0.35rem 0 0.35rem 0.7rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
 }
 @media (prefers-reduced-motion: reduce) {
-  .hg-change circle,
-  .hg-change-list a {
+  .ov-change-list button,
+  .ov-summary-link {
     transition: none;
   }
 }
