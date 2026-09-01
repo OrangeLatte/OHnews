@@ -77,6 +77,7 @@ class QualityWarning(_StrictBase):
         "window_empty",
         "stale_data",
         "no_qualified_changes",
+        "gate_insufficient_coverage",
     ]
     message: str = Field(min_length=4)
 

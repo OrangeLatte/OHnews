@@ -8,6 +8,8 @@ import pytest
 from conftest import TIER_MAP, make_now, seed_event
 from fastapi.testclient import TestClient
 from oh_api.app import AppPaths, create_app
+from oh_contracts.briefing import EvidenceCitation, EvidenceSet
+from oh_contracts.signals import Signal, SignalKind
 from oh_pipeline.run import run_pipeline
 from oh_storage.bronze_parquet import ParquetBronzeWriter
 from oh_storage.connection import connect
@@ -717,9 +719,68 @@ def test_hourglass_endpoint(client: TestClient) -> None:
         "window_empty",
         "stale_data",
         "no_qualified_changes",
+        "gate_insufficient_coverage",
     }
     assert all(w["code"] in valid for w in a["quality_warnings"])
     # 确定性：同 now 重跑 scene_id 与窗口统计稳定
     b2 = client.get("/api/hourglass").json()
     assert b2["scene_id"] == a["scene_id"]
     assert b2["current_window"]["n_articles"] == a["current_window"]["n_articles"]
+
+
+def _sig(entity_id: str = "fed") -> Signal:
+    now = make_now()
+    return Signal(
+        signal_id="sig-gate-test",
+        kind=SignalKind.NARRATIVE_SHIFT,
+        entity_id=entity_id,
+        title="Fed Narrative Shift",
+        what_changed="主导叙事迁移",
+        strength=60.0,
+        confidence=0.5,
+        detected_at=now,
+        as_of=now,
+    )
+
+
+def _cite(item_key: str, source_id: str, quote: str) -> EvidenceCitation:
+    return EvidenceCitation(
+        item_key=item_key,
+        source_id=source_id,
+        source_tier="L3",
+        title="标题",
+        quote=quote,
+    )
+
+
+def test_hero_gate_blocks_insufficient_evidence() -> None:
+    """Hero Gate（1.5-d）：单源/HTML/无关引文拦，双源干净引文过。"""
+    from oh_api.hourglass import _hero_gate
+    from oh_pipeline.entities import DEFAULT_ENTITIES, EntityRegistry
+
+    registry = EntityRegistry(DEFAULT_ENTITIES)
+    ok = EvidenceSet(
+        supporting=[
+            _cite("k1", "govcn", "美联储宣布维持利率不变。"),
+            _cite("k2", "wscn", "市场解读 Fed 鹰派信号。"),
+        ]
+    )
+    assert _hero_gate(ok, _sig(), registry) == []
+    single = EvidenceSet(supporting=[_cite("k1", "govcn", "美联储宣布维持利率不变。")])
+    assert any("独立来源" in r for r in _hero_gate(single, _sig(), registry))
+    html = EvidenceSet(
+        supporting=[
+            _cite("k1", "govcn", "美联储宣布维持利率不变。"),
+            _cite("k2", "wscn", "<b>Fed</b> 鹰派信号。"),
+        ]
+    )
+    assert any("HTML" in r for r in _hero_gate(html, _sig(), registry))
+    off = EvidenceSet(
+        supporting=[
+            _cite("k1", "govcn", "日元干预情绪蔓延。"),
+            _cite("k2", "wscn", "东京市场波动加剧。"),
+        ]
+    )
+    assert any("相关性" in r for r in _hero_gate(off, _sig(), registry))
+    empty = EvidenceSet()
+    assert _hero_gate(empty, _sig(), registry) == ["无任何可展示引文"]

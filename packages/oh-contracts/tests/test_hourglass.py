@@ -66,6 +66,7 @@ def test_frame_is_closed_vocabulary() -> None:
 
 def test_warning_code_closed_vocabulary() -> None:
     QualityWarning(code="low_coverage", message="覆盖不足样本说明文字")
+    QualityWarning(code="gate_insufficient_coverage", message="变化因覆盖不足被质量门拦截")
     with pytest.raises(ValidationError):
         QualityWarning(code="bad_luck", message="未知告警码应被拒绝")
 

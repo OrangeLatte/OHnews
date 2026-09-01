@@ -15,7 +15,7 @@ from oh_api.briefing import (
     build_briefing_with_signals,
     data_freshness,
 )
-from oh_contracts.briefing import BriefingResponse, EvidenceCitation
+from oh_contracts.briefing import BriefingResponse, EvidenceCitation, EvidenceSet
 from oh_contracts.enums import SourceTier
 from oh_contracts.hourglass import (
     HourglassScene,
@@ -153,6 +153,38 @@ def _narrative_streams(
     ]
 
 
+def _hero_gate(
+    ev: EvidenceSet,
+    sig: Signal,
+    registry: EntityRegistry,
+) -> list[str]:
+    """Hero Eligibility Gate（阶段 1.5-d）：变化进 Hero 区的硬门。
+
+    判定（全部满足才过门）：
+    1. ≥2 独立来源（source_id 去重；source_id 即媒体源，去重即非同媒体）。
+    2. 实体相关性：至少一条引文 quote/title 命中主体别名
+       （_relevant_quote 切取保证 + gate 显式断言双保险）。
+    3. 引文 HTML 已清洗（quote 无 "<"）。
+    过期显式（staleness）由 quality_warnings 承担，不在本门拦截。
+    """
+    cites = [*(ev.supporting or []), *(ev.contradicting or []), *(ev.context or [])]
+    if not cites:
+        return ["无任何可展示引文"]
+    reasons: list[str] = []
+    n_sources = len({c.source_id for c in cites})
+    if n_sources < 2:
+        reasons.append(f"独立来源仅 {n_sources} 个（Hero 区要求 ≥2）")
+    spec = registry.get(sig.entity_id)
+    aliases = list(spec.aliases) if spec else []
+    if aliases and not any(
+        any(a.lower() in f"{c.title}{c.quote}".lower() for a in aliases) for c in cites
+    ):
+        reasons.append("引文未命中主体别名（实体相关性不足）")
+    if any("<" in c.quote for c in cites):
+        reasons.append("引文含未清洗 HTML")
+    return reasons
+
+
 def _qualified_changes(
     briefing: BriefingResponse,
     signals: list[Signal],
@@ -162,14 +194,31 @@ def _qualified_changes(
     tier_map: dict[str, SourceTier],
     registry: EntityRegistry,
     now: datetime,
-) -> tuple[list[QualifiedChange], list[EvidenceCitation]]:
-    """腰部 Change Point + 证据引用（supporting 桶前 2 条/变化）。
+) -> tuple[list[QualifiedChange], list[EvidenceCitation], int]:
+    """腰部 Change Point + 证据引用（supporting 桶前 2 条/变化）+ Gate 拦截计数。
 
     changes 与 signals 同序（同一次 detect_signals 产出），zip 配对回查证据链。
+    每个 change 先组装证据再过 Hero Gate（1.5-d），未过门不进入腰部。
     """
     changes: list[QualifiedChange] = []
     refs: dict[str, EvidenceCitation] = {}
+    gated_out = 0
     for b, sig in zip(briefing.changes[:_MAX_QUALIFIED], signals, strict=False):
+        try:
+            ev = bucket_evidence(
+                sig,
+                bronze_by_key=bronze_by_key,
+                store=store,
+                tier_map=tier_map,
+                as_of=now,
+                registry=registry,
+            )
+        except (KeyError, ValueError):
+            gated_out += 1
+            continue
+        if _hero_gate(ev, sig, registry):
+            gated_out += 1
+            continue
         changes.append(
             QualifiedChange(
                 change_id=b.change_id,
@@ -182,21 +231,10 @@ def _qualified_changes(
                 subjects=[s.label for s in (b.subjects or [])],
             )
         )
-        try:
-            ev = bucket_evidence(
-                sig,
-                bronze_by_key=bronze_by_key,
-                store=store,
-                tier_map=tier_map,
-                as_of=now,
-                registry=registry,
-            )
-        except (KeyError, ValueError):
-            continue
         for c in (ev.supporting or ev.context or [])[:2]:
             if c.item_key not in refs:
                 refs[c.item_key] = c
-    return changes, list(refs.values())[:_MAX_EVIDENCE_REFS]
+    return changes, list(refs.values())[:_MAX_EVIDENCE_REFS], gated_out
 
 
 def _warnings(
@@ -204,6 +242,7 @@ def _warnings(
     streams: list[SourceStream],
     changes: list[QualifiedChange],
     freshness_staleness: str,
+    gated_out: int = 0,
 ) -> list[QualityWarning]:
     out: list[QualityWarning] = []
     if cur.n_articles == 0:
@@ -227,6 +266,13 @@ def _warnings(
             )
     if freshness_staleness == "stale":
         out.append(QualityWarning(code="stale_data", message="数据已明显过期，请谨慎解读时间对比"))
+    if gated_out > 0:
+        out.append(
+            QualityWarning(
+                code="gate_insufficient_coverage",
+                message=f"{gated_out} 个变化因覆盖不足（独立来源/相关性/引文质量）未进入主视图",
+            )
+        )
     if not changes:
         out.append(
             QualityWarning(
@@ -281,7 +327,7 @@ def build_hourglass(
         min_per_source=min_per_source,
     )
     bronze_by_key = {r.item_key: r for r in records}
-    changes, refs = _qualified_changes(
+    changes, refs, gated_out = _qualified_changes(
         briefing,
         signals,
         bronze_by_key=bronze_by_key,
@@ -291,7 +337,7 @@ def build_hourglass(
         now=now,
     )
     freshness = data_freshness(records, now=now, lookback_days=max(1, days))
-    warnings = _warnings(current_w, streams, changes, freshness.staleness)
+    warnings = _warnings(current_w, streams, changes, freshness.staleness, gated_out)
 
     seed = f"{baseline_w.start}|{current_w.end}"
     scene_id = f"hg-{now:%Y%m%d}-{hashlib.sha1(seed.encode()).hexdigest()[:8]}"
