@@ -30,6 +30,8 @@ from oh_contracts.briefing import (
     TechnicalAnnex,
 )
 from oh_contracts.change_landscape import (
+    ChangeFieldPayload,
+    ChangeFieldPoint,
     ChangeLandscape,
     NarrativeStream,
     QualifiedChange,
@@ -150,6 +152,8 @@ __all__ = [
     "Evidence",
     "ExtractionEngine",
     "FrameLabel",
+    "ChangeFieldPayload",
+    "ChangeFieldPoint",
     "ChangeLandscape",
     "Hypothesis",
     "NDIPoint",

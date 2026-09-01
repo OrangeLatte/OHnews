@@ -105,3 +105,23 @@ class ChangeLandscape(_StrictBase):
     evidence_refs: list[EvidenceCitation] = Field(default_factory=list)
     freshness: DataFreshness
     quality_warnings: list[QualityWarning] = Field(default_factory=list)
+
+
+class ChangeFieldPoint(_StrictBase):
+    """Narrative Change Field 单日数据点：泳道(tier 簇)×框架计数矩阵。"""
+
+    date: str
+    lanes: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+
+class ChangeFieldPayload(_StrictBase):
+    """叙事场时序数据（T8）：前端只渲染不拼图。
+
+    series 按日期升序；changes 为过 Hero Gate 的合格变化（右栏展开入口）；
+    lane 键 = tier 簇（official/press/social/unknown），值 = 框架→文章数。
+    """
+
+    days: int
+    series: list[ChangeFieldPoint] = Field(default_factory=list)
+    changes: list[QualifiedChange] = Field(default_factory=list)
+    freshness: DataFreshness
