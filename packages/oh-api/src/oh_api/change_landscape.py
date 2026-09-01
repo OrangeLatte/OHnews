@@ -112,11 +112,20 @@ def _narrative_streams(
     now: datetime,
     tier_map: dict[str, SourceTier],
 ) -> list[NarrativeStream]:
-    """两窗框架份额流带（stance 行 ts 分窗；cluster_split=官方 vs 市场份额）。"""
+    """两窗框架份额流带（stance 行 ts 分窗；cluster_split=官方 vs 市场份额）。
+
+    T2 可比性校正：同时输出共同来源 cohort（两窗都出现的源）内的校正份额
+    adjusted_share_*——未校正 share_* 会被「来源结构变化」污染（如基线 14 源
+    vs 当前 48 源，冲突份额下降可能只是新源稀释）。cohort <2 源时 adjusted=None。
+    """
     base_frames: Counter[str] = Counter()
     cur_frames: Counter[str] = Counter()
     base_cluster: dict[str, Counter[str]] = {}
     cur_cluster: dict[str, Counter[str]] = {}
+    base_frames_c: Counter[str] = Counter()
+    cur_frames_c: Counter[str] = Counter()
+    base_sources: set[str] = set()
+    cur_sources: set[str] = set()
     for r in rows:
         ts = r.ts if r.ts.tzinfo else r.ts.replace(tzinfo=UTC)
         if ts > now:
@@ -128,11 +137,30 @@ def _narrative_streams(
         if ts >= lo_cur:
             cur_frames[frame] += 1
             cur_cluster.setdefault(frame, Counter())[cluster] += 1
+            cur_sources.add(r.source_id)
         elif ts >= lo_base:
             base_frames[frame] += 1
             base_cluster.setdefault(frame, Counter())[cluster] += 1
+            base_sources.add(r.source_id)
+    cohort = base_sources & cur_sources
+    cohort_ok = len(cohort) >= 2
+    for r in rows:
+        if not cohort_ok or r.source_id not in cohort:
+            continue
+        ts = r.ts if r.ts.tzinfo else r.ts.replace(tzinfo=UTC)
+        if ts > now:
+            continue
+        frame = r.frame.value if hasattr(r.frame, "value") else str(r.frame)
+        if frame not in _FRAME_ZH:
+            frame = "other"
+        if ts >= lo_cur:
+            cur_frames_c[frame] += 1
+        elif ts >= lo_base:
+            base_frames_c[frame] += 1
     base_share = _share(base_frames)
     cur_share = _share(cur_frames)
+    base_share_c = _share(base_frames_c)
+    cur_share_c = _share(cur_frames_c)
     frames = sorted(set(base_share) | set(cur_share), key=lambda f: (-(cur_share.get(f, 0.0)), f))
     return [
         NarrativeStream(
@@ -148,6 +176,13 @@ def _narrative_streams(
             cluster_split_current={
                 k: round(v, 4) for k, v in _share(cur_cluster.get(f, Counter())).items()
             },
+            adjusted_share_baseline=(
+                round(base_share_c.get(f, 0.0), 4) if cohort_ok else None
+            ),
+            adjusted_share_current=(
+                round(cur_share_c.get(f, 0.0), 4) if cohort_ok else None
+            ),
+            n_cohort_sources=len(cohort),
         )
         for f in frames
     ]
@@ -237,12 +272,45 @@ def _qualified_changes(
     return changes, list(refs.values())[:_MAX_EVIDENCE_REFS], gated_out
 
 
+def _composition_shift_warning(narr: list[NarrativeStream]) -> QualityWarning | None:
+    """T2 来源可比性校正：raw 迁移主要由来源结构变化驱动时降级提示。
+
+    判定：任一框架 |raw Δ|≥0.10 且（cohort<2 不可校正 或 |adjusted Δ| < 0.5·|raw Δ|）
+    → 提示「框架迁移可能反映来源结构变化而非真实叙事转变」，校正口径见 adjusted 字段。
+    """
+    for n in narr:
+        raw_delta = abs(n.share_current - n.share_baseline)
+        if raw_delta < 0.10:
+            continue
+        if (
+            n.adjusted_share_baseline is None
+            or n.adjusted_share_current is None
+            or abs(n.adjusted_share_current - n.adjusted_share_baseline)
+            < 0.5 * raw_delta
+        ):
+            coh = (
+                f"{n.n_cohort_sources} 个共同来源"
+                if n.n_cohort_sources >= 2
+                else "共同来源不足 2 个"
+            )
+            return QualityWarning(
+                code="source_composition_shift",
+                message=(
+                    f"两窗来源构成不同，未校正对比可能高估框架迁移（如「{n.label}」"
+                    f"原始 {n.share_baseline:.0%}→{n.share_current:.0%}）；"
+                    f"校正口径（{coh}）显示变化更温和——解读以校正份额为准"
+                ),
+            )
+    return None
+
+
 def _warnings(
     cur: TimeWindow,
     streams: list[SourceStream],
     changes: list[QualifiedChange],
     freshness_staleness: str,
     gated_out: int = 0,
+    narr: list[NarrativeStream] | None = None,
 ) -> list[QualityWarning]:
     out: list[QualityWarning] = []
     if cur.n_articles == 0:
@@ -280,6 +348,10 @@ def _warnings(
                 message="窗口内没有通过质量门的变化，腰部为空",
             )
         )
+    if narr is not None:
+        comp = _composition_shift_warning(narr)
+        if comp is not None:
+            out.append(comp)
     return out
 
 
@@ -342,7 +414,7 @@ def build_change_landscape(
         now=now,
     )
     freshness = data_freshness(records, now=now, lookback_days=max(1, days))
-    warnings = _warnings(current_w, streams, changes, freshness.staleness, gated_out)
+    warnings = _warnings(current_w, streams, changes, freshness.staleness, gated_out, narr)
 
     seed = f"{baseline_w.start}|{current_w.end}"
     scene_id = f"hg-{now:%Y%m%d}-{hashlib.sha1(seed.encode()).hexdigest()[:8]}"

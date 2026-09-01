@@ -721,6 +721,7 @@ def test_change_landscape_endpoint(client: TestClient) -> None:
         "stale_data",
         "no_qualified_changes",
         "gate_insufficient_coverage",
+        "source_composition_shift",
     }
     assert all(w["code"] in valid for w in a["quality_warnings"])
     # 确定性：同 now 重跑 scene_id 与窗口统计稳定
