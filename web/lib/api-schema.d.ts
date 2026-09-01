@@ -70,6 +70,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/hourglass": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hourglass
+         * @description Orange Hourglass 场景聚合（阶段 1.5-c）：后端拼图，前端只渲染。
+         */
+        get: operations["hourglass_api_hourglass_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/changes/{change_id}": {
         parameters: {
             query?: never;
@@ -1314,6 +1334,147 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
+         * HourglassScene
+         * @description 沙漏场景聚合（/api/hourglass 唯一出口）。
+         */
+        HourglassScene: {
+            /** Scene Id */
+            scene_id: string;
+            /** Generated At */
+            generated_at: string;
+            baseline_window: components["schemas"]["TimeWindow"];
+            current_window: components["schemas"]["TimeWindow"];
+            /** Source Streams */
+            source_streams?: components["schemas"]["SourceStream"][];
+            /** Narrative Streams */
+            narrative_streams?: components["schemas"]["NarrativeStream"][];
+            /** Qualified Changes */
+            qualified_changes?: components["schemas"]["QualifiedChange"][];
+            /** Evidence Refs */
+            evidence_refs?: components["schemas"]["EvidenceCitation"][];
+            freshness: components["schemas"]["DataFreshness"];
+            /** Quality Warnings */
+            quality_warnings?: components["schemas"]["QualityWarning"][];
+        };
+        /**
+         * NarrativeStream
+         * @description 叙事流带：颜色=框架，share_* ∈ [0,1] 为该窗内框架份额。
+         */
+        NarrativeStream: {
+            /**
+             * Frame
+             * @enum {string}
+             */
+            frame: "loss" | "gain" | "responsibility" | "conflict" | "human_interest" | "other";
+            /** Label */
+            label: string;
+            /**
+             * Share Baseline
+             * @default 0
+             */
+            share_baseline: number;
+            /**
+             * Share Current
+             * @default 0
+             */
+            share_current: number;
+            /**
+             * N Baseline
+             * @default 0
+             */
+            n_baseline: number;
+            /**
+             * N Current
+             * @default 0
+             */
+            n_current: number;
+            /** Cluster Split Baseline */
+            cluster_split_baseline?: {
+                [key: string]: number;
+            };
+            /** Cluster Split Current */
+            cluster_split_current?: {
+                [key: string]: number;
+            };
+        };
+        /**
+         * QualifiedChange
+         * @description 腰部 Change Point：已过质量门的变化（复用 Briefing 人话语义）。
+         */
+        QualifiedChange: {
+            /** Change Id */
+            change_id: string;
+            /** Kind */
+            kind: string;
+            /** Headline */
+            headline: string;
+            /** What */
+            what: string;
+            /**
+             * Why Now
+             * @default
+             */
+            why_now: string;
+            /**
+             * Strength Word
+             * @default
+             */
+            strength_word: string;
+            /**
+             * Urgency
+             * @default
+             */
+            urgency: string;
+            /** Subjects */
+            subjects?: string[];
+            /** At */
+            at?: string | null;
+        };
+        /**
+         * QualityWarning
+         * @description 质量门未过项/覆盖缺陷：显式暴露，不静默。
+         */
+        QualityWarning: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "low_coverage" | "single_source_dominant" | "window_empty" | "stale_data" | "no_qualified_changes";
+            /** Message */
+            message: string;
+        };
+        /**
+         * SourceStream
+         * @description 来源流带：宽度=覆盖量（两窗文章数），Hover 显示来源群体。
+         */
+        SourceStream: {
+            /** Source Id */
+            source_id: string;
+            /** Label */
+            label: string;
+            /**
+             * Tier
+             * @default
+             */
+            tier: string;
+            /**
+             * Cluster
+             * @default market
+             * @enum {string}
+             */
+            cluster: "official" | "market";
+            /**
+             * N Baseline
+             * @default 0
+             */
+            n_baseline: number;
+            /**
+             * N Current
+             * @default 0
+             */
+            n_current: number;
+        };
+        /**
          * SourceTier
          * @description 信源层级（L1 官方 / L2 通讯社 / L3 财经媒体 / L4 社媒）。
          * @enum {string}
@@ -1358,6 +1519,26 @@ export interface components {
             extra?: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * TimeWindow
+         * @description 等长时间窗：baseline=过去窗、current=当前窗（翻转沙漏即交换两者）。
+         */
+        TimeWindow: {
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+            /**
+             * N Articles
+             * @default 0
+             */
+            n_articles: number;
+            /**
+             * N Sources
+             * @default 0
+             */
+            n_sources: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -1549,6 +1730,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BriefingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hourglass_api_hourglass_get: {
+        parameters: {
+            query?: {
+                days?: number;
+                top?: number;
+                min_per_source?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HourglassScene"];
                 };
             };
             /** @description Validation Error */

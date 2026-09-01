@@ -105,3 +105,148 @@
   text-transform: uppercase;
   color: var(--muted-foreground);
 }
+
+/* ── Orange Hourglass（1.5-e）：深墨舞台 + 暖橙流光，反差纸张排版 ── */
+.hg-stage {
+  background: #0e1116;
+  color: #f5efe2;
+  border-top: 3px double #0e1116;
+  border-bottom: 3px double #0e1116;
+}
+.hg-stage-inner {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1.25rem 1rem 1.5rem;
+}
+.hg-loading,
+.hg-empty {
+  padding: 2.5rem 0;
+  text-align: center;
+}
+.hg-kicker {
+  font-size: 0.65rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.hg-line {
+  margin-top: 0.5rem;
+  font-size: 0.95rem;
+}
+.hg-fresh {
+  font-size: 0.7rem;
+  color: #8a919e;
+}
+.hg-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.hg-svg {
+  width: 100%;
+  height: auto;
+}
+.hg-serif {
+  font-family: var(--font-newspaper);
+}
+.hg-change circle {
+  transition: r 0.25s ease;
+}
+.hg-change:hover circle {
+  r: 9;
+}
+.hg-change-list {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  list-style: none;
+  padding: 0;
+}
+.hg-change-list a {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  color: #f5efe2;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid #2a3038;
+  background: rgba(255, 154, 77, 0.04);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.hg-change-list a:hover,
+.hg-change-list a:focus-visible {
+  border-color: #ff9a4d;
+  background: rgba(255, 154, 77, 0.1);
+}
+.hg-change-kind {
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+}
+.hg-change-headline {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.hg-change-meta {
+  font-size: 0.7rem;
+  color: #8a919e;
+}
+.hg-warnings {
+  margin-top: 0.6rem;
+  font-size: 0.7rem;
+  color: #c9a227;
+  list-style: none;
+  padding: 0;
+}
+.hg-desktop {
+  margin-top: 0.5rem;
+}
+.hg-mobile {
+  display: none;
+  margin-top: 0.75rem;
+}
+.hg-pulse-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.hg-pulse-label {
+  width: 2.2rem;
+  font-size: 0.7rem;
+  color: #8a919e;
+}
+.hg-pulse-bar {
+  flex: 1;
+  height: 8px;
+  background: #1c222b;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.hg-pulse-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #e2762d, #ff9a4d);
+  border-radius: 4px;
+}
+.hg-pulse-num {
+  width: 3.2rem;
+  text-align: right;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 767px) {
+  .hg-desktop {
+    display: none;
+  }
+  .hg-mobile {
+    display: block;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hg-change circle,
+  .hg-change-list a {
+    transition: none;
+  }
+}
