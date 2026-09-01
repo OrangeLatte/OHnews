@@ -123,11 +123,24 @@ function OverviewStage({
   const stale = (scene.quality_warnings ?? []).some((w) => w.code === "stale_data");
   const changes = scene.qualified_changes ?? [];
   const sel = changes.find((c) => c.change_id === selected) ?? null;
-  // 框架迁移哑铃：变化幅度降序取前 5
-  const frames = [...(scene.narrative_streams ?? [])].sort(
-    (a, b) => Math.abs(b.share_current - b.share_baseline) - Math.abs(a.share_current - a.share_baseline),
-  ).slice(0, 5);
-  const maxShare = Math.max(0.05, ...frames.map((n) => Math.max(n.share_baseline, n.share_current)));
+  // 框架迁移哑铃：按显示口径（adjusted 优先）的变化幅度降序取前 5
+  type NarrStream = NonNullable<ChangeLandscape["narrative_streams"]>[number];
+  const dispDelta = (n: NarrStream) =>
+    n.adjusted_share_baseline != null && n.adjusted_share_current != null
+      ? Math.abs(n.adjusted_share_current - n.adjusted_share_baseline)
+      : Math.abs(n.share_current - n.share_baseline);
+  const frames = [...(scene.narrative_streams ?? [])]
+    .sort((a, b) => dispDelta(b) - dispDelta(a))
+    .slice(0, 5);
+  const maxShare = Math.max(
+    0.05,
+    ...frames.map((n) =>
+      Math.max(
+        n.adjusted_share_baseline ?? n.share_baseline,
+        n.adjusted_share_current ?? n.share_current,
+      ),
+    ),
+  );
 
   return (
     <section className="ov-section" aria-label="变化总览：过去窗口与当前窗口的对比">
@@ -177,35 +190,41 @@ function OverviewStage({
           </div>
         </div>
 
-        {/* 框架迁移哑铃图（报纸色板） */}
+        {/* 框架迁移哑铃图（报纸色板；adjusted=共同来源校正口径优先） */}
         {frames.length > 0 && (
           <div className="ov-frames" role="img" aria-label="叙事框架份额迁移">
             {frames.map((n) => {
               const color = FRAME_COLORS[n.frame] ?? SIGNAL.muted;
-              const moved = Math.abs(n.share_current - n.share_baseline) >= 0.1;
+              const adjusted =
+                n.adjusted_share_baseline != null && n.adjusted_share_current != null;
+              const b = adjusted ? n.adjusted_share_baseline! : n.share_baseline;
+              const c = adjusted ? n.adjusted_share_current! : n.share_current;
+              const moved = Math.abs(c - b) >= 0.1;
               return (
                 <div key={n.frame} className={`ov-frame${moved ? " ov-frame-moved" : ""}`}>
-                  <span className="ov-frame-label">{n.label}</span>
+                  <span className="ov-frame-label">
+                    {n.label}
+                    {adjusted && <em className="ov-frame-adj">校正</em>}
+                  </span>
                   <span className="ov-frame-track">
-                    <i
-                      className="ov-dot ov-dot-base"
-                      style={{ left: `${(n.share_baseline / maxShare) * 100}%` }}
-                    />
+                    <i className="ov-dot ov-dot-base" style={{ left: `${(b / maxShare) * 100}%` }} />
                     <i
                       className="ov-line-seg"
                       style={{
-                        left: `${(Math.min(n.share_baseline, n.share_current) / maxShare) * 100}%`,
-                        width: `${(Math.abs(n.share_current - n.share_baseline) / maxShare) * 100}%`,
+                        left: `${(Math.min(b, c) / maxShare) * 100}%`,
+                        width: `${(Math.abs(c - b) / maxShare) * 100}%`,
                         background: color,
                       }}
                     />
                     <i
                       className="ov-dot ov-dot-cur"
-                      style={{ left: `${(n.share_current / maxShare) * 100}%`, background: color }}
+                      style={{ left: `${(c / maxShare) * 100}%`, background: color }}
                     />
                   </span>
                   <span className="ov-frame-num">
-                    {Math.round(n.share_baseline * 100)}% → {Math.round(n.share_current * 100)}%
+                    {adjusted
+                      ? `${Math.round(b * 100)}% → ${Math.round(c * 100)}%（共同来源 ${n.n_cohort_sources} 个校正口径）`
+                      : `${Math.round(n.share_baseline * 100)}% → ${Math.round(n.share_current * 100)}%（原始口径，不可校正）`}
                   </span>
                 </div>
               );

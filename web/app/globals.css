@@ -214,6 +214,14 @@
 .ov-frame-label {
   font-size: 0.75rem;
 }
+.ov-frame-adj {
+  font-style: normal;
+  margin-left: 0.25rem;
+  font-size: 0.62rem;
+  padding: 0 0.2rem;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+}
 .ov-frame-moved .ov-frame-label {
   color: var(--color-signal-divergence);
   font-weight: 600;
