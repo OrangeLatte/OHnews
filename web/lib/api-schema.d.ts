@@ -130,6 +130,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Home
+         * @description 首页单次聚合（T4）：briefing + 变化场 + watchlist 一次返回。
+         *
+         *     消除前端 4 并发请求竞态；briefing_viewed 去重到前端单一数据源。
+         */
+        get: operations["home_api_home_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/changes/{change_id}": {
         parameters: {
             query?: never;
@@ -1397,6 +1419,18 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
+         * HomePayload
+         * @description 首页单次聚合响应（T4）：消除前端多请求竞态与重复 briefing_viewed。
+         */
+        HomePayload: {
+            briefing: components["schemas"]["BriefingResponse"];
+            landscape: components["schemas"]["ChangeLandscape"];
+            /** Watches */
+            watches: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
          * NarrativeStream
          * @description 叙事流带：颜色=框架，share_* ∈ [0,1] 为该窗内框架份额。
          *
@@ -1873,6 +1907,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChangeLandscape"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    home_api_home_get: {
+        parameters: {
+            query?: {
+                days?: number;
+                top?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomePayload"];
                 };
             };
             /** @description Validation Error */

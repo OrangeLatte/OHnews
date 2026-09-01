@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { api, type ChangeLandscape } from "@/lib/api";
+import { useState } from "react";
+import { type ChangeLandscape } from "@/lib/api";
 import { track } from "@/lib/track";
 import { FRAME_COLORS, SIGNAL } from "@/lib/tokens";
 
@@ -38,34 +38,19 @@ function fmtInt(n: number): string {
   return n.toLocaleString("en-US");
 }
 
-export function ChangeOverview() {
-  const [scene, setScene] = useState<ChangeLandscape | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [days, setDays] = useState(7);
-  const seenRef = useRef(false);
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .changeLandscape(days)
-      .then((s) => {
-        if (!alive) return;
-        setScene(s);
-        if (!seenRef.current) {
-          seenRef.current = true;
-          track("briefing_viewed", { freshness: s.freshness.as_of, fromPage: "/#overview" });
-        }
-      })
-      .catch(() => {
-        if (alive) setFailed(true);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [days]);
-
-  if (failed) return null; // 失败静默让位，Briefing 卡列表仍是主内容
-
+/**
+ * 变化总览（受控组件，T4）：数据由父层 /api/home 单源提供，本组件只渲染。
+ * 保留四态：loading（父层未就绪）/ 正常 / 覆盖不足显式弃权 / blocked 警告列表。
+ */
+export function ChangeOverview({
+  scene,
+  days,
+  onDaysChange,
+}: {
+  scene: ChangeLandscape | null;
+  days: number;
+  onDaysChange: (d: number) => void;
+}) {
   if (!scene) {
     return (
       <section className="ov-section" aria-label="变化总览" aria-busy="true">
@@ -103,9 +88,7 @@ export function ChangeOverview() {
     );
   }
 
-  return (
-    <OverviewStage scene={scene} days={days} onDaysChange={setDays} />
-  );
+  return <OverviewStage scene={scene} days={days} onDaysChange={onDaysChange} />;
 }
 
 function OverviewStage({

@@ -9,7 +9,8 @@
  * Dashboard 双图按审计裁决移除（认知闭环优先，图表堆砌不进入主路径）。
  */
 
-import { useEffect, useState } from "react";
+import type { components } from "@/lib/api-schema";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 import {
@@ -76,29 +77,38 @@ function FreshnessLine({ b }: { b: BriefingResponse }) {
 /* ── 页面 ── */
 
 export default function IntelligencePage() {
-  const [briefing, setBriefing] = useState<BriefingResponse | null>(null);
-  const [watches, setWatches] = useState<WatchRow[]>([]);
+  // T4：单源 /api/home——briefing/landscape/watches 一次聚合，消除并发竞态；
+  // briefing_viewed 只在本页 track 一次（ChangeOverview 改受控不再上报）。
+  const [home, setHome] = useState<components["schemas"]["HomePayload"] | null>(null);
+  const [days, setDays] = useState(7);
   const [error, setError] = useState<string | null>(null);
+  const seenRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
-    Promise.all([api.briefing(), api.watches()])
-      .then(([b, w]) => {
+    api
+      .home(days)
+      .then((h) => {
         if (!alive) return;
-        setBriefing(b);
-        setWatches(((w as { watches: WatchRow[] }).watches) ?? []);
+        setHome(h);
         setError(null);
-        track("briefing_viewed", { freshness: b.freshness.as_of });
+        if (!seenRef.current) {
+          seenRef.current = true;
+          track("briefing_viewed", { freshness: h.briefing.freshness.as_of });
+        }
       })
       .catch((err) => {
         if (!alive) return;
+        setHome(null);
         setError(err instanceof Error ? err.message : String(err));
       });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [days]);
 
+  const briefing: BriefingResponse | null = home?.briefing ?? null;
+  const watches = (home?.watches as unknown as WatchRow[]) ?? [];
   const changes = briefing?.changes ?? [];
   const stale = briefing?.freshness.staleness === "stale";
 
@@ -106,7 +116,7 @@ export default function IntelligencePage() {
     <div className="grid grid-cols-1 gap-x-10 gap-y-8 lg:grid-cols-12">
       {/* ── Hero：变化总览（全宽，双窗叙事对比） ── */}
       <div className="lg:col-span-12 -mx-4 sm:-mx-6 lg:-mx-10 min-w-0">
-        <ChangeOverview />
+        <ChangeOverview scene={home?.landscape ?? null} days={days} onDaysChange={setDays} />
       </div>
 
       {/* ── Main 8 栏：Briefing ── */}

@@ -377,6 +377,8 @@ export const api = {
     get<components["schemas"]["WatchUpdate"]>(`/watches/${encodeURIComponent(id)}/update`),
   watchReview: (id: string) =>
     post<components["schemas"]["WatchReview"]>(`/watches/${encodeURIComponent(id)}/review`, {}),
+  home: (days = 7, top = 5) =>
+    get<components["schemas"]["HomePayload"]>(`/home?days=${days}&top=${top}`),
   changeLandscape: (days = 7, top = 5) =>
     get<components["schemas"]["ChangeLandscape"]>(`/change-landscape?days=${days}&top=${top}`),
   eventSpectrum: (id: string) =>
