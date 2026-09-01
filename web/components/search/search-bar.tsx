@@ -10,12 +10,15 @@
  */
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { track } from "@/lib/track";
 
 type SearchResult = {
-  item_key: string;
-  source_id: string;
+  kind: "article" | "event";
+  item_key?: string;
+  id?: string;
+  source_id?: string;
   title: string;
   url: string;
   published_at: string | null;
@@ -36,6 +39,7 @@ function fmtDate(iso: string): string {
 export function SearchBar() {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -80,6 +84,11 @@ export function SearchBar() {
   }, [active]);
 
   function openResult(item: SearchResult) {
+    if (item.kind === "event" && item.id) {
+      track("change_opened", { objectId: item.id, fromPage: "/search-bar" });
+      router.push(`/events/${item.id}`);
+      return;
+    }
     if (!item.url) return;
     track("source_opened", { objectId: item.item_key, fromPage: "/search-bar" });
     window.open(item.url, "_blank", "noopener,noreferrer");
@@ -109,18 +118,23 @@ export function SearchBar() {
           ) : (
             <ul className="max-h-96 overflow-y-auto">
               {results.map((item) => (
-                <li key={item.item_key}>
+                <li key={item.item_key ?? item.id}>
                   <button
                     type="button"
                     onClick={() => openResult(item)}
-                    disabled={!item.url}
+                    disabled={item.kind === "article" && !item.url}
                     className="block w-full px-3 py-2 text-left hover:bg-foreground/5 disabled:cursor-default"
                   >
                     <span className="font-paper block truncate text-sm">
+                      {item.kind === "event" && (
+                        <span className="mr-1 border border-black/20 px-1 text-[10px] align-middle">
+                          事件
+                        </span>
+                      )}
                       {item.title || "（无标题）"}
                     </span>
                     <span className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                      <span>{item.source_id}</span>
+                      <span>{item.source_id ?? "事件"}</span>
                       {item.published_at && <span>{fmtDate(item.published_at)}</span>}
                     </span>
                     <span className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
