@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api, type HourglassScene } from "@/lib/api";
+import { api, type ChangeLandscape } from "@/lib/api";
 import { track } from "@/lib/track";
 import { FRAME_COLORS, SIGNAL } from "@/lib/tokens";
 
 /**
  * Change Overview（变化总览）——报纸风浅色两窗对比信息图。
  *
- * 数据面来自 /api/hourglass（HourglassScene，后端拼图）；
+ * 数据面来自 /api/change-landscape（ChangeLandscape，后端拼图）；
  * 视觉与全站同一血统：纸白底、墨黑数字、hairline 分隔、报纸红强调。
  * 上=过去窗口，下=当前窗口；框架迁移哑铃图；变化点可点击聚焦。
  * 移动端纵向降级；prefers-reduced-motion 禁过渡。
@@ -39,16 +39,15 @@ function fmtInt(n: number): string {
 }
 
 export function ChangeOverview() {
-  const [scene, setScene] = useState<HourglassScene | null>(null);
+  const [scene, setScene] = useState<ChangeLandscape | null>(null);
   const [failed, setFailed] = useState(false);
   const [days, setDays] = useState(7);
-  const [flipping, setFlipping] = useState(false);
   const seenRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
     api
-      .hourglass(days)
+      .changeLandscape(days)
       .then((s) => {
         if (!alive) return;
         setScene(s);
@@ -64,18 +63,6 @@ export function ChangeOverview() {
       alive = false;
     };
   }, [days]);
-
-  const flip = () => {
-    if (flipping) return;
-    setFlipping(true);
-    api
-      .hourglassFlip(days)
-      .then((s) => {
-        setScene(s);
-        setFlipping(false);
-      })
-      .catch(() => setFlipping(false));
-  };
 
   if (failed) return null; // 失败静默让位，Briefing 卡列表仍是主内容
 
@@ -117,22 +104,18 @@ export function ChangeOverview() {
   }
 
   return (
-    <OverviewStage scene={scene} days={days} flipping={flipping} onDaysChange={setDays} onFlip={flip} />
+    <OverviewStage scene={scene} days={days} onDaysChange={setDays} />
   );
 }
 
 function OverviewStage({
   scene,
   days,
-  flipping,
   onDaysChange,
-  onFlip,
 }: {
-  scene: HourglassScene;
+  scene: ChangeLandscape;
   days: number;
-  flipping: boolean;
   onDaysChange: (d: number) => void;
-  onFlip: () => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const bw = scene.baseline_window;
@@ -170,18 +153,6 @@ function OverviewStage({
                 <option value={14}>近 14 天</option>
               </select>
             </label>
-            <button
-              type="button"
-              className="ov-flip"
-              disabled={flipping}
-              onClick={() => {
-                setSelected(null);
-                onFlip();
-              }}
-              title="把当前窗口设为新基线，此后对比从翻转时刻重新积累"
-            >
-              {flipping ? "切换中…" : "以此为新基线"}
-            </button>
           </div>
         </div>
 

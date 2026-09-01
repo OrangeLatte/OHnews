@@ -14,7 +14,7 @@ export type EvidenceCitation = components["schemas"]["EvidenceCitation"];
 export type EvidenceGap = components["schemas"]["EvidenceGap"];
 export type EvidenceSet = components["schemas"]["EvidenceSet"];
 export type CoverageSummary = components["schemas"]["CoverageSummary"];
-export type HourglassScene = components["schemas"]["HourglassScene"];
+export type ChangeLandscape = components["schemas"]["ChangeLandscape"];
 export type SubjectRef = components["schemas"]["SubjectRef"];
 // 阶段 2 判断闭环
 export type BeliefSnapshot = components["schemas"]["BeliefSnapshot"];
@@ -377,10 +377,8 @@ export const api = {
     get<components["schemas"]["WatchUpdate"]>(`/watches/${encodeURIComponent(id)}/update`),
   watchReview: (id: string) =>
     post<components["schemas"]["WatchReview"]>(`/watches/${encodeURIComponent(id)}/review`, {}),
-  hourglass: (days = 7, top = 5) =>
-    get<components["schemas"]["HourglassScene"]>(`/hourglass?days=${days}&top=${top}`),
-  hourglassFlip: (days = 7, top = 5) =>
-    post<components["schemas"]["HourglassScene"]>(`/hourglass/flip?days=${days}&top=${top}`, {}),
+  changeLandscape: (days = 7, top = 5) =>
+    get<components["schemas"]["ChangeLandscape"]>(`/change-landscape?days=${days}&top=${top}`),
   eventSpectrum: (id: string) =>
     get<SpectrumDoc[]>(`/events/${encodeURIComponent(id)}/spectrum`),
   eventAnatomy: (id: string) =>

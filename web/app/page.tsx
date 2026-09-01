@@ -213,7 +213,7 @@ export default function IntelligencePage() {
 
   return (
     <div className="grid grid-cols-1 gap-x-10 gap-y-8 lg:grid-cols-12">
-      {/* ── Hero：Orange Hourglass（全宽，双窗叙事对比） ── */}
+      {/* ── Hero：变化总览（全宽，双窗叙事对比） ── */}
       <div className="lg:col-span-12 -mx-4 sm:-mx-6 lg:-mx-10 min-w-0">
         <ChangeOverview />
       </div>

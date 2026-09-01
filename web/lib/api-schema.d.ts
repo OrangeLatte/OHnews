@@ -4,6 +4,46 @@
  */
 
 export interface paths {
+    "/api/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search
+         * @description 子串检索 bronze 文章；limit 超界与缺失 q 由 FastAPI 校验 422。
+         */
+        get: operations["search_api_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Metrics
+         * @description 主路径埋点指标快照（只读派生，每次现算不缓存）。
+         */
+        get: operations["metrics_api_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/keys": {
         parameters: {
             query?: never;
@@ -70,7 +110,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/hourglass": {
+    "/api/change-landscape": {
         parameters: {
             query?: never;
             header?: never;
@@ -78,10 +118,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Hourglass
-         * @description Orange Hourglass 场景聚合（阶段 1.5-c）：后端拼图，前端只渲染。
+         * Change Landscape
+         * @description 叙事变化场聚合（阶段 1.5-c，T1 更名去沙漏）：后端拼图，前端只渲染。
          */
-        get: operations["hourglass_api_hourglass_get"];
+        get: operations["change_landscape_api_change_landscape_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1230,6 +1270,29 @@ export interface components {
             technical?: components["schemas"]["TechnicalAnnex"] | null;
         };
         /**
+         * ChangeLandscape
+         * @description 沙漏场景聚合（/api/change_landscape 唯一出口）。
+         */
+        ChangeLandscape: {
+            /** Scene Id */
+            scene_id: string;
+            /** Generated At */
+            generated_at: string;
+            baseline_window: components["schemas"]["TimeWindow"];
+            current_window: components["schemas"]["TimeWindow"];
+            /** Source Streams */
+            source_streams?: components["schemas"]["SourceStream"][];
+            /** Narrative Streams */
+            narrative_streams?: components["schemas"]["NarrativeStream"][];
+            /** Qualified Changes */
+            qualified_changes?: components["schemas"]["QualifiedChange"][];
+            /** Evidence Refs */
+            evidence_refs?: components["schemas"]["EvidenceCitation"][];
+            freshness: components["schemas"]["DataFreshness"];
+            /** Quality Warnings */
+            quality_warnings?: components["schemas"]["QualityWarning"][];
+        };
+        /**
          * CoverageSummary
          * @description 样本覆盖的人话摘要 + 原始计数（按需展开）。
          */
@@ -1334,29 +1397,6 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
-         * HourglassScene
-         * @description 沙漏场景聚合（/api/hourglass 唯一出口）。
-         */
-        HourglassScene: {
-            /** Scene Id */
-            scene_id: string;
-            /** Generated At */
-            generated_at: string;
-            baseline_window: components["schemas"]["TimeWindow"];
-            current_window: components["schemas"]["TimeWindow"];
-            /** Source Streams */
-            source_streams?: components["schemas"]["SourceStream"][];
-            /** Narrative Streams */
-            narrative_streams?: components["schemas"]["NarrativeStream"][];
-            /** Qualified Changes */
-            qualified_changes?: components["schemas"]["QualifiedChange"][];
-            /** Evidence Refs */
-            evidence_refs?: components["schemas"]["EvidenceCitation"][];
-            freshness: components["schemas"]["DataFreshness"];
-            /** Quality Warnings */
-            quality_warnings?: components["schemas"]["QualityWarning"][];
-        };
-        /**
          * NarrativeStream
          * @description 叙事流带：颜色=框架，share_* ∈ [0,1] 为该窗内框架份额。
          */
@@ -1439,7 +1479,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "low_coverage" | "single_source_dominant" | "window_empty" | "stale_data" | "no_qualified_changes";
+            code: "low_coverage" | "single_source_dominant" | "window_empty" | "stale_data" | "no_qualified_changes" | "gate_insufficient_coverage";
             /** Message */
             message: string;
         };
@@ -1617,6 +1657,62 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    search_api_search_get: {
+        parameters: {
+            query: {
+                q: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    metrics_api_metrics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     keys_status_api_keys_get: {
         parameters: {
             query?: never;
@@ -1743,7 +1839,7 @@ export interface operations {
             };
         };
     };
-    hourglass_api_hourglass_get: {
+    change_landscape_api_change_landscape_get: {
         parameters: {
             query?: {
                 days?: number;
@@ -1762,7 +1858,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HourglassScene"];
+                    "application/json": components["schemas"]["ChangeLandscape"];
                 };
             };
             /** @description Validation Error */
