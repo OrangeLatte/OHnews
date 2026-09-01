@@ -31,6 +31,7 @@ from oh_contracts.briefing import (
 from oh_contracts.enums import SourceTier, StanceLabel
 from oh_contracts.schemas import BronzeRecord
 from oh_contracts.signals import Signal
+from oh_contracts.text import strip_html
 from oh_pipeline.detect import detect_signals
 from oh_pipeline.entities import EntityRegistry
 from oh_pipeline.event_status import assess_event
@@ -191,10 +192,42 @@ def build_briefing(
     )
 
 
+def _relevant_quote(
+    text: str,
+    aliases: list[str],
+    *,
+    limit: int = 400,
+) -> str:
+    """质量门 1.5-b：引文清洗 + 实体相关性切取。
+
+    - strip_html 清洗（华见等源 body 含标签，绝不透出原始 HTML）。
+    - 优先从第一个含实体别名的句子起截取（信号相关性门：引文必须讲该实体，
+      而非文章任意前 400 字符——多主题早报正文常以无关主题开头）。
+    - 无别名命中时退回首句起的窗口（诚实：仍是清洗后的全文窗口）。
+    """
+    clean = strip_html(text).strip()
+    if not clean:
+        return ""
+    lowered = clean.lower()
+    start = 0
+    for alias in aliases:
+        idx = lowered.find(alias.lower())
+        if idx >= 0 and (start == 0 or idx < start):
+            start = idx
+    if start:
+        # 回退到句首，避免从词中间截断
+        for sent_start in (clean.rfind("。", 0, start), clean.rfind(". ", 0, start)):
+            if 0 < sent_start < start:
+                start = sent_start + 1
+                break
+    return clean[start : start + limit]
+
+
 def _citations(
     item_keys: Iterable[str],
     bronze_by_key: dict[str, BronzeRecord],
     tier_map: dict[str, SourceTier],
+    aliases: list[str],
 ) -> list[EvidenceCitation]:
     out: list[EvidenceCitation] = []
     for key in item_keys:
@@ -207,7 +240,7 @@ def _citations(
         normalized = rec.normalized
         body = str(normalized.get("body") or "")
         title = str(normalized.get("title") or "")
-        quote = (body or title).strip()[:400]
+        quote = _relevant_quote(body or title, aliases)
         if not quote:
             continue
         out.append(
@@ -231,13 +264,16 @@ def bucket_evidence(
     store: SqliteStore,
     tier_map: dict[str, SourceTier],
     as_of: datetime,
+    registry: EntityRegistry | None = None,
 ) -> EvidenceSet:
     """信号证据链 → 三桶 + 缺口。
 
     分桶依据：stance 行的 SUPPORTIVE/CRITICAL 直接落桶；
     其余（NEUTRAL/ABSTAIN/无 stance 行的引文）进 context。
     item_key 语义直接命中反查；event_id 语义经 stance 行展开。
+    registry 提供实体别名供引文相关性切取（1.5-b 质量门）。
     """
+    aliases = list(registry.get(signal.entity_id).aliases) if registry is not None else []
     rows = store.stances_asof(as_of)
     rows_by_key: dict[str, list] = {}
     for r in rows:
@@ -248,7 +284,7 @@ def bucket_evidence(
             item_keys.append(evid)
         else:
             item_keys.extend(r.item_key for r in rows if r.event_id == evid)
-    citations = _citations(item_keys, bronze_by_key, tier_map)
+    citations = _citations(item_keys, bronze_by_key, tier_map, aliases)
 
     buckets: dict[EvidenceBucket, list[EvidenceCitation]] = {
         "supporting": [],
@@ -341,25 +377,22 @@ def build_dossier(
         store=store,
         tier_map=tier_map,
         as_of=now,
+        registry=registry,
     )
 
+    # 质量门 1.5-b：coverage 一律从分桶引文实算（与 EvidenceSet 严格一致），
+    # 事件评估只贡献 status；杜绝「独立源 0 却有三桶」的信任矛盾。
     known_events = {e.event_id for e in store.events_asof(now)}
     event_ids = [e for e in signal.evidence_ids if e in known_events]
     status = "developing"
-    coverage_note = "暂无可用的覆盖统计信息"
-    n_primary = 0
-    n_sources = 0
     if event_ids:
         ev_id = event_ids[0]
         ev_rows = [r for r in store.stances_asof(now) if r.event_id == ev_id]
         recs = [bronze_by_key[r.item_key] for r in ev_rows if r.item_key in bronze_by_key]
         evidence_items = build_evidence(recs, tier_map)
         if evidence_items:
-            assessment = assess_event(ev_id, evidence_items, ev_rows)
-            status = assessment.status.value
-            n_primary = assessment.n_primary_sources
-            n_sources = assessment.n_independent_sources
-            coverage_note = f"{n_sources} 个独立信源，其中 {n_primary} 个官方一手"
+            status = assess_event(ev_id, evidence_items, ev_rows).status.value
+
     technical = TechnicalAnnex(
         signal_id=signal.signal_id,
         engine="offline",
@@ -374,6 +407,12 @@ def build_dossier(
     span_days = (
         (max(published) - min(published)).total_seconds() / 86400 if len(published) >= 2 else 0.0
     )
+    n_sources = len({c.source_id for c in all_cites})
+    n_primary = len({c.source_id for c in all_cites if c.source_tier is SourceTier.OFFICIAL})
+    if all_cites:
+        coverage_note = f"{n_sources} 个独立信源，其中 {n_primary} 个官方一手"
+    else:
+        coverage_note = "暂无可用的覆盖统计信息"
     coverage = CoverageSummary(
         n_independent_sources=n_sources,
         n_primary_sources=n_primary,

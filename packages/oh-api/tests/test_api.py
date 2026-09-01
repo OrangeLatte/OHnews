@@ -538,13 +538,33 @@ def test_change_dossier_endpoint(client: TestClient) -> None:
     assert d["change_id"] == cid
     assert d["status"] in {"confirmed", "contested", "developing", "unverified"}
     ev = d["evidence"]
-    assert ev["supporting"] or ev["contradicting"] or ev["context"]
-    assert all(c["quote"] for c in ev["supporting"] + ev["contradicting"] + ev["context"])
-    assert d["coverage"]["n_independent_sources"] >= 2
+    cites = ev["supporting"] + ev["contradicting"] + ev["context"]
+    assert cites
+    assert all(c["quote"] for c in cites)
+    # 质量门 1.5-b：coverage 与三桶严格一致（从分桶引文实算）
+    assert d["coverage"]["n_independent_sources"] == len({c["source_id"] for c in cites})
     assert d["freshness"]["as_of"]
     assert d["technical"]["signal_id"] == cid
     missing = client.get("/api/changes/sig-nope-x")
     assert missing.status_code == 404
+
+
+def test_quote_quality_gate() -> None:
+    """引文质量门：HTML 清洗 + 实体相关性切取（不取文章任意前 400 字符）。"""
+    from oh_api.briefing import _relevant_quote
+
+    body = (
+        "<p>日元干预疑云笼罩市场，交易员严阵以待。</p>"
+        "<p>美联储官员表示，衰退风险上升，损失惨重。</p>"
+    )
+    quote = _relevant_quote(body, ["美联储"])
+    assert "<" not in quote and ">" not in quote
+    assert quote.startswith("美联储") or "美联储" in quote[:50]
+    assert "日元" not in quote
+    # 无别名命中：退回首句窗口（清洗后全文）
+    fallback = _relevant_quote("<p>日元干预疑云。</p><p>市场观望。</p>", ["美联储"])
+    assert fallback.startswith("日元")
+    assert _relevant_quote("", ["美联储"]) == ""
 
 
 def test_change_evidence_bucket_endpoint(client: TestClient) -> None:
