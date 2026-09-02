@@ -53,6 +53,7 @@ export default function EventsPage() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [openChange, setOpenChange] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search).get("q");
@@ -89,8 +90,7 @@ export default function EventsPage() {
         <h1 className="font-paper mt-1 text-3xl tracking-tight">INVESTIGATE · 调查工作台</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           从值得验证的变化出发，回到证据，形成自己的判断。
-          深度工具：研究工作台 /investigate/research、情报巡逻 /investigate/patrol、叙事时间轴
-          /investigate/timeline。
+          深度工具在顶部导航与各分区入口：AI 研究对话、情报巡逻、叙事时间轴。
         </p>
       </header>
 
@@ -174,7 +174,7 @@ export default function EventsPage() {
         )}
         {events && filtered.length > 0 && (
           <div className="flex flex-col">
-            {filtered.map((e) => {
+            {(showAll ? filtered : filtered.slice(0, 5)).map((e) => {
               const lv = divergenceLevel(e.ndi);
               return (
                 <Link
@@ -195,6 +195,15 @@ export default function EventsPage() {
                 </Link>
               );
             })}
+            {filtered.length > 5 && (
+              <button
+                type="button"
+                className="mt-3 self-start border border-border px-3 py-1.5 text-xs hover:border-primary"
+                onClick={() => setShowAll((v) => !v)}
+              >
+                {showAll ? "收起列表" : `显示全部 ${filtered.length} 个事件（或用顶部搜索精确检索）`}
+              </button>
+            )}
           </div>
         )}
       </section>
