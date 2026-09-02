@@ -3,6 +3,7 @@
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { ASSESS_STATUS as ASSESS, SIGNAL } from "@/lib/tokens";
+import { AgentDock } from "@/components/agent/agent-dock";
 
 import {
   api,
@@ -135,6 +136,7 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
   ];
 
   return (
+    <>
     <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
       <article className="lg:col-span-8">
         <header className="border-b border-foreground/20 pb-4">
@@ -363,5 +365,7 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
         </div>
       </aside>
     </div>
+    <AgentDock agentKind="dissection" title="拆解助手" position="right" />
+    </>
   );
 }

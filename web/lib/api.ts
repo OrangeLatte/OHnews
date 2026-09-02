@@ -379,6 +379,13 @@ export const api = {
     post<components["schemas"]["WatchReview"]>(`/watches/${encodeURIComponent(id)}/review`, {}),
   home: (days = 7, top = 5) =>
     get<components["schemas"]["HomePayload"]>(`/home?days=${days}&top=${top}`),
+  agentSessionCreate: (kind: string, title: string) =>
+    post<{ thread_id: string; kind: string }>("/agent/sessions", { kind, title }),
+  agentSessionInput: (threadId: string, text: string, kind = "info") =>
+    post<{ queued: boolean }>(`/agent/sessions/${encodeURIComponent(threadId)}/inputs`, {
+      kind,
+      text,
+    }),
   changeField: (days = 30) =>
     get<components["schemas"]["ChangeFieldPayload"]>(`/change-field?days=${days}`),
   changeLandscape: (days = 7, top = 5) =>
