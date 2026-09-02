@@ -114,3 +114,46 @@
 6. **信源爬取合规**：→ **按合规建议（robots/ToS/限速）；重要信源可参照过往浏览器插件方式灰度访问（如脚本免费浏览 wallstreetcn 全文），不暴露源码**
 7. **V 系列收尾**：→ **先 commit 再开工（已执行：a8eb6aa→be2793b 6 commits）**
 8. **首页图表组**：→ **图表重新设计**（不采用原最小集清单，M5 实施时先出新设计方案再审）
+
+---
+
+## 五、Agent Graph 设计（langgraph，已含用户随时打断）
+
+### 共享基座
+- `AgentState(TypedDict)`：messages / article_ids / dissection / reports / queue / lang / user_confirm / **pending_user** / errors——四图同构可透传。
+- LLM：oh-llm ModelRouter 三 Tier；翻译学家/拆解/报告各挂**语言特定 prompt**（裁决 1）。
+- 持久化：langgraph SqliteSaver 单库 agent_sessions.sqlite（thread_id 分区）。
+- HITL：interrupt() 用于确认式存档（02 存报告 / 04 定报纸 / 03 复核）。
+- 子图：02/03/04 作为 07 的 subgraph 节点（同进程状态透传）。
+
+### 随时打断（用户补充信息，总/子 agent 通用）
+- **user_gate 横切条件边**：每个节点完成后必经 user_gate——检查 pending_user（前端 AgentDock 输入实时写入 agent_sessions.sqlite 的 pending 队列，图运行中经 update_state 注入）：
+  - 无 → 直通下一节点；
+  - 有 → **absorb_user_input 节点**：分类（补充信息 / 修改指令 / 紧急跳转）→ 合并进 state → 决定继续 / 重跑当前阶段 / 重路由（如拆解中补充「忽略该媒体立场」→ critic 吸收；报告完成后补充 → 直接进 revise，不重跑拆解）。
+- 即：interrupt() 是确认闸门，user_gate 是随时插话通道——两者叠加，用户在 02/03/04/07 任意图的任一执行点都可补充信息。
+
+### 02 DissectionGraph
+START → load_article → queue_gate（不在队列/未选全量→abstain「未配置分析」）
+  → parallel_dissect（18 元素 4 组并行：实体组/事实组/叙事组/语言组）
+  → consistency_check（跨元素矛盾自检，fail→critic 重试≤2）
+  → assemble（颜色标注 payload + hash 主键入 article_dissections）
+  → report_router（用户选类）→ 6 报告节点并行（各自 system prompt）
+  → challenge（红队反证检索）→ 🔒 interrupt 确认 → 存 04 / revise
+
+### 03 TrackingGraph（cron/手动双触发）
+START → classify_unit（实体/主题/问题/元素）→ fetch_delta（since=max(复核,判断)）
+  → branch：entity→briefing diff ｜ topic→search ｜ element→拆解对比
+  → significance_gate（无变化→quiet 快照退出，不硬凑）
+  → report → alert_check → 通知 → 🔒 interrupt 用户复核
+
+### 04 MemoryGraph
+START → parse_intent → search_archives（元素/研究/交叉三库）
+  → compose_newspaper ⇄ 🔒 interrupt 对话调整循环 → finalize（版本化落库）
+
+### 07 ParentGraph（supervisor）
+START → load_profile（供应商状态/用量/教程进度）→ intent_router
+  ├ 配置/教程 → config
+  ├ 筛选队列 → queue_manager（B0 打分排序→推荐→🔒 确认入队）
+  ├ 汇总 → session_aggregator（子 agent 会话/缓存/工具统计）
+  └ 转交 → subgraph(02|03|04) 状态透传
+  → home_sync（联动首页图表组/状态栏）
