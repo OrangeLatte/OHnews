@@ -176,3 +176,29 @@ START → load_profile（供应商状态/用量/教程进度）→ intent_router
 - 确认卡（interrupt() 渲染为操作卡：存档案/入队/复核——按钮即 HITL 决策）
 - user_gate 输入卡（补充信息被吸收后回显「已采纳你的补充：…」及其影响范围）
 - 报告卡（结构化渲染 6+1 报告，带证据引用 chips 跳 Dossier）
+
+## 六、E3 首页图表新设计方案（裁决 8：先审后做，未实施）
+
+### 设计原则
+报纸风浅色 tokens + ChartBase 唯一封装；五状态显式（loading/empty/abstain/error/ready）；
+cohort 弃权门复用 V3；**跳转代替长滚动**——首页 NOW 区只留 2 张核心图 + 「完整图表组 →」入口。
+
+### 窗口语义（自适应诚实弃权）
+1d（当日可能无新数据→空态显式）/ 7d（默认）/ 30d / 全量（≈60 天）。
+数据仅 1-2 个月跨度，季度/年窗口直接「数据不足」弃权，不渲染空图。
+
+### 图表组（重新设计，四块）
+| # | 图 | 数据源 | 复用 |
+|---|---|---|---|
+| G1 | 信息流密度：文章量日柱（分语言叠加） | bronze 日计数 | 新聚合 /api/flow/daily |
+| G2 | 叙事场：泳道×框架堆叠 | stance 日粒度 | 复用 /api/change-field |
+| G3 | 实体分歧榜：NDI 横条 Top8（仅画有值区间） | ndi_all 68 点 | 新聚合 /api/ndi/rank |
+| G4 | 情绪密度线：词典情绪 expressed 时序 | annotations emotions | 新聚合 /api/annotations/emotion |
+
+### 前置依赖
+- signal_snapshots 每日快照表（Signal 历史持久化，随实施落地）
+- 三个新聚合端点（G1/G3/G4）+ OpenAPI 生成
+
+### 落位
+首页 NOW：G1 迷你柱 + G2 缩略（已有 change-field）+ 图表组入口；
+图表组独立分区（/investigate 顶部或 /charts）四块 2×2 网格 + 窗口 select。
