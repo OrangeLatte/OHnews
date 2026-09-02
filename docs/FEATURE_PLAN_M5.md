@@ -157,3 +157,22 @@ START → load_profile（供应商状态/用量/教程进度）→ intent_router
   ├ 汇总 → session_aggregator（子 agent 会话/缓存/工具统计）
   └ 转交 → subgraph(02|03|04) 状态透传
   → home_sync（联动首页图表组/状态栏）
+
+### Agent 基建（五块，全部 agent 共享）
+
+1. **会话管理**：agent_sessions.sqlite（SqliteSaver，thread_id=agent 类型+会话 UUID）；多会话并行/历史列表/回放；会话标题自动摘要；subgraph 与父图共享 thread 命名空间（07 汇总直接读子图 checkpoints）。
+2. **容错机制**：节点级 retry（langgraph RetryPolicy：指数退避×3）；LLM 失败降级链（strategic→execute→io→离线模板，复用 oh-llm router 不变量）；graph 级 fallback 节点（连续失败→诚实报错+保留现场等待用户指令，不静默吞错）；工具调用超时+幂等键（外部 API 重试安全）。
+3. **时间旅行**：langgraph get_state_history——UI 提供「回到任一检查点重新执行」（修改该点输入后 fork 新分支，不覆盖原会话）；用于拆解/报告的「换口径重跑」与错误恢复。
+4. **检查点**：每节点后自动 checkpoint（SqliteSaver）；interrupt() 与 user_gate 均落在检查点边界；checkpoint 元数据含 lang/token 用量（07 用量面板数据源）。
+5. **工具 / skill / 中间件前置**（图编译前统一注册）：
+   - 工具：websearch（**Tavily 主选**：search/extract/crawl/map 四端点、p50 180ms、内置 PII redact 与防注入、langgraph drop-in；免费备选 DuckDuckGo 无 key 但速率受限；key 走 /api/keys 配置）、本地检索（search_bronze/事件/NDI/拆解库）、信源抓取（oh-sources 适配器）。
+   - skill：拆解 18 元素 prompt 集、6+1 报告 system prompt 集、翻译学家 prompt 工作流（按语言切换）、红队 challenge、B0 打分器——全部版本化入库（skill 表），可由 07 面板查看与切换。
+   - 中间件：PIT 时间锚注入（每节点上下文带 as_of）、语言锚（lang→prompt 选择）、token 计量、埋点（product_events：agent_started/tool_called/checkpoint_saved/user_interrupted）、PII 过滤（Tavily 内置+出站日志脱敏）。
+
+### 交互层 UI 卡片（AgentDock 内，流式渲染）
+- 节点进度卡（当前节点高亮+已完成✓+重试可见）
+- 工具调用卡（工具名+入参摘要+结果摘要+耗时+展开原始输出）
+- 检查点/时间旅行控件（历史节点树+「从此重跑」按钮+fork 分支标识）
+- 确认卡（interrupt() 渲染为操作卡：存档案/入队/复核——按钮即 HITL 决策）
+- user_gate 输入卡（补充信息被吸收后回显「已采纳你的补充：…」及其影响范围）
+- 报告卡（结构化渲染 6+1 报告，带证据引用 chips 跳 Dossier）
