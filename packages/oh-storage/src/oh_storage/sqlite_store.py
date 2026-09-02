@@ -76,6 +76,14 @@ CREATE TABLE IF NOT EXISTS annotations (
     annotated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS article_dissections (
+    item_key     TEXT PRIMARY KEY,
+    payload      TEXT NOT NULL,
+    engine       TEXT NOT NULL,
+    language     TEXT NOT NULL DEFAULT '',
+    dissected_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS entity_edges (
     edge_key   TEXT PRIMARY KEY,
     src        TEXT NOT NULL,
@@ -406,6 +414,70 @@ class SqliteStore:
 
     def count_annotations(self) -> int:
         cur = self._conn.execute("SELECT COUNT(*) AS n FROM annotations")
+        return int(cur.fetchone()["n"])
+
+    # -- 文章拆解层（M5-A3：article_dissections 表，payload=ArticleDissection JSON） --
+
+    def upsert_dissection(
+        self,
+        item_key: str,
+        payload: dict[str, object],
+        engine: str,
+        dissected_at: datetime,
+        *,
+        language: str = "",
+    ) -> None:
+        """幂等 upsert（同 item_key 重跑覆盖；payload 由调用方 model_dump）。"""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO article_dissections "
+            "(item_key, payload, engine, language, dissected_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                item_key,
+                json.dumps(payload, ensure_ascii=False),
+                engine,
+                language,
+                _iso(dissected_at),
+            ),
+        )
+        self._conn.commit()
+
+    def get_dissection(self, item_key: str) -> dict[str, object] | None:
+        """单篇拆解（payload 反序列化拍平；未拆解 → None）。"""
+        cur = self._conn.execute(
+            "SELECT payload, engine, language, dissected_at FROM article_dissections "
+            "WHERE item_key = ?",
+            (item_key,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            **json.loads(str(row["payload"])),
+            "engine": str(row["engine"]),
+            "language": str(row["language"]),
+            "dissected_at": str(row["dissected_at"]),
+        }
+
+    def dissections_asof(self, as_of: datetime) -> list[dict[str, object]]:
+        """PIT 读取：dissected_at ≤ as_of（ISO 字符串比较即时间序）。"""
+        cur = self._conn.execute(
+            "SELECT item_key, payload, engine, language, dissected_at FROM article_dissections "
+            "WHERE dissected_at <= ? ORDER BY item_key",
+            (_iso(as_of),),
+        )
+        return [
+            {
+                "item_key": str(r["item_key"]),
+                **json.loads(str(r["payload"])),
+                "engine": str(r["engine"]),
+                "language": str(r["language"]),
+                "dissected_at": str(r["dissected_at"]),
+            }
+            for r in cur.fetchall()
+        ]
+
+    def count_dissections(self) -> int:
+        cur = self._conn.execute("SELECT COUNT(*) AS n FROM article_dissections")
         return int(cur.fetchone()["n"])
 
     # -- 知识图谱（M3-S3：entity_edges 类型化边表） -----------------------------
