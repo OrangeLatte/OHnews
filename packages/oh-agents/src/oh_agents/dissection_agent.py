@@ -165,3 +165,68 @@ def fallback_elements_from_hints(hints: dict[str, Any]) -> list[DissectionElemen
             )
             out.append(DissectionElement(element="tone", content=f"词典情绪基调：{top[0]}"))
     return out
+
+
+_QUEUE_TIER_SCORE = {"L1": 1.0, "L2": 0.8, "L3": 0.6, "L4": 0.4}
+
+
+def build_queue_suggestions(
+    records: list[Any],
+    *,
+    tier_map: dict[str, Any],
+    registry: Any,
+    now: _dt.datetime,
+    store: Any = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """B0 确定性筛选：可靠性(0.5)+时效(0.3)+实体相关性(0.2) → 推荐入队。
+
+    已拆解或已在队列的跳过；store 提供时写入 dissection_queue（幂等）。
+    """
+    import math
+
+    out: list[dict[str, Any]] = []
+    for r in records:
+        norm = r.normalized or {}
+        title = str(norm.get("title") or "")[:200]
+        if not title:
+            continue
+        if store is not None and store.get_dissection(r.item_key) is not None:
+            continue
+        tier = tier_map.get(r.source_id)
+        tier_v = str(getattr(tier, "value", tier) or "")
+        reliability = _QUEUE_TIER_SCORE.get(tier_v, 0.3)
+        pub = r.published_at
+        if pub is None:
+            continue
+        days_ago = max(0.0, (now - pub).total_seconds() / 86400)
+        freshness = math.exp(-days_ago / 7)
+        hits = registry.match(title) if registry is not None else []
+        hit = hits[0] if hits else None
+        relevance = 1.0 if hit else 0.0
+        score = round(0.5 * reliability + 0.3 * freshness + 0.2 * relevance, 4)
+        reasons: list[str] = []
+        if tier_v == "L1":
+            reasons.append("官方一手来源")
+        elif tier_v == "L2":
+            reasons.append("权威通讯社")
+        reasons.append(f"发布于 {days_ago:.1f} 天前" if days_ago >= 1 else "24 小时内发布")
+        if hit:
+            reasons.append(f"命中已关注实体：{hit}")
+        item = {
+            "item_key": r.item_key,
+            "title": title,
+            "source_id": r.source_id,
+            "score": score,
+            "reasons": reasons,
+        }
+        out.append(item)
+        if store is not None:
+            store.queue_upsert(
+                r.item_key,
+                score=score,
+                reasons=reasons,
+                created_at=now.isoformat(),
+            )
+    out.sort(key=lambda x: (-x["score"], x["item_key"]))
+    return out[:limit]
