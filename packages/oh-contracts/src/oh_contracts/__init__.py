@@ -52,6 +52,12 @@ from oh_contracts.constants import (
     VERIFY_PENALTY_SINGLE,
     VERIFY_PENALTY_UNVERIFIED,
 )
+from oh_contracts.dissection import (
+    ArticleDissection,
+    DissectionElement,
+    DissectionSpan,
+    ElementKey,
+)
 from oh_contracts.enums import (
     ArticleType,
     ClaimKind,
@@ -152,7 +158,12 @@ __all__ = [
     "Evidence",
     "ExtractionEngine",
     "FrameLabel",
+    "ArticleDissection",
     "ChangeFieldPayload",
+    "DissectionElement",
+    "DissectionSpan",
+    "DissectionEngine",
+    "ElementKey",
     "ChangeFieldPoint",
     "ChangeLandscape",
     "Hypothesis",
