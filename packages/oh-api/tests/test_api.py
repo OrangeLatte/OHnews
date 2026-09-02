@@ -1113,3 +1113,19 @@ def test_agent_translate_flow(client: TestClient, tmp_path: Path) -> None:
     assert r4.status_code == 404
     r5 = client.post("/api/agent/translate", json={"item_key": ik, "target_language": "xx"})
     assert r5.status_code == 422
+
+
+def test_parent_brief_endpoint(client: TestClient, tmp_path: Path) -> None:
+    """E2 总控台：键集/会话计数/队列计数/建议非空。"""
+    r = client.get("/api/agent/parent/brief").json()
+    assert set(r) >= {
+        "sessions_by_kind",
+        "latest_session",
+        "queue_pending",
+        "queue_top",
+        "providers",
+        "health",
+        "suggestions",
+    }
+    assert isinstance(r["providers"], dict) and "zhipu" in r["providers"]
+    assert len(r["suggestions"]) >= 1

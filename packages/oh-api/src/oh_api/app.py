@@ -243,6 +243,59 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
     app.include_router(build_agent_sessions_router(lambda: _agent_sessions()))
 
+    class ParentBrief(BaseModel):
+        """E2：总控台简报（确定性汇总，不跑 LLM）。"""
+
+        sessions_by_kind: dict[str, int]
+        latest_session: dict[str, Any] | None
+        queue_pending: int
+        queue_top: list[dict[str, Any]]
+        providers: dict[str, bool]
+        health: dict[str, int]
+        suggestions: list[str]
+
+    @app.get("/api/agent/parent/brief", response_model=ParentBrief)
+    def parent_brief() -> ParentBrief:
+        """汇总 02/03/04 会话、拆解队列、供应商与数据健康（07 需求 c/d）。"""
+        sessions = _agent_sessions().list_sessions()
+        by_kind: dict[str, int] = {}
+        for row in sessions:
+            k = str(row.get("agent_kind") or "?")
+            by_kind[k] = by_kind.get(k, 0) + 1
+        latest = max(
+            sessions,
+            key=lambda r: str(r.get("last_active_at") or ""),
+            default=None,
+        )
+        pending = _store().queue_items(status="pending", limit=5)
+        queue_count = len(_store().queue_items(status="pending", limit=200))
+        providers = {
+            "deepseek": bool(_get_key("deepseek")),
+            "zhipu": bool(_get_key("zhipu")),
+            "tavily": bool(_get_key("tavily")),
+        }
+        health = {
+            "events": _store().count_events(),
+            "stances": _store().count_stances(),
+            "dissections": _store().count_dissections(),
+        }
+        tips: list[str] = []
+        if queue_count:
+            tips.append(f"拆解队列有 {queue_count} 篇待处理——到调查台接受或忽略")
+        if not providers["zhipu"] and not providers["deepseek"]:
+            tips.append("尚未配置模型 Key——拆解与报告将走词典降级")
+        if not tips:
+            tips.append("一切正常——变化、拆解、报告链路可用")
+        return ParentBrief(
+            sessions_by_kind=by_kind,
+            latest_session=latest,
+            queue_pending=queue_count,
+            queue_top=pending,
+            providers=providers,
+            health=health,
+            suggestions=tips,
+        )
+
     @app.get("/api/agent/dissect/suggestions")
     def agent_queue_suggestions(limit: int = 5) -> list[dict[str, Any]]:
         """B0：现场打分并幂等入队，返回建议列表（用户确认后进入拆解队列）。"""
