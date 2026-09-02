@@ -293,3 +293,22 @@
 @media (prefers-reduced-motion: reduce) {
   .ov-loading-bars i { animation: none; }
 }
+
+/* ── A2 术语 tooltip：报纸风浅色气泡 ── */
+.term-tip { position: relative; display: inline-block; margin-left: 0.25rem; }
+.term-mark {
+  width: 0.95rem; height: 0.95rem; border-radius: 9999px;
+  border: 1px solid var(--muted-foreground); color: var(--muted-foreground);
+  font-size: 0.65rem; line-height: 1; cursor: help; background: transparent;
+}
+.term-mark:hover, .term-mark:focus-visible { border-color: var(--color-signal-divergence); color: var(--color-signal-divergence); }
+.term-bubble {
+  position: absolute; left: 50%; bottom: calc(100% + 0.4rem); transform: translateX(-50%);
+  width: min(17rem, 72vw); background: var(--background); border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.08); padding: 0.55rem 0.7rem;
+  font-size: 0.75rem; line-height: 1.5; color: var(--foreground);
+  opacity: 0; visibility: hidden; transition: opacity 0.12s ease; z-index: 30;
+  text-align: left;
+}
+.term-tip:hover .term-bubble, .term-tip:focus-within .term-bubble { opacity: 1; visibility: visible; }
+@media (prefers-reduced-motion: reduce) { .term-bubble { transition: none; } }

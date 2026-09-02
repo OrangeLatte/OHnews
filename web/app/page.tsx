@@ -21,6 +21,7 @@ import {
 import { SIGNAL } from "@/lib/tokens";
 import { track } from "@/lib/track";
 import { useT } from "@/lib/i18n/use-t";
+import { Term } from "@/components/chrome/term";
 import { watchStatus } from "@/lib/insight";
 import { ChangeOverview } from "@/components/change-overview/change-overview";
 
@@ -131,6 +132,7 @@ export default function IntelligencePage() {
                 ? t("home.briefing.changes", { n: changes.length })
                 : t("home.briefing.none")}
           </h1>
+          <Term k="change" />
           {briefing && <FreshnessLine b={briefing} />}
           {error && (
             <p className="mt-1 text-sm" style={{ color: SIGNAL.warning }}>
