@@ -354,3 +354,12 @@
 .ag-input button { font-size: 0.78rem; border: 1px solid var(--border); padding: 0.35rem 0.6rem; cursor: pointer; background: var(--background); }
 .ag-input button:disabled { opacity: 0.4; cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) { .ag-dock { transition: none; } }
+
+/* ── B3 信源交叉分析折叠区（02 页重构） ── */
+.xsec { border: 1px solid var(--border); margin-top: 0.75rem; }
+.xsec-summary { cursor: pointer; padding: 0.6rem 0.9rem; font-family: var(--font-newspaper); font-size: 0.88rem; font-weight: 600; list-style: none; }
+.xsec-summary::-webkit-details-marker { display: none; }
+.xsec-summary::before { content: "▸ "; color: var(--muted-foreground); }
+.xsec[open] .xsec-summary::before { content: "▾ "; }
+.xsec-body { border-top: 1px solid var(--border); padding: 0.5rem 0.9rem 0.9rem; }
+@media (prefers-reduced-motion: reduce) { .xsec-summary { transition: none; } }

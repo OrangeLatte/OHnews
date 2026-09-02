@@ -159,6 +159,11 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
           </div>
         </header>
 
+        <details className="xsec">
+          <summary className="xsec-summary">
+            信源交叉分析 · 发生了什么 / 为什么重要 / 分歧与叙事地图（点击展开）
+          </summary>
+          <div className="xsec-body">
         <SectionHead no="01" en="What happened" zh="发生了什么" />
         <p className="font-paper mt-3 text-base leading-7">
           在最近一次监测窗口内，{meta.n_sources} 个不同层级的信源共同报道了与{" "}
@@ -298,6 +303,9 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
           </div>
         )}
 
+          </div>
+        </details>
+
         <SectionHead no="06" en="Evidence" zh="证据（按信源层级）" />
         {tiers.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground">暂无证据行。</p>
@@ -339,7 +347,10 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
           </div>
         )}
 
-        <SectionHead no="07" en="Ask the analyst" zh="下一步研究" />
+        <SectionHead no="07" en="Suggested questions" zh="建议问题（按本事件生成）" />
+        <p className="mt-2 text-xs text-muted-foreground">
+          系统根据本事件的信源构成与分歧状态生成以下问题；点击进入研究台深挖，或直接在右侧拆解助手中追问。
+        </p>
         <div className="mt-3 flex flex-col gap-2">
           {askQuestions.map((q) => (
             <Link
@@ -363,8 +374,8 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
           <div className="mt-3 border-t border-border/60 pt-3">
             <p className="paper-kicker">YOUR NEXT STEPS</p>
             <ul className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
-              <li>→ 点击预设问题进入研究台</li>
-              <li>→ 在研究台保存结论到档案库</li>
+              <li>→ 用上方拆解面板分析单篇信源</li>
+              <li>→ 用研究报告区生成六型报告并存档</li>
               <li>→ 在订阅中心追踪相关实体</li>
             </ul>
           </div>
