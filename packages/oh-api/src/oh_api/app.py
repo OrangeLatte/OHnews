@@ -25,7 +25,11 @@ from fastapi.responses import StreamingResponse
 from oh_agents.alerts import check_alerts
 from oh_agents.chat import ChatStore, run_chat
 from oh_agents.decision_log import DecisionLog
-from oh_agents.dissection_agent import build_dissection_graph, fallback_elements_from_hints
+from oh_agents.dissection_agent import (
+    build_dissection_graph,
+    build_queue_suggestions,
+    fallback_elements_from_hints,
+)
 from oh_agents.intel_pipeline import build_daily_intel
 from oh_agents.morning_brief import build_brief
 from oh_agents.orchestrator import (
@@ -211,6 +215,31 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         return singleton
 
     app.include_router(build_agent_sessions_router(lambda: _agent_sessions()))
+
+    @app.get("/api/agent/dissect/suggestions")
+    def agent_queue_suggestions(limit: int = 5) -> list[dict[str, Any]]:
+        """B0：现场打分并幂等入队，返回建议列表（用户确认后进入拆解队列）。"""
+        return build_queue_suggestions(
+            _bronze().iter_records(),
+            tier_map=_tier_map(),
+            registry=_registry(),
+            now=_now(),
+            store=_store(),
+            limit=max(1, min(limit, 20)),
+        )
+
+    @app.post("/api/agent/dissect/queue")
+    def agent_queue_decide(body: dict[str, Any]) -> dict[str, Any]:
+        """B0：用户裁决（accept=进入拆解队列 / dismiss=忽略）。"""
+        item_key = str(body.get("item_key") or "")
+        action = str(body.get("action") or "")
+        if not item_key or action not in {"accept", "dismiss"}:
+            raise HTTPException(status_code=422, detail="item_key 与 action(accept|dismiss) 必填")
+        status = "accepted" if action == "accept" else "dismissed"
+        ok = _store().queue_decide(item_key, status=status, decided_at=_now().isoformat())
+        if not ok:
+            raise HTTPException(status_code=404, detail="队列中无此 item_key")
+        return {"ok": True, "status": status}
 
     @app.post("/api/agent/dissect", response_model=ArticleDissection)
     async def agent_dissect(body: dict[str, Any]) -> ArticleDissection:

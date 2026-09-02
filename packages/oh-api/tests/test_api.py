@@ -904,3 +904,49 @@ def test_agent_report_flow(client: TestClient, tmp_path: Path) -> None:
     r4 = client.get(f"/api/agent/reports/{ik}")
     assert r4.status_code == 200
     assert any(x["report_id"] == rep["report_id"] for x in r4.json())
+
+
+def test_agent_queue_suggestions_and_decide(client: TestClient, tmp_path: Path) -> None:
+    """B0：建议列表（打分+幂等入队）→ 用户裁决 accept/dismiss → ghost 404。"""
+    from oh_contracts.ids import make_item_key
+    from oh_contracts.schemas import BronzeRecord
+
+    ts = make_now()
+    recs = [
+        BronzeRecord(
+            source_id="wscn",
+            item_key=make_item_key("wscn", f"q-{i}", ts),
+            external_id=f"q-{i}",
+            url_hash="u",
+            content_hash="c",
+            fetched_at=ts,
+            published_at=ts,
+            raw={},
+            normalized={"title": f"美联储政策观察第 {i} 篇", "body": "通胀放缓。"},
+        )
+        for i in range(2)
+    ]
+    ParquetBronzeWriter(tmp_path / "bronze").write(recs)
+    r1 = client.get("/api/agent/dissect/suggestions?limit=5")
+    assert r1.status_code == 200
+    items = r1.json()
+    assert len(items) >= 1
+    first = items[0]
+    assert {"item_key", "score", "reasons"} <= set(first)
+    ik = first["item_key"]
+    r2 = client.post("/api/agent/dissect/queue", json={"item_key": ik, "action": "accept"})
+    assert r2.status_code == 200 and r2.json()["status"] == "accepted"
+    r3 = client.post("/api/agent/dissect/queue", json={"item_key": ik, "action": "dismiss"})
+    assert r3.status_code == 200 and r3.json()["status"] == "dismissed"
+    assert (
+        client.post(
+            "/api/agent/dissect/queue", json={"item_key": "ghost", "action": "accept"}
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/agent/dissect/queue", json={"item_key": ik, "action": "maybe"}
+        ).status_code
+        == 422
+    )
