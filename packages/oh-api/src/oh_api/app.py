@@ -50,6 +50,7 @@ from oh_agents.watch_update import compute_watch_update
 from oh_api.agents import build_router as build_agent_sessions_router
 from oh_api.briefing import build_briefing, build_briefing_with_signals, build_dossier
 from oh_api.change_landscape import build_change_field, build_change_landscape
+from oh_api.charts import build_emotion_density, build_flow_daily, build_ndi_rank
 from oh_api.metrics import build_router as build_metrics_router
 from oh_api.search import build_router as build_search_router
 from oh_contracts.archive import ARCHIVE_KINDS, AgentPaper, ArchiveItem
@@ -569,6 +570,47 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             days=max(1, days),
             top=top,
             min_per_source=min_per_source,
+        )
+
+    @app.get("/api/flow/daily")
+    def flow_daily(days: int = 30) -> list[dict[str, Any]]:
+        """G1：每日文章量按语言分列（bronze published_at 计数，PIT ts≤now）。"""
+        doc: dict[str, Any] = {}
+        if paths.sources_yaml.exists():
+            with paths.sources_yaml.open(encoding="utf-8") as f:
+                doc = yaml.safe_load(f) or {}
+        raw_sources = doc.get("sources") or {}
+        if isinstance(raw_sources, list):
+            # 真实 sources.yaml 为条目列表（每项含 source_id/language）
+            lang_by_source = {
+                str(item.get("source_id")): str(item.get("language") or "other")
+                for item in raw_sources
+                if isinstance(item, dict) and item.get("source_id")
+            }
+        else:
+            lang_by_source = {
+                sid: str((cfg or {}).get("language") or "other")
+                for sid, cfg in raw_sources.items()
+            }
+        return build_flow_daily(
+            list(_bronze().iter_records()),
+            lang_by_source=lang_by_source,
+            now=_now(),
+            days=max(1, min(days, 120)),
+        )
+
+    @app.get("/api/ndi/rank")
+    def ndi_rank(limit: int = 8) -> list[dict[str, Any]]:
+        """G3：实体分歧榜——每实体最新可测 NDI 降序 Top-N（弃权点不计）。"""
+        return build_ndi_rank(
+            _store().ndi_all(), registry=_registry(), now=_now(), limit=max(1, min(limit, 20))
+        )
+
+    @app.get("/api/annotations/emotion")
+    def annotations_emotion(days: int = 30) -> list[dict[str, Any]]:
+        """G4：每日情绪密度均值时序（S1 annotations expressed）。"""
+        return build_emotion_density(
+            _store().annotations_asof(_now()), now=_now(), days=max(1, min(days, 120))
         )
 
     @app.get("/api/change-field", response_model=ChangeFieldPayload)
