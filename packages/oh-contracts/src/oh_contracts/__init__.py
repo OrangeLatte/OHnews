@@ -6,6 +6,13 @@
 - 仅存放 Pydantic schema、StrEnum 枚举与常量。
 """
 
+from oh_contracts.archive import (
+    ARCHIVE_KIND_ZH,
+    ARCHIVE_KINDS,
+    AgentPaper,
+    ArchiveItem,
+    ArchiveKind,
+)
 from oh_contracts.belief import (
     BeliefChangeType,
     BeliefCreate,
@@ -134,6 +141,11 @@ from oh_contracts.watching import (
 )
 
 __all__ = [
+    "AgentPaper",
+    "ARCHIVE_KINDS",
+    "ARCHIVE_KIND_ZH",
+    "ArchiveItem",
+    "ArchiveKind",
     "AnalysisArtifact",
     "ArtifactKind",
     "ContextPacket",
