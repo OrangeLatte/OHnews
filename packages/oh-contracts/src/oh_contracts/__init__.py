@@ -134,6 +134,10 @@ from oh_contracts.tracking import (
     TrackingMode,
     TrackingUnit,
 )
+from oh_contracts.translations import (
+    TranslationItem,
+    TranslationQuality,
+)
 from oh_contracts.watching import (
     WatchKind,
     WatchReview,
@@ -255,6 +259,8 @@ __all__ = [
     "TrackingKind",
     "TrackingMode",
     "TrackingUnit",
+    "TranslationItem",
+    "TranslationQuality",
     "WatchKind",
     "WatchReview",
     "WatchUpdate",
