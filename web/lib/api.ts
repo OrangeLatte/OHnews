@@ -448,6 +448,8 @@ export const api = {
       kind,
       text,
     }),
+  parentBrief: () =>
+    get<components["schemas"]["ParentBrief"]>("/agent/parent/brief"),
   changeField: (days = 30) =>
     get<components["schemas"]["ChangeFieldPayload"]>(`/change-field?days=${days}`),
   changeLandscape: (days = 7, top = 5) =>

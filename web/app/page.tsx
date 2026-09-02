@@ -24,6 +24,7 @@ import { useT } from "@/lib/i18n/use-t";
 import { Term } from "@/components/chrome/term";
 import { watchStatus } from "@/lib/insight";
 import { ChangeOverview } from "@/components/change-overview/change-overview";
+import { ParentConsole } from "@/components/chrome/parent-console";
 
 /* ── 数据面（旧端点类型，待统一迁移至 OpenAPI 生成） ── */
 
@@ -210,6 +211,7 @@ export default function IntelligencePage() {
 
       {/* ── Sidebar 4 栏 ── */}
       <aside className="flex flex-col gap-8 lg:col-span-4 min-w-0">
+        <ParentConsole />
         <section>
           <SectionHead
             no="§1"

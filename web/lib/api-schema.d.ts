@@ -79,6 +79,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/parent/brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Parent Brief
+         * @description 汇总 02/03/04 会话、拆解队列、供应商与数据健康（07 需求 c/d）。
+         */
+        get: operations["parent_brief_api_agent_parent_brief_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/dissect/suggestions": {
         parameters: {
             query?: never;
@@ -2101,6 +2121,36 @@ export interface components {
             n_cohort_sources: number;
         };
         /**
+         * ParentBrief
+         * @description E2：总控台简报（确定性汇总，不跑 LLM）。
+         */
+        ParentBrief: {
+            /** Sessions By Kind */
+            sessions_by_kind: {
+                [key: string]: number;
+            };
+            /** Latest Session */
+            latest_session: {
+                [key: string]: unknown;
+            } | null;
+            /** Queue Pending */
+            queue_pending: number;
+            /** Queue Top */
+            queue_top: {
+                [key: string]: unknown;
+            }[];
+            /** Providers */
+            providers: {
+                [key: string]: boolean;
+            };
+            /** Health */
+            health: {
+                [key: string]: number;
+            };
+            /** Suggestions */
+            suggestions: string[];
+        };
+        /**
          * QualifiedChange
          * @description 腰部 Change Point：已过质量门的变化（复用 Briefing 人话语义）。
          */
@@ -2589,6 +2639,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    parent_brief_api_agent_parent_brief_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParentBrief"];
                 };
             };
         };
