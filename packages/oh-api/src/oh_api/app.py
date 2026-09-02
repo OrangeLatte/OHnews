@@ -218,7 +218,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
     def _sync_env() -> None:
         """runtime keys 注入 os.environ——oh-llm 的 _ensure/ChatOpenAI 只读进程环境。"""
-        for env_name in ("DEEPSEEK_API_KEY", "ZHIPU_API_KEY"):
+        for env_name in ("DEEPSEEK_API_KEY", "ZHIPU_API_KEY", "TAVILY_API_KEY"):
             k = _runtime_keys().get(env_name)
             if k:
                 os.environ[env_name] = k
@@ -250,13 +250,14 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         return {
             "deepseek": _get_key("deepseek") is not None,
             "zhipu": _get_key("zhipu") is not None,
+            "tavily": _get_key("tavily") is not None,
             "llm_ready": _chat_router() is not None,
         }
 
     @app.post("/api/keys")
     def keys_save(body: dict[str, str]) -> dict[str, Any]:
         """保存运行时 keys（热生效，无需重启；持久化到 gitignored runtime_keys.json）。"""
-        allowed = {"DEEPSEEK_API_KEY", "ZHIPU_API_KEY"}
+        allowed = {"DEEPSEEK_API_KEY", "ZHIPU_API_KEY", "TAVILY_API_KEY"}
         current = _runtime_keys()
         changed = False
         for k, v in (body or {}).items():

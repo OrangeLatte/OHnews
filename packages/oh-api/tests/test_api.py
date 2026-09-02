@@ -388,7 +388,7 @@ def test_library_endpoints(client: TestClient) -> None:
 def test_keys_roundtrip_and_llm_ready(client: TestClient) -> None:
     """运行时 keys：POST 热生效（无 models.yaml 时 llm_ready 仍 false=诚实降级）。"""
     r = client.get("/api/keys").json()
-    assert r == {"deepseek": False, "zhipu": False, "llm_ready": False}
+    assert r == {"deepseek": False, "zhipu": False, "tavily": False, "llm_ready": False}
     r2 = client.post(
         "/api/keys",
         json={"DEEPSEEK_API_KEY": "sk-test-abc", "ZHIPU_API_KEY": "  ", "EVIL": "x"},
