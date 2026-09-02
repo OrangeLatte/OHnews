@@ -950,3 +950,55 @@ def test_agent_queue_suggestions_and_decide(client: TestClient, tmp_path: Path) 
         ).status_code
         == 422
     )
+
+
+def test_sources_filter(client: TestClient) -> None:
+    """C1：服务端筛选（tier/q）。"""
+    r = client.get("/api/sources", params={"tier": "L1"})
+    assert r.status_code == 200
+    srcs = r.json()["sources"]
+    assert srcs and all(s["tier"] == "L1" for s in srcs)
+    r2 = client.get("/api/sources", params={"q": "gov"})
+    assert all("gov" in s["source_id"] for s in r2.json()["sources"])
+
+
+def test_source_suggest_and_register(client: TestClient) -> None:
+    """C2：URL→启发式建议→确认注册（写 tmp sources.yaml）→冲突 409/非法 422。"""
+    r = client.post("/api/sources/suggest", json={"url": "https://www.example.cn/rss.xml"})
+    assert r.status_code == 200
+    sug = r.json()["suggestion"]
+    assert sug["adapter"] == "rss"
+    assert sug["language"] == "zh"
+    sid = sug["source_id"]
+    r1 = client.post(
+        "/api/sources",
+        json={
+            "source_id": sid,
+            "adapter": sug["adapter"],
+            "tier": sug["tier"],
+            "language": sug["language"],
+            "url": "https://www.example.cn/rss.xml",
+        },
+    )
+    assert r1.status_code == 200
+    assert r1.json()["source_id"] == sid
+    lst = client.get("/api/sources").json()["sources"]
+    assert any(s["source_id"] == sid for s in lst)
+    r2 = client.post(
+        "/api/sources",
+        json={"source_id": sid, "adapter": "rss", "tier": "L3", "language": "zh", "url": "https://x"},
+    )
+    assert r2.status_code == 409
+    r3 = client.post("/api/sources/suggest", json={"url": "ftp://bad"})
+    assert r3.status_code == 422
+    r4 = client.post(
+        "/api/sources",
+        json={
+            "source_id": "okname",
+            "adapter": "unknown_kind",
+            "tier": "L3",
+            "language": "en",
+            "url": "https://x",
+        },
+    )
+    assert r4.status_code == 422

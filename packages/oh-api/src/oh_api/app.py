@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import threading
 from collections import Counter, defaultdict
 from collections.abc import Callable
@@ -17,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import yaml
@@ -978,8 +980,14 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         }
 
     @app.get("/api/sources")
-    def sources_list() -> dict[str, Any]:
-        """信息源管理面（订阅中心）：全源清单 + Bronze 产出统计（订阅中心主表数据）。"""
+    def sources_list(
+        tier: str | None = None,
+        kind: str | None = None,
+        language: str | None = None,
+        q: str | None = None,
+        enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        """信息源管理面（订阅中心）：全源清单 + Bronze 产出统计（C1 服务端筛选）。"""
         doc: dict[str, Any] = {}
         if paths.sources_yaml.exists():
             with paths.sources_yaml.open(encoding="utf-8") as f:
@@ -1016,7 +1024,99 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                 }
             )
         rows.sort(key=lambda r: (-r["n_7d"], -r["n_30d"], r["source_id"]))
+        if tier:
+            rows = [r for r in rows if str(r["tier"]).upper() == tier.upper()]
+        if kind:
+            rows = [r for r in rows if r["kind"] == kind]
+        if language:
+            rows = [r for r in rows if r["language"] == language]
+        if enabled is not None:
+            rows = [r for r in rows if r["enabled"] == enabled]
+        if q:
+            rows = [r for r in rows if q.lower() in str(r["source_id"]).lower()]
         return {"n": len(rows), "sources": rows}
+
+    @app.post("/api/sources/suggest")
+    def source_suggest(body: dict[str, Any]) -> dict[str, Any]:
+        """C2：URL → 信源注册建议（确定性启发式，无 LLM 依赖）。
+
+        用户确认后走 POST /api/sources 落库；本端点只读不写。
+        """
+        url = str(body.get("url") or "").strip()
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(422, "url must start with http(s)://")
+        host = urlparse(url).netloc.lower().removeprefix("www.")
+        core = re.sub(r"\.[a-z]{2,}(\.[a-z]{2})?$", "", host) or host
+        core = re.sub(r"[^a-z0-9_-]", "_", core)
+        if url.rstrip("/").lower().endswith((".xml", "/rss", "/feed")) or "rss" in url.lower():
+            kind = "rss"
+        elif "/api/" in url or url.lower().endswith(".json"):
+            kind = "json_api"
+        else:
+            kind = "html"
+        social = {"x.com", "twitter.com", "reddit.com", "weibo.com", "t.me"}
+        gov_hits = ("gov", "centralbank", "federalreserve", "ecb", "boj", "pbc")
+        tier = "L4" if host in social else ("L1" if any(g in host for g in gov_hits) else "L3")
+        tld_lang = {
+            "cn": "zh", "kr": "ko", "jp": "ja", "de": "de", "fr": "fr",
+            "ru": "ru", "br": "pt", "in": "hi", "tw": "zh", "hk": "zh",
+        }
+        tld = host.rsplit(".", 1)[-1]
+        language = tld_lang.get(tld, "en")
+        return {
+            "url": url,
+            "suggestion": {
+                "source_id": core,
+                "adapter": kind,
+                "tier": tier,
+                "language": language,
+                "params": {"url": url},
+            },
+            "rationale": "启发式建议（主机名/路径/域名后缀推断），注册前请人工确认等级与语言",
+        }
+
+    @app.post("/api/sources")
+    def source_register(body: dict[str, Any]) -> dict[str, Any]:
+        """C2：确认建议后注册信源（文本追加写 config/sources.yaml，保留既有注释）。
+
+        source_id 冲突 409；adapter 闭集校验 422。
+        """
+        sid = str(body.get("source_id") or "").strip()
+        adapter = str(body.get("adapter") or "").strip()
+        if not sid or not re.fullmatch(r"[a-z0-9_-]{2,40}", sid):
+            raise HTTPException(422, "source_id 需 2-40 位小写字母/数字/下划线/连字符")
+        if adapter not in {"rss", "gdelt", "fred", "json_api", "html", "browser", "reddit_cdp"}:
+            raise HTTPException(422, f"unknown adapter: {adapter}")
+        tier = str(body.get("tier") or "L3")
+        if tier not in {"L1", "L2", "L3", "L4"}:
+            raise HTTPException(422, "tier must be L1-L4")
+        language = str(body.get("language") or "en")
+        params_url = str(body.get("url") or "")
+        if paths.sources_yaml.exists():
+            existing = paths.sources_yaml.read_text(encoding="utf-8")
+        else:
+            existing = "version: 2\n\nsources:\n"
+        if re.search(rf"^\s*- source_id:\s*{re.escape(sid)}\s*$", existing, re.M):
+            raise HTTPException(409, f"source_id 已存在: {sid}")
+        block = (
+            f"\n  - source_id: {sid}\n"
+            f"    adapter: {adapter}\n"
+            f"    tier: {tier}\n"
+            f"    language: {language}\n"
+            f"    credibility_prior: 0.5\n"
+            f"    enabled: true\n"
+            f"    params:\n"
+            f'      url: "{params_url}"\n'
+        )
+        with paths.sources_yaml.open("a", encoding="utf-8") as f:
+            f.write(block)
+        return {
+            "ok": True,
+            "source_id": sid,
+            "adapter": adapter,
+            "tier": tier,
+            "language": language,
+        }
 
     @app.get("/api/sources/{source_id}/articles")
     def source_articles(source_id: str, limit: int = 20) -> list[dict[str, Any]]:
