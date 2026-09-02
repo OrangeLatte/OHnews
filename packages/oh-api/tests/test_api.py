@@ -1077,3 +1077,39 @@ def test_archive_and_paper_flow(client: TestClient) -> None:
     assert any(x["paper_id"] == paper["paper_id"] for x in papers)
     assert client.delete(f"/api/archive/{aid}").status_code == 204
     assert client.delete(f"/api/archive/{aid}").status_code == 404
+
+
+def test_agent_translate_flow(client: TestClient, tmp_path: Path) -> None:
+    """E1 翻译端点：bronze 反查 → 翻译副本入库（测试无 key 走 offline）→ 回读。"""
+    from oh_contracts.ids import make_item_key
+    from oh_contracts.schemas import BronzeRecord
+
+    ts = make_now()
+    rec = BronzeRecord(
+        source_id="wscn",
+        item_key=make_item_key("wscn", "trans-1", ts),
+        external_id="trans-1",
+        url_hash="u",
+        content_hash="c",
+        fetched_at=ts,
+        published_at=ts,
+        raw={},
+        normalized={"title": "美联储暗示九月暂停加息", "body": "通胀放缓。"},
+    )
+    ParquetBronzeWriter(tmp_path / "bronze").write([rec])
+    ik = rec.item_key
+    r1 = client.post("/api/agent/translate", json={"item_key": ik, "target_language": "en"})
+    assert r1.status_code == 200
+    tr = r1.json()
+    assert tr["item_key"] == ik
+    assert tr["target_language"] == "en"
+    assert tr["engine"] in {"llm", "offline"}
+    r2 = client.get(f"/api/agent/translations/{ik}?target_language=en")
+    assert r2.status_code == 200
+    assert r2.json()["engine"] == tr["engine"]
+    r3 = client.get(f"/api/agent/translations/{ik}?target_language=qq")
+    assert r3.status_code == 422
+    r4 = client.post("/api/agent/translate", json={"item_key": "ghost", "target_language": "en"})
+    assert r4.status_code == 404
+    r5 = client.post("/api/agent/translate", json={"item_key": ik, "target_language": "xx"})
+    assert r5.status_code == 422

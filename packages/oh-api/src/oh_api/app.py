@@ -45,6 +45,7 @@ from oh_agents.orchestrator import (
 from oh_agents.report_agent import REPORT_KIND_ZH, build_report_graph
 from oh_agents.research import run_research
 from oh_agents.tracking import TrackingStore
+from oh_agents.translation_agent import build_translation_graph
 from oh_agents.watch_update import compute_watch_update
 from oh_api.agents import build_router as build_agent_sessions_router
 from oh_api.briefing import build_briefing, build_briefing_with_signals, build_dossier
@@ -62,6 +63,7 @@ from oh_contracts.reports import AgentReport
 from oh_contracts.schemas import NDIPoint
 from oh_contracts.text import strip_html
 from oh_contracts.tracking import TrackingUnit
+from oh_contracts.translations import TRANSLATION_TARGETS, TranslationItem
 from oh_contracts.watching import WatchReview, WatchUpdate
 from oh_pipeline.anatomy import cluster_distributions, cluster_pairwise, entity_opposition
 from oh_pipeline.detect import detect_signals
@@ -305,6 +307,47 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             }
         )
         return out["dissection"]
+
+    @app.post("/api/agent/translate", response_model=TranslationItem)
+    async def agent_translate(body: dict[str, Any]) -> TranslationItem:
+        """E1：翻译学家工作流——生成翻译副本（独立表，不改写原文）。
+
+        LLM 失败/超时 → engine=offline 空译文诚实降级。
+        """
+        item_key = str(body.get("item_key") or "")
+        target = str(body.get("target_language") or "en")
+        if not item_key or target not in TRANSLATION_TARGETS:
+            raise HTTPException(status_code=422, detail="item_key 与合法 target_language 必填")
+        rec = next((r for r in _bronze().iter_records() if r.item_key == item_key), None)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="bronze 无此 item_key")
+        norm = rec.normalized or {}
+        title = str(norm.get("title") or "")
+        text = str(norm.get("body") or title or rec.raw or "")[:2500]
+        lang = str(norm.get("language") or "")
+        out = await build_translation_graph(
+            router=_chat_router(), store=_store(), now_fn=_now
+        ).ainvoke(
+            {
+                "item_key": item_key,
+                "title": title,
+                "text": text,
+                "source_language": lang,
+                "target_language": target,
+            }
+        )
+        return TranslationItem.model_validate(out["translation"])
+
+    @app.get(
+        "/api/agent/translations/{item_key:path}",
+        response_model=TranslationItem | None,
+    )
+    def agent_translation(item_key: str, target_language: str = "en") -> TranslationItem | None:
+        """已存翻译副本（按目标语言；无则 None）。"""
+        if target_language not in TRANSLATION_TARGETS:
+            raise HTTPException(status_code=422, detail="非法 target_language")
+        row = _store().get_translation(item_key, target_language)
+        return TranslationItem.model_validate(row) if row else None
 
     @app.post("/api/agent/report", response_model=AgentReport)
     async def agent_report(body: dict[str, Any]) -> AgentReport:
