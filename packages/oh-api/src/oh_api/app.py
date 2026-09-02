@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 from oh_agents.alerts import check_alerts
 from oh_agents.chat import ChatStore, run_chat
 from oh_agents.decision_log import DecisionLog
+from oh_agents.dissection_agent import build_dissection_graph, fallback_elements_from_hints
 from oh_agents.intel_pipeline import build_daily_intel
 from oh_agents.morning_brief import build_brief
 from oh_agents.orchestrator import (
@@ -43,6 +44,7 @@ from oh_api.search import build_router as build_search_router
 from oh_contracts.belief import BeliefCreate, BeliefSnapshot
 from oh_contracts.briefing import BriefingResponse, ChangeDossier, EvidenceCitation
 from oh_contracts.change_landscape import ChangeFieldPayload, ChangeLandscape
+from oh_contracts.dissection import ArticleDissection
 from oh_contracts.enums import SourceTier
 from oh_contracts.intents import Intent
 from oh_contracts.schemas import NDIPoint
@@ -207,6 +209,51 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         return singleton
 
     app.include_router(build_agent_sessions_router(lambda: _agent_sessions()))
+
+    @app.post("/api/agent/dissect", response_model=ArticleDissection)
+    async def agent_dissect(body: dict[str, Any]) -> ArticleDissection:
+        """B1 文章拆解：item_key → 18 元素（缓存复用，force=true 重拆）。
+
+        LLM 全候选失败 → offline 词典兜底（engine=offline，诚实降级）。
+        """
+        item_key = str(body.get("item_key", "")).strip()
+        force = bool(body.get("force", False))
+        if not item_key:
+            raise HTTPException(status_code=422, detail="item_key 必填")
+        store = _store()
+        if not force:
+            cached = store.get_dissection(item_key)
+            if cached is not None:
+                cached["cached"] = True  # 仅供展示；ArticleDissection 无此字段则忽略
+                cached.pop("cached", None)
+                return ArticleDissection.model_validate(cached)
+        rec = next((r for r in _bronze().iter_records() if r.item_key == item_key), None)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="bronze 无此 item_key")
+        norm = rec.normalized or {}
+        text = str(norm.get("body") or norm.get("title") or rec.raw or "")
+        hint = store.get_annotation(item_key) or {}
+        graph = build_dissection_graph(
+            router=_chat_router(),
+            store=store,
+            fallback_fn=lambda _s: fallback_elements_from_hints(hint),
+            now_fn=_now,
+        )
+        out = await graph.ainvoke(
+            {
+                "item_key": item_key,
+                "title": str((rec.normalized or {}).get("title") or ""),
+                "text": text[:2500],
+                "language": str((rec.normalized or {}).get("language") or ""),
+                "hints": json.dumps(hint, ensure_ascii=False)[:1500],
+            }
+        )
+        return out["dissection"]
+
+    @app.get("/api/agent/dissections/{item_key:path}", response_model=ArticleDissection | None)
+    def agent_dissection_get(item_key: str) -> ArticleDissection | None:
+        d = _store().get_dissection(item_key)
+        return ArticleDissection.model_validate(d) if d else None
 
     # ---- 运行时 API keys（UI 配置 → data/runtime_keys.json，gitignored；env 优先）----
     def _runtime_keys_path() -> Path:

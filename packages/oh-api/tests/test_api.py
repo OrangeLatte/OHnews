@@ -825,12 +825,44 @@ def test_agent_sessions_flow(client: TestClient) -> None:
     assert client.post("/api/agent/sessions", json={"kind": "bogus"}).status_code == 422
     sessions = client.get("/api/agent/sessions?kind=dissection").json()["sessions"]
     assert any(x["thread_id"] == tid for x in sessions)
-    push = client.post(
-        f"/api/agent/sessions/{tid}/inputs", json={"text": "重点看利率段"}
-    )
+    push = client.post(f"/api/agent/sessions/{tid}/inputs", json={"text": "重点看利率段"})
     assert push.status_code == 202
     assert client.post(f"/api/agent/sessions/{tid}/inputs", json={"text": "  "}).status_code == 422
-    ghost = client.post(
-        "/api/agent/sessions/ghost:0000/inputs", json={"text": "x"}
-    )
+    ghost = client.post("/api/agent/sessions/ghost:0000/inputs", json={"text": "x"})
     assert ghost.status_code == 404
+
+
+def test_agent_dissect_flow(client: TestClient, tmp_path: Path) -> None:
+    """B1 拆解：无 LLM key 走 offline 降级（诚实 engine=offline）+ 缓存复用。"""
+    from oh_contracts.ids import make_item_key
+    from oh_contracts.schemas import BronzeRecord
+
+    ts = make_now()
+    rec = BronzeRecord(
+        source_id="wscn",
+        item_key=make_item_key("wscn", "dissect-1", ts),
+        external_id="dissect-1",
+        url_hash="u",
+        content_hash="c",
+        fetched_at=ts,
+        published_at=ts,
+        raw={},
+        normalized={
+            "title": "美联储暗示九月暂停加息",
+            "body": "通胀放缓令九月的利率决定保有空间。",
+        },
+    )
+    ParquetBronzeWriter(tmp_path / "bronze").write([rec])
+    body = {"item_key": rec.item_key}
+    r1 = client.post("/api/agent/dissect", json=body)
+    assert r1.status_code == 200
+    d1 = r1.json()
+    assert d1["item_key"] == rec.item_key
+    assert d1["engine"] in {"offline", "llm"}
+    if d1["engine"] == "offline":
+        assert d1["model_hint"] == ""
+    r2 = client.post("/api/agent/dissect", json=body)
+    assert r2.status_code == 200
+    assert r2.json()["dissected_at"] == d1["dissected_at"]  # 缓存未重拆
+    assert client.post("/api/agent/dissect", json={"item_key": "ghost"}).status_code == 404
+    assert client.post("/api/agent/dissect", json={}).status_code == 422
