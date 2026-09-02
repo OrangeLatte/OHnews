@@ -110,7 +110,6 @@ export default function IntelligencePage() {
   const briefing: BriefingResponse | null = home?.briefing ?? null;
   const watches = (home?.watches as unknown as WatchRow[]) ?? [];
   const changes = briefing?.changes ?? [];
-  const stale = briefing?.freshness.staleness === "stale";
 
   return (
     <div className="grid content-start grid-cols-1 gap-x-10 gap-y-8 lg:grid-cols-12">
@@ -164,24 +163,42 @@ export default function IntelligencePage() {
               </Link>
               {changes.length > 1 && (
                 <span className="text-xs text-muted-foreground">
-                  另有 {changes.length - 1} 件变化见下方变化总览
+                  另有 {changes.length - 1} 件变化列于本期简报
                 </span>
               )}
             </div>
           </article>
         )}
 
-        {/* T3：变化卡唯一列表在 ChangeOverview（Hero）——此处不再重复渲染同一批 Change */}
+        {briefing && changes.length > 1 && (
+          <div className="mb-6 grid gap-3 sm:grid-cols-2">
+            {changes.slice(1, 5).map((change) => (
+              <article key={change.change_id} className="border border-border p-3">
+                <p className="paper-kicker">其他值得验证的变化</p>
+                <h2 className="font-paper mt-1 text-lg leading-6">{change.headline}</h2>
+                <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">
+                  {change.what}
+                </p>
+                <Link
+                  href={`/changes/${change.change_id}`}
+                  className="mt-3 inline-block text-sm underline underline-offset-4 hover:text-primary"
+                  onClick={() =>
+                    track("change_opened", { objectId: change.change_id, fromPage: "/#briefing" })
+                  }
+                >
+                  查看证据 →
+                </Link>
+              </article>
+            ))}
+          </div>
+        )}
+
+        {/* 变化列表只在简报区出现；上方图表只解释结构变化，不再重复卡片。 */}
         <div className="flex flex-col">
           {briefing && changes.length === 0 && (
             <p className="text-sm leading-6 text-muted-foreground">
               当前信息量不足以支撑任何值得注意的变化判断——系统选择弃权而非硬凑数字。
               {briefing.freshness.note}
-            </p>
-          )}
-          {stale && (
-            <p className="mt-3 border border-dashed p-3 text-sm" style={{ borderColor: SIGNAL.warning }}>
-              数据已过期（采集可能中断）——以下结论基于最后一次成功采集的窗口。
             </p>
           )}
         </div>

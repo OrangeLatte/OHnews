@@ -1,10 +1,8 @@
 "use client";
 
-import { useState } from "react";
 import type { EChartsOption } from "echarts";
 import { ChartBase } from "@/components/visualizations/chart-base";
 import { type ChangeLandscape } from "@/lib/api";
-import { track } from "@/lib/track";
 import { FRAME_COLORS, SIGNAL } from "@/lib/tokens";
 
 /**
@@ -15,26 +13,6 @@ import { FRAME_COLORS, SIGNAL } from "@/lib/tokens";
  * 上=过去窗口，下=当前窗口；框架迁移哑铃图；变化点可点击聚焦。
  * 移动端纵向降级；prefers-reduced-motion 禁过渡。
  */
-
-const KIND_ZH: Record<string, string> = {
-  attention_spike: "注意力聚集",
-  narrative_shift: "叙事转变",
-  divergence_rise: "叙事分歧升高",
-  expectation_gap: "官方与市场预期错位",
-};
-
-const STRENGTH_ZH: Record<string, string> = {
-  strong: "显著变化",
-  notable: "值得关注",
-  minor: "轻微迹象",
-  insufficient: "证据不足",
-};
-
-const URGENCY_ZH: Record<string, string> = {
-  high: "今天",
-  medium: "48 小时内",
-  low: "本周内",
-};
 
 function fmtInt(n: number): string {
   return n.toLocaleString("en-US");
@@ -56,35 +34,15 @@ export function ChangeOverview({
   if (!scene) {
     return (
       <section className="ov-section" aria-label="变化总览" aria-busy="true">
-        <div className="ov-inner ov-note">正在汇聚两窗信息流…</div>
-      </section>
-    );
-  }
-
-  const noChanges = (scene.qualified_changes ?? []).length === 0;
-  const blocked = (scene.quality_warnings ?? []).some(
-    (w) =>
-      w.code === "window_empty" || w.code === "low_coverage" || w.code === "no_qualified_changes",
-  );
-  if (noChanges && blocked) {
-    // 覆盖不足区：显式弃权，不硬凑视觉
-    return (
-      <section className="ov-section" aria-label="变化总览">
-        <div className="ov-inner ov-note">
+        <div className="ov-inner ov-loading" aria-live="polite">
           <p className="ov-kicker">THE CHANGE OVERVIEW · 变化总览</p>
-          <p className="ov-line">
-            当前窗口覆盖不足，系统选择不呈现对比——这不是没有变化，而是证据还不够说话。
-          </p>
-          {(scene.quality_warnings ?? []).length > 0 && (
-            <ul className="ov-warnings">
-              {(scene.quality_warnings ?? []).map((w) => (
-                <li key={w.code}>{w.message}</li>
-              ))}
-            </ul>
-          )}
-          <p className="ov-fresh">
-            数据截至 {scene.freshness.as_of}（UTC）· {scene.freshness.note}
-          </p>
+          <p className="ov-loading-title">正在比较两个时间窗口…</p>
+          <div className="ov-loading-bars" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
         </div>
       </section>
     );
@@ -92,6 +50,14 @@ export function ChangeOverview({
 
   return <OverviewStage scene={scene} days={days} onDaysChange={onDaysChange} />;
 }
+
+const WARNING_LABELS: Record<string, string> = {
+  stale_data: "数据已过期",
+  window_empty: "时间窗口没有数据",
+  low_coverage: "来源覆盖不足",
+  no_qualified_changes: "没有变化通过证据门",
+  source_composition_shift: "两窗来源构成不同",
+};
 
 function OverviewStage({
   scene,
@@ -102,12 +68,12 @@ function OverviewStage({
   days: number;
   onDaysChange: (d: number) => void;
 }) {
-  const [selected, setSelected] = useState<string | null>(null);
   const bw = scene.baseline_window;
   const cw = scene.current_window;
   const stale = (scene.quality_warnings ?? []).some((w) => w.code === "stale_data");
-  const changes = scene.qualified_changes ?? [];
-  const sel = changes.find((c) => c.change_id === selected) ?? null;
+  const blocked = (scene.quality_warnings ?? []).some((warning) =>
+    ["window_empty", "low_coverage", "no_qualified_changes"].includes(warning.code),
+  );
   // 框架迁移哑铃：按显示口径（adjusted 优先）的变化幅度降序取前 5
   type NarrStream = NonNullable<ChangeLandscape["narrative_streams"]>[number];
   const dispDelta = (n: NarrStream) =>
@@ -117,12 +83,17 @@ function OverviewStage({
   const frames = [...(scene.narrative_streams ?? [])]
     .sort((a, b) => dispDelta(b) - dispDelta(a))
     .slice(0, 5);
+  const comparableFrames = frames.filter((frame) => frame.n_cohort_sources >= 3);
   const maxShare = Math.max(
     0.05,
-    ...frames.map((f) => Math.max(f.adjusted_share_baseline ?? f.share_baseline, f.adjusted_share_current ?? f.share_current)),
+    ...comparableFrames.map((frame) =>
+      Math.max(
+        frame.adjusted_share_baseline ?? frame.share_baseline,
+        frame.adjusted_share_current ?? frame.share_current,
+      ),
+    ),
   );
-
-
+  const minCohort = frames.length > 0 ? Math.min(...frames.map((frame) => frame.n_cohort_sources)) : 0;
 
   const frameOption: EChartsOption = {
     tooltip: {
@@ -154,20 +125,31 @@ function OverviewStage({
       max: maxShare,
       axisLabel: { formatter: (v: number) => `${Math.round(v * 100)}%`, color: SIGNAL.muted },
     },
-    yAxis: { type: "category", data: frames.map((f) => f.label), axisLabel: { color: SIGNAL.muted } },
+    yAxis: {
+      type: "category",
+      data: comparableFrames.map((frame) => frame.label),
+      axisLabel: { color: SIGNAL.muted },
+    },
     series: [
       {
         name: "过去窗口",
         type: "bar",
         itemStyle: { color: "#c9c2b4" },
         barGap: "20%",
-        data: frames.map((f) => f.adjusted_share_baseline ?? f.share_baseline),
+        data: comparableFrames.map((frame) =>
+          frame.adjusted_share_baseline ?? frame.share_baseline
+        ),
       },
       {
         name: "当前窗口",
         type: "bar",
-        itemStyle: { color: (p) => FRAME_COLORS[frames[p.dataIndex]?.frame] ?? SIGNAL.muted },
-        data: frames.map((f) => f.adjusted_share_current ?? f.share_current),
+        itemStyle: {
+          color: (params) =>
+            FRAME_COLORS[comparableFrames[params.dataIndex]?.frame] ?? SIGNAL.muted,
+        },
+        data: comparableFrames.map((frame) =>
+          frame.adjusted_share_current ?? frame.share_current
+        ),
       },
     ],
   };
@@ -187,7 +169,6 @@ function OverviewStage({
               <select
                 value={days}
                 onChange={(e) => {
-                  setSelected(null);
                   onDaysChange(Number(e.target.value));
                 }}
               >
@@ -220,66 +201,46 @@ function OverviewStage({
           </div>
         </div>
 
-{frames.length > 0 && (
+        {blocked && (
+          <div className="ov-gate" role="status">
+            <strong>证据门未通过</strong>
+            <span>这不等于没有变化，而是当前样本不足以形成可靠结论。可切换时间窗口继续查看。</span>
+          </div>
+        )}
+
+        {comparableFrames.length > 0 ? (
           <div
             className="ov-chart"
             role="img"
             aria-label="叙事框架份额迁移（共同来源校正口径优先）"
           >
-            <ChartBase option={frameOption} state="ready" height={frames.length * 64 + 80} />
+            <div className="ov-chart-note">
+              <span>变化透镜：同一批来源在两个窗口中的叙事结构</span>
+              <strong>
+                {minCohort < 5
+                  ? `${minCohort} 个共同来源 · 方向性迹象`
+                  : `${minCohort} 个共同来源 · 可比较`}
+              </strong>
+            </div>
+            <ChartBase
+              option={frameOption}
+              state="ready"
+              height={comparableFrames.length * 64 + 80}
+            />
           </div>
-        )}
-
-                {/* 聚焦摘要：点击变化卡后显示（报纸剪报面板） */}
-        {sel && (
-          <aside className="ov-summary" aria-label="变化摘要">
-            <button type="button" className="ov-summary-close" onClick={() => setSelected(null)}>
-              关闭
-            </button>
-            <p className="ov-summary-kind">{KIND_ZH[sel.kind] ?? sel.kind} · {STRENGTH_ZH[sel.strength_word] ?? sel.strength_word}</p>
-            <p className="ov-summary-headline">{sel.headline}</p>
-            <p className="ov-summary-text">{sel.what}</p>
-            <p className="ov-summary-text">{sel.why_now}</p>
-            {(sel.subjects ?? []).length > 0 && (
-              <p className="ov-summary-meta">涉及：{(sel.subjects ?? []).join("、")}</p>
-            )}
-            <a
-              className="ov-summary-link"
-              href={`/changes/${encodeURIComponent(sel.change_id)}`}
-              onClick={() => track("change_opened", { objectId: sel.change_id, fromPage: "/#overview" })}
-            >
-              查看证据与完整档案 →
-            </a>
-          </aside>
-        )}
-
-        {/* 变化卡（可聚焦链接） */}
-        <ul className="ov-change-list">
-          {changes.map((c) => {
-            const active = c.change_id === selected;
-            return (
-              <li key={c.change_id}>
-                <button
-                  type="button"
-                  className={`ov-change-card${active ? " ov-change-active" : ""}`}
-                  onClick={() => setSelected(active ? null : c.change_id)}
-                >
-                  <span className="ov-change-kind">{KIND_ZH[c.kind] ?? c.kind}</span>
-                  <span className="ov-change-headline">{c.headline}</span>
-                  <span className="ov-change-meta">
-                    {STRENGTH_ZH[c.strength_word] ?? c.strength_word} · 建议 {URGENCY_ZH[c.urgency] ?? c.urgency}查看
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        ) : frames.length > 0 ? (
+          <div className="ov-chart ov-chart-abstain">
+            共同来源少于 3 个，系统不展示百分比变化。当前只能确认“可能发生变化”，不能判断变化幅度。
+          </div>
+        ) : null}
 
         {(scene.quality_warnings ?? []).length > 0 && (
           <ul className="ov-warnings">
-            {(scene.quality_warnings ?? []).map((w) => (
-              <li key={w.code}>{w.message}</li>
-            ))}
+              {(scene.quality_warnings ?? []).map((w) => (
+              <li key={w.code} title={w.message}>
+                {WARNING_LABELS[w.code] ?? w.message}
+              </li>
+              ))}
           </ul>
         )}
       </div>

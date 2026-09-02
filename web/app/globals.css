@@ -123,6 +123,33 @@
   text-align: center;
   color: var(--muted-foreground);
 }
+.ov-loading {
+  min-height: 26rem;
+}
+.ov-loading-title {
+  margin-top: 1.5rem;
+  font-family: var(--font-newspaper);
+  font-size: clamp(1.35rem, 3vw, 2rem);
+}
+.ov-loading-bars {
+  display: grid;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+.ov-loading-bars i {
+  display: block;
+  height: 1.5rem;
+  background: linear-gradient(90deg, var(--muted) 20%, var(--border) 50%, var(--muted) 80%);
+  background-size: 200% 100%;
+  animation: ov-pulse 1.4s ease-in-out infinite;
+}
+.ov-loading-bars i:nth-child(2) { width: 78%; }
+.ov-loading-bars i:nth-child(3) { width: 62%; }
+.ov-loading-bars i:nth-child(4) { width: 44%; }
+@keyframes ov-pulse {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
 .ov-head {
   display: flex;
   flex-wrap: wrap;
@@ -200,138 +227,20 @@
 .ov-arrow {
   color: var(--muted-foreground);
 }
-.ov-frames {
-  margin: 0.75rem 0 0.5rem;
-  display: grid;
-  gap: 0.3rem;
+.ov-gate {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  margin: 1rem 0 0.5rem;
+  border-block: 1px solid var(--border);
+  padding: 0.65rem 0;
+  font-size: 0.8rem;
 }
-.ov-frame-track {
-  display: grid;
-  grid-template-columns: 4.5rem 1fr 7.5rem;
-  align-items: center;
-  gap: 0.6rem;
+.ov-gate strong {
+  flex: 0 0 auto;
+  color: var(--color-signal-warning);
 }
-.ov-frame-label {
-  font-size: 0.75rem;
-}
-.ov-frame-adj {
-  font-style: normal;
-  margin-left: 0.25rem;
-  font-size: 0.62rem;
-  padding: 0 0.2rem;
-  border: 1px solid var(--border);
-  color: var(--muted-foreground);
-}
-.ov-frame-moved .ov-frame-label {
-  color: var(--color-signal-divergence);
-  font-weight: 600;
-}
-.ov-frame-num {
-  font-size: 0.72rem;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted-foreground);
-}
-.ov-dot {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-}
-.ov-dot-base {
-  background: var(--muted-foreground);
-  opacity: 0.55;
-}
-.ov-dot-cur {
-  box-shadow: 0 0 0 2px var(--background);
-}
-.ov-line-seg {
-  height: 2px;
-  background: var(--border);
-}
-.ov-change-list {
-  margin: 0.9rem 0 0;
-  display: grid;
-  gap: 0.5rem;
-}
-.ov-change-list button {
-  text-align: left;
-  width: 100%;
-  border: 1px solid var(--border);
-  background: var(--background);
-  padding: 0.55rem 0.7rem;
-  cursor: pointer;
-}
-.ov-change-list button:hover,
-.ov-change-list button:focus-visible,
-.ov-change-list button[data-active="true"] {
-  border-color: var(--color-signal-divergence);
-  outline: none;
-}
-.ov-change-kind {
-  font-size: 0.65rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted-foreground);
-}
-.ov-change-headline {
-  font-family: var(--font-newspaper);
-  font-size: 1.02rem;
-  margin: 0.15rem 0;
-}
-.ov-change-meta {
-  font-size: 0.72rem;
-  color: var(--muted-foreground);
-}
-.ov-summary {
-  margin-top: 0.9rem;
-  border: 1px solid var(--foreground);
-  background: var(--background);
-  padding: 0.75rem 0.9rem;
-  position: relative;
-}
-.ov-summary-close {
-  position: absolute;
-  top: 0.4rem;
-  right: 0.55rem;
-  border: none;
-  background: none;
-  cursor: pointer;
-  color: var(--muted-foreground);
-}
-.ov-summary-close:hover {
-  color: var(--foreground);
-}
-.ov-summary-kind {
-  font-size: 0.65rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--color-signal-divergence);
-}
-.ov-summary-headline {
-  font-family: var(--font-newspaper);
-  font-size: 1.1rem;
-  margin: 0.2rem 0 0.4rem;
-}
-.ov-summary-text {
-  font-size: 0.82rem;
-  line-height: 1.65;
-}
-.ov-summary-meta {
-  font-size: 0.72rem;
-  color: var(--muted-foreground);
-  margin-top: 0.45rem;
-}
-.ov-summary-link {
-  display: inline-block;
-  margin-top: 0.5rem;
-  font-size: 0.78rem;
-  border-bottom: 1px solid var(--foreground);
-}
-.ov-summary-link:hover {
-  color: var(--color-signal-divergence);
-  border-color: var(--color-signal-divergence);
-}
+.ov-gate span { color: var(--muted-foreground); }
 .ov-warnings {
   margin-top: 0.8rem;
   border-left: 3px solid var(--color-signal-warning);
@@ -339,13 +248,6 @@
   font-size: 0.75rem;
   color: var(--muted-foreground);
 }
-@media (prefers-reduced-motion: reduce) {
-  .ov-change-list button,
-  .ov-summary-link {
-    transition: none;
-  }
-}
-
 /* ── Narrative Change Field（T8）：报纸风浅色 ── */
 .cf-section { border-top: 1px solid var(--border); padding: 1.25rem 0; }
 .cf-kicker { font-size: 0.7rem; letter-spacing: 0.14em; color: var(--muted-foreground); margin-bottom: 0.35rem; }
@@ -363,3 +265,31 @@
 
 /* ── 框架迁移对比图（U1：替换哑铃轨道） ── */
 .ov-chart { border-top: 1px solid var(--border); padding: 0.75rem 0; }
+.ov-chart-note {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  padding: 0 0.25rem 0.5rem;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+}
+.ov-chart-note strong { color: var(--color-signal-warning); font-weight: 500; }
+.ov-chart-abstain {
+  min-height: 9rem;
+  display: grid;
+  place-items: center;
+  padding-inline: 1rem;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 0.82rem;
+  line-height: 1.7;
+}
+@media (max-width: 640px) {
+  .ov-loading { min-height: 21rem; }
+  .ov-inner { padding-inline: 0.75rem; }
+  .ov-gate { align-items: flex-start; flex-direction: column; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ov-loading-bars i { animation: none; }
+}
