@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import type { EChartsOption } from "echarts";
+import { ChartBase } from "@/components/visualizations/chart-base";
 import { type ChangeLandscape } from "@/lib/api";
 import { track } from "@/lib/track";
 import { FRAME_COLORS, SIGNAL } from "@/lib/tokens";
@@ -117,13 +119,52 @@ function OverviewStage({
     .slice(0, 5);
   const maxShare = Math.max(
     0.05,
-    ...frames.map((n) =>
-      Math.max(
-        n.adjusted_share_baseline ?? n.share_baseline,
-        n.adjusted_share_current ?? n.share_current,
-      ),
-    ),
+    ...frames.map((f) => Math.max(f.adjusted_share_baseline ?? f.share_baseline, f.adjusted_share_current ?? f.share_current)),
   );
+
+
+
+  const frameOption: EChartsOption = {
+    tooltip: {
+      trigger: "axis",
+      formatter: (raw: unknown) => {
+        const params = raw as Array<{ name: string; seriesName: string; value: number }>;
+        const label = params[0]?.name;
+        const n = frames.find((f) => f.label === label);
+        if (!n) return label ?? "";
+        const bias =
+          n.adjusted_share_baseline != null
+            ? `共同来源 ${n.n_cohort_sources} 个（校正口径）`
+            : "原始口径，来源构成差异未校正";
+        const b = n.adjusted_share_baseline ?? n.share_baseline;
+        const c = n.adjusted_share_current ?? n.share_current;
+        return `${label}<br/>${bias}<br/>${Math.round(b * 100)}% → ${Math.round(c * 100)}%（Δ ${Math.round((c - b) * 100)}）`;
+      },
+    },
+    legend: { top: 0, textStyle: { color: SIGNAL.muted, fontSize: 11 } },
+    grid: { left: 70, right: 40, top: 26, bottom: 20, containLabel: true },
+    xAxis: {
+      type: "value",
+      max: maxShare,
+      axisLabel: { formatter: (v: number) => `${Math.round(v * 100)}%`, color: SIGNAL.muted },
+    },
+    yAxis: { type: "category", data: frames.map((f) => f.label), axisLabel: { color: SIGNAL.muted } },
+    series: [
+      {
+        name: "过去窗口",
+        type: "bar",
+        itemStyle: { color: "#c9c2b4" },
+        barGap: "20%",
+        data: frames.map((f) => f.adjusted_share_baseline ?? f.share_baseline),
+      },
+      {
+        name: "当前窗口",
+        type: "bar",
+        itemStyle: { color: (p) => FRAME_COLORS[frames[p.dataIndex]?.frame] ?? SIGNAL.muted },
+        data: frames.map((f) => f.adjusted_share_current ?? f.share_current),
+      },
+    ],
+  };
 
   return (
     <section className="ov-section" aria-label="变化总览：过去窗口与当前窗口的对比">
@@ -173,49 +214,17 @@ function OverviewStage({
           </div>
         </div>
 
-        {/* 框架迁移哑铃图（报纸色板；adjusted=共同来源校正口径优先） */}
-        {frames.length > 0 && (
-          <div className="ov-frames" role="img" aria-label="叙事框架份额迁移">
-            {frames.map((n) => {
-              const color = FRAME_COLORS[n.frame] ?? SIGNAL.muted;
-              const adjusted =
-                n.adjusted_share_baseline != null && n.adjusted_share_current != null;
-              const b = adjusted ? n.adjusted_share_baseline! : n.share_baseline;
-              const c = adjusted ? n.adjusted_share_current! : n.share_current;
-              const moved = Math.abs(c - b) >= 0.1;
-              return (
-                <div key={n.frame} className={`ov-frame${moved ? " ov-frame-moved" : ""}`}>
-                  <span className="ov-frame-label">
-                    {n.label}
-                    {adjusted && <em className="ov-frame-adj">校正</em>}
-                  </span>
-                  <span className="ov-frame-track">
-                    <i className="ov-dot ov-dot-base" style={{ left: `${(b / maxShare) * 100}%` }} />
-                    <i
-                      className="ov-line-seg"
-                      style={{
-                        left: `${(Math.min(b, c) / maxShare) * 100}%`,
-                        width: `${(Math.abs(c - b) / maxShare) * 100}%`,
-                        background: color,
-                      }}
-                    />
-                    <i
-                      className="ov-dot ov-dot-cur"
-                      style={{ left: `${(c / maxShare) * 100}%`, background: color }}
-                    />
-                  </span>
-                  <span className="ov-frame-num">
-                    {adjusted
-                      ? `${Math.round(b * 100)}% → ${Math.round(c * 100)}%（共同来源 ${n.n_cohort_sources} 个校正口径）`
-                      : `${Math.round(n.share_baseline * 100)}% → ${Math.round(n.share_current * 100)}%（原始口径，不可校正）`}
-                  </span>
-                </div>
-              );
-            })}
+{frames.length > 0 && (
+          <div
+            className="ov-chart"
+            role="img"
+            aria-label="叙事框架份额迁移（共同来源校正口径优先）"
+          >
+            <ChartBase option={frameOption} state="ready" height={frames.length * 64 + 80} />
           </div>
         )}
 
-        {/* 聚焦摘要：点击变化卡后显示（报纸剪报面板） */}
+                {/* 聚焦摘要：点击变化卡后显示（报纸剪报面板） */}
         {sel && (
           <aside className="ov-summary" aria-label="变化摘要">
             <button type="button" className="ov-summary-close" onClick={() => setSelected(null)}>

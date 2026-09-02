@@ -67,7 +67,7 @@ function FreshnessLine({ b }: { b: BriefingResponse }) {
       style={{ color: stale ? SIGNAL.warning : undefined }}
       title={`覆盖 ${f.coverage_start ?? "?"} 至 ${f.as_of}`}
     >
-      数据截至 {f.as_of.slice(0, 16).replace("T", " ")} UTC ·{" "}
+      最近一次有效简报：{f.as_of.slice(0, 16).replace("T", " ")} UTC ·{" "}
       {STALENESS_ZH[f.staleness] ?? f.staleness}
       {stale ? "——结论请谨慎对待" : ""}
     </p>
@@ -113,7 +113,7 @@ export default function IntelligencePage() {
   const stale = briefing?.freshness.staleness === "stale";
 
   return (
-    <div className="grid grid-cols-1 gap-x-10 gap-y-8 lg:grid-cols-12">
+    <div className="grid content-start grid-cols-1 gap-x-10 gap-y-8 lg:grid-cols-12">
       {/* ── Hero：变化总览（全宽，双窗叙事对比） ── */}
       <div className="lg:col-span-12 -mx-4 sm:-mx-6 lg:-mx-10 min-w-0">
         <ChangeOverview scene={home?.landscape ?? null} days={days} onDaysChange={setDays} />
@@ -127,8 +127,8 @@ export default function IntelligencePage() {
             {briefing === null
               ? "正在扫描信息流…"
               : changes.length > 0
-                ? `今天有 ${changes.length} 件值得注意的变化`
-                : "今天没有值得看的变化"}
+                ? `最近一次简报：${changes.length} 件值得注意的变化`
+                : "本期简报没有值得看的变化"}
           </h1>
           {briefing && <FreshnessLine b={briefing} />}
           {error && (
@@ -137,6 +137,39 @@ export default function IntelligencePage() {
             </p>
           )}
         </header>
+
+
+        {/* U1：唯一变化成为主角——一句结论/变化前后/为何重要/覆盖/验证按钮 */}
+        {briefing && changes.length > 0 && (
+          <article className="mb-6 border-y border-[var(--border)] py-4">
+            <p className="font-paper text-xl leading-7">{changes[0].headline}</p>
+            <p className="mt-2 text-sm leading-6">{changes[0].what}</p>
+            <p className="mt-1 text-sm leading-6" style={{ color: SIGNAL.divergence }}>
+              为什么重要：{changes[0].why_now}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+              <span className="border px-1.5 py-0.5">{changes[0].kind === "attention_spike" ? "注意力聚集" : changes[0].kind === "narrative_shift" ? "叙事转变" : changes[0].kind === "divergence_rise" ? "分歧升高" : "预期错位"}</span>
+              {(changes[0].subjects ?? []).map((sub) => (
+                <span key={sub.id} className="border px-1.5 py-0.5">{sub.label}</span>
+              ))}
+              <span>证据覆盖：{(changes[0].strength_word ?? "") === "strong" ? "充分" : (changes[0].strength_word ?? "") === "notable" ? "值得关注" : (changes[0].strength_word ?? "") === "minor" ? "轻微迹象" : "不足"}</span>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <Link
+                href={`/changes/${changes[0].change_id}`}
+                className="border border-[var(--color-signal-divergence)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--color-signal-divergence)] hover:text-white"
+                onClick={() => track("change_opened", { objectId: changes[0].change_id, fromPage: "/#lead" })}
+              >
+                验证证据（支持 / 反对 / 缺失）→
+              </Link>
+              {changes.length > 1 && (
+                <span className="text-xs text-muted-foreground">
+                  另有 {changes.length - 1} 件变化见下方变化总览
+                </span>
+              )}
+            </div>
+          </article>
+        )}
 
         {/* T3：变化卡唯一列表在 ChangeOverview（Hero）——此处不再重复渲染同一批 Change */}
         <div className="flex flex-col">

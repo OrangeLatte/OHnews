@@ -360,3 +360,6 @@
 .cf-why { color: var(--foreground); }
 .cf-link { color: var(--color-signal-divergence); font-size: 0.8rem; }
 @media (prefers-reduced-motion: reduce) { .cf-change-head { transition: none; } }
+
+/* ── 框架迁移对比图（U1：替换哑铃轨道） ── */
+.ov-chart { border-top: 1px solid var(--border); padding: 0.75rem 0; }
