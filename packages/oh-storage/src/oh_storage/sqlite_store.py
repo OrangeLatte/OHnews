@@ -106,6 +106,15 @@ CREATE TABLE IF NOT EXISTS agent_reports (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_agent_reports_item ON agent_reports(item_key);
+CREATE TABLE IF NOT EXISTS translations (
+    item_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    engine TEXT NOT NULL DEFAULT 'llm',
+    source_language TEXT NOT NULL DEFAULT '',
+    target_language TEXT NOT NULL DEFAULT 'en',
+    translated_at TEXT NOT NULL,
+    PRIMARY KEY (item_key, target_language)
+);
 
 CREATE TABLE IF NOT EXISTS entity_edges (
     edge_key   TEXT PRIMARY KEY,
@@ -540,6 +549,33 @@ class SqliteStore:
             d["created_at"] = row["created_at"]
             out.append(d)
         return out
+
+    def upsert_translation(self, item_key: str, payload: dict, *, engine: str,
+                           source_language: str, target_language: str,
+                           translated_at: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO translations"
+            " (item_key, payload, engine, source_language, target_language, translated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (item_key, json.dumps(payload, ensure_ascii=False), engine,
+             source_language, target_language, translated_at),
+        )
+        self._conn.commit()
+
+    def get_translation(self, item_key: str,
+                        target_language: str = "en") -> dict | None:
+        cur = self._conn.execute(
+            "SELECT payload, engine, translated_at FROM translations"
+            " WHERE item_key = ? AND target_language = ?",
+            (item_key, target_language),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row[0])
+        payload["engine"] = row[1]
+        payload["translated_at"] = row[2]
+        return payload
 
     def get_report(self, report_id: str) -> dict | None:
         cur = self._conn.execute(
