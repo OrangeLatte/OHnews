@@ -118,7 +118,7 @@ def build_report_graph(
             report_id=rid,
             item_key=state["item_key"],
             kind=state["kind"],  # type: ignore[arg-type]
-            title=REPORT_KIND_ZH.get(state["kind"], state["kind"]),
+            title=f"{REPORT_KIND_ZH.get(state['kind'], state['kind'])} · 研究报告",
             sections=sections,
             engine=engine,  # type: ignore[arg-type]
             model_hint=model_hint,

@@ -59,7 +59,7 @@ def test_llm_path_persists_with_model_hint() -> None:
     assert rep.engine == "llm"
     assert rep.model_hint == "zhipu/glm-5.3"
     assert rep.report_id == report_id_for(_state()["item_key"], "truth")
-    assert rep.title == "真实性与可信度核查"
+    assert rep.title == "真实性与可信度核查 · 研究报告"
     assert len(rep.sections) == 1
     assert len(store.rows) == 1
 
