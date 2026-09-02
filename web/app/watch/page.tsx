@@ -21,7 +21,7 @@ import { track } from "@/lib/track";
 type WatchUpdateRow = Awaited<ReturnType<typeof api.watchUpdate>>;
 
 const TYPE_META: Record<string, { label: string; hint: string; color: string }> = {
-  entity: { label: "实体", hint: "实体 id（如 fed / ecb / trump）", color: "#58a6ff" },
+  entity: { label: "实体", hint: "实体名称（如 美联储 / 欧洲央行）", color: "#58a6ff" },
   topic: { label: "主题", hint: "关键词，逗号分隔（如 衰退,关税）", color: "#d29922" },
   question: { label: "问题", hint: "研究问题句（系统将自动检索并回答）", color: "#bc8cff" },
 };
@@ -31,10 +31,10 @@ function summaryLines(w: WatchRow): string[] {
   if (!s) return ["尚未刷新"];
   const lines: string[] = [];
   if (s.kind === "entity") {
-    lines.push(`${s.n_signals} 个相关 Signal · ${s.n_events} 个关联事件`);
+    lines.push(`${s.n_signals} 个相关变化 · ${s.n_events} 个关联事件`);
     const sigs = (s.signals as SignalRow[]) ?? [];
     for (const g of sigs.slice(0, 3))
-      lines.push(`· [${g.kind}] ${g.title}（strength ${Math.round(g.strength)}）`);
+      lines.push(`· [${g.kind}] ${g.title}（强度 ${Math.round(g.strength)}）`);
     const evs = (s.events as { event_id: string; title: string }[]) ?? [];
     for (const e of evs.slice(0, 3)) lines.push(`· 事件 ${e.event_id}：${e.title}`);
     const alerts = (s.alerts as { event_title: string; ndi: number; baseline: number }[]) ?? [];
@@ -42,7 +42,7 @@ function summaryLines(w: WatchRow): string[] {
       for (const a of alerts)
         lines.push(`⚠ 预警：${a.event_title}（NDI ${a.ndi.toFixed(2)} > 基线 ${a.baseline.toFixed(2)}）`);
     else if ((s.n_alert_rules as number) === 0)
-      lines.push("（该实体暂无预警规则，可在后台 /alerts 配置分位阈值）");
+      lines.push("该实体尚未设置高级预警规则。");
   } else if (s.kind === "topic") {
     lines.push(`近 7 日 ${s.n_articles} 篇文章命中「${(s.terms as string[]).join(" / ")}」`);
     const tops = (s.top_sources as { source_id: string; n: number }[]) ?? [];
@@ -50,15 +50,15 @@ function summaryLines(w: WatchRow): string[] {
       lines.push(`主要来源：${tops.map((t) => `${t.source_id}(${t.n})`).join("、")}`);
     lines.push(`${s.n_events} 个关联事件`);
   } else {
-    // question：Investigator 已接入——answered（llm/offline）渲染回答，pending_agent 待 keys
+    // 研究问题：优先展示可读摘要，隐藏底层引擎与配置细节。
     const status = s.status as string;
     const answer = s.answer as string | null;
     if (status === "answered" && answer) {
-      const engine = s.engine === "llm" ? "Agent 回答" : "确定性摘要（未配置 keys）";
+      const engine = s.engine === "llm" ? "研究助理回答" : "本地资料摘要";
       lines.push(`已回答（${engine}）· 匹配 ${s.n_matched_events} 个事件`);
       for (const ln of answer.split("\n")) if (ln.trim()) lines.push(ln);
     } else {
-      lines.push(`问题已记录 · 匹配 ${s.n_matched_events} 个事件 · 暂无可命中数据或未配置 keys`);
+      lines.push(`问题已记录 · 匹配 ${s.n_matched_events} 个事件 · 暂无足够材料形成回答`);
     }
     const evs = (s.events as { event_id: string; title: string }[]) ?? [];
     for (const e of evs.slice(0, 3)) lines.push(`· 事件 ${e.event_id}：${e.title}`);

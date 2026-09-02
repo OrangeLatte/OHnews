@@ -156,8 +156,7 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
 
         <SectionHead no="01" en="What happened" zh="发生了什么" />
         <p className="font-paper mt-3 text-base leading-7">
-          过去 {meta.as_of ? " reporting window" : ""}
-          内，{meta.n_sources} 个不同层级的信源共同报道了与{" "}
+          在最近一次监测窗口内，{meta.n_sources} 个不同层级的信源共同报道了与{" "}
           {meta.entities.join("、") || "该主题"}相关的变化。系统将其聚合为一个事件，并持续追踪各方解释的差异。
         </p>
 
@@ -195,7 +194,7 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
           </p>
         </details>
 
-        {/* M2 评估层：状态/置信/证据强度/观察（engine=offline 确定性规则） */}
+        {/* 评估层：状态、置信度、证据强度与后续观察。 */}
         {meta.assessment && (
           <div className="mt-4 border border-border/60 p-3">
             <div className="flex flex-wrap items-baseline gap-3 text-xs">

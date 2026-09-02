@@ -483,27 +483,27 @@ export default function ChangeDetailPage({
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-3xl px-4 py-16">
+      <section className="mx-auto max-w-3xl px-4 py-16" aria-live="polite">
         <p className="text-muted-foreground">正在加载变化详情…</p>
-      </main>
+      </section>
     );
   }
   if (error || !dossier) {
     return (
-      <main className="mx-auto max-w-3xl px-4 py-16">
+      <section className="mx-auto max-w-3xl px-4 py-16" role="alert">
         <p style={{ color: SIGNAL.warning }}>
           {error ?? "未找到该变化"}——
           <Link href="/" className="underline underline-offset-2">
             返回今日简报
           </Link>
         </p>
-      </main>
+      </section>
     );
   }
 
   const status = STATUS_ZH[dossier.status] ?? STATUS_ZH.unverified;
   return (
-    <main className="mx-auto max-w-3xl px-4 pb-20">
+    <article className="mx-auto max-w-3xl px-4 pb-20">
       <div className="border-b border-foreground/20 py-3">
         <Link href="/" className="paper-kicker hover:text-foreground">
           ← 返回今日简报
@@ -594,6 +594,6 @@ export default function ChangeDetailPage({
           </p>
         </details>
       )}
-    </main>
+    </article>
   );
 }

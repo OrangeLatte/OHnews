@@ -115,7 +115,7 @@ export function DecisionsSection() {
   return (
     <div className="flex flex-col gap-6">
       <h2 className="font-paper text-xl">
-        认知档案：判断史与决策记录（T7：Belief Timeline 为第一公民）
+        认知档案：判断如何随证据变化
       </h2>
 
       <Card>
@@ -167,7 +167,7 @@ export function DecisionsSection() {
             className="max-w-[14rem]"
             value={resolveId}
             onChange={(e) => setResolveId(e.target.value)}
-            placeholder="decision_id"
+            placeholder="判断记录编号"
           />
           <Input
             className="max-w-[24rem]"
