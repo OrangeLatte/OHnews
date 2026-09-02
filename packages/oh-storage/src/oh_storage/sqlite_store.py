@@ -21,6 +21,8 @@ from oh_contracts.enums import (
 )
 from oh_contracts.schemas import EventRecord, NDIPoint, StanceRow
 
+_QUEUE_COLS = ("id", "item_key", "score", "reasons", "status", "created_at", "decided_at")
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS events (
     event_id    TEXT PRIMARY KEY,
@@ -83,6 +85,27 @@ CREATE TABLE IF NOT EXISTS article_dissections (
     language     TEXT NOT NULL DEFAULT '',
     dissected_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS dissection_queue (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_key   TEXT NOT NULL UNIQUE,
+    score      REAL NOT NULL,
+    reasons    TEXT NOT NULL DEFAULT '[]',
+    status     TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS agent_reports (
+    report_id  TEXT PRIMARY KEY,
+    item_key   TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    payload    TEXT NOT NULL,
+    engine     TEXT NOT NULL,
+    model_hint TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_reports_item ON agent_reports(item_key);
 
 CREATE TABLE IF NOT EXISTS entity_edges (
     edge_key   TEXT PRIMARY KEY,
@@ -480,7 +503,99 @@ class SqliteStore:
         cur = self._conn.execute("SELECT COUNT(*) AS n FROM article_dissections")
         return int(cur.fetchone()["n"])
 
+    # -- B2 研究报告（agent_reports 表；report_id=rp-{hash8} 幂等） --
+
+    def upsert_report(
+        self, payload: dict, *, engine: str, model_hint: str, created_at: str
+    ) -> None:
+        """报告入库（INSERT OR REPLACE 幂等，同 report_id 覆盖）。"""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO agent_reports "
+            "(report_id, item_key, kind, payload, engine, model_hint, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                payload["report_id"],
+                payload["item_key"],
+                payload["kind"],
+                json.dumps(payload, ensure_ascii=False),
+                engine,
+                model_hint,
+                created_at,
+            ),
+        )
+        self._conn.commit()
+
+    def reports_for_item(self, item_key: str) -> list[dict]:
+        """某文章全部报告（created_at 升序），payload 反序列化+顶层元数据。"""
+        cur = self._conn.execute(
+            "SELECT payload, engine, model_hint, created_at FROM agent_reports "
+            "WHERE item_key = ? ORDER BY created_at",
+            (item_key,),
+        )
+        out: list[dict] = []
+        for row in cur.fetchall():
+            d = json.loads(row["payload"])
+            d["engine"] = row["engine"]
+            d["model_hint"] = row["model_hint"]
+            d["created_at"] = row["created_at"]
+            out.append(d)
+        return out
+
+    def get_report(self, report_id: str) -> dict | None:
+        cur = self._conn.execute(
+            "SELECT payload, engine, model_hint, created_at FROM agent_reports WHERE report_id = ?",
+            (report_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        d = json.loads(row["payload"])
+        d["engine"] = row["engine"]
+        d["model_hint"] = row["model_hint"]
+        d["created_at"] = row["created_at"]
+        return d
+
     # -- 知识图谱（M3-S3：entity_edges 类型化边表） -----------------------------
+
+    # -- B0 拆解筛选队列（dissection_queue 表；score 越高越推荐） --
+
+    def queue_upsert(
+        self, item_key: str, *, score: float, reasons: list[str], created_at: str
+    ) -> None:
+        """推荐入队（幂等：同 item_key 保留首次）。"""
+        self._conn.execute(
+            "INSERT OR IGNORE INTO dissection_queue (item_key, score, reasons, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (item_key, score, json.dumps(reasons, ensure_ascii=False), created_at),
+        )
+        self._conn.commit()
+
+    def queue_items(self, status: str = "pending", limit: int = 20) -> list[dict[str, object]]:
+        cur = self._conn.execute(
+            "SELECT id, item_key, score, reasons, status, created_at, decided_at "
+            "FROM dissection_queue WHERE status = ? ORDER BY score DESC LIMIT ?",
+            (status, limit),
+        )
+        out: list[dict[str, object]] = []
+        for r in cur.fetchall():
+            d = dict(zip(_QUEUE_COLS, r, strict=True))
+            d["reasons"] = json.loads(str(d["reasons"]))
+            out.append(d)
+        return out
+
+    def queue_decide(self, item_key: str, *, status: str, decided_at: str) -> bool:
+        """用户裁决 accept/dismiss；返回是否命中。"""
+        cur = self._conn.execute(
+            "UPDATE dissection_queue SET status = ?, decided_at = ? WHERE item_key = ?",
+            (status, decided_at, item_key),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def queue_count(self) -> int:
+        cur = self._conn.execute("SELECT COUNT(*) FROM dissection_queue")
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
 
     def upsert_edges(self, edges: Sequence[dict[str, object]]) -> int:
         """批量幂等 upsert（同 edge_key 覆盖；聚合权重由调用方计算好）。"""

@@ -36,3 +36,22 @@ def test_pit_boundary_inclusive_and_missing(tmp_path) -> None:
     assert [d["item_key"] for d in got] == ["k1"]
     assert s.dissections_asof(datetime(2026, 9, 2, 11, 59, tzinfo=UTC)) == []
     assert s.get_dissection("ghost") is None
+
+
+def test_dissection_queue_flow(tmp_path) -> None:
+    store = _store(tmp_path)
+    """B0 队列：入队幂等/按分排序/裁决流转。"""
+    store.queue_upsert(
+        "k1", score=0.9, reasons=["官方一手来源"], created_at="2026-09-02T00:00:00+00:00"
+    )
+    store.queue_upsert("k1", score=0.1, reasons=["dup"], created_at="2026-09-02T00:00:01+00:00")
+    store.queue_upsert("k2", score=0.7, reasons=[], created_at="2026-09-02T00:00:00+00:00")
+    items = store.queue_items(limit=10)
+    assert [i["item_key"] for i in items] == ["k1", "k2"]
+    assert items[0]["score"] == 0.9 and items[0]["reasons"] == ["官方一手来源"]
+    assert store.queue_decide("k1", status="accepted", decided_at="2026-09-02T01:00:00+00:00")
+    assert not store.queue_decide(
+        "ghost", status="accepted", decided_at="2026-09-02T01:00:00+00:00"
+    )
+    assert [i["item_key"] for i in store.queue_items(status="accepted")] == ["k1"]
+    assert store.queue_count() == 2
