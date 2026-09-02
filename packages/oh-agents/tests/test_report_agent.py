@@ -89,3 +89,98 @@ def test_llm_empty_output_degrades_offline() -> None:
 def test_report_id_stable_across_calls() -> None:
     assert report_id_for("k", "truth") == report_id_for("k", "truth")
     assert report_id_for("k", "truth") != report_id_for("k", "intent")
+
+
+class FakeTransRouter:
+    async def invoke(self, tier: Any, system: str, user: str, schema: type) -> tuple:
+        from oh_agents.translation_agent import TranslationOutputP
+
+        if "rupt" in system:  # fail 哨兵
+            raise RuntimeError("candidates exhausted")
+        out = TranslationOutputP(
+            title="Fed signals a September pause",
+            body=(
+                "Fed officials said on Wednesday that slowing inflation keeps"
+                " room for the September decision."
+            ),
+            term_notes=["机构名保留原文"],
+        )
+        return out, ModelRef(provider="zhipu", model_id="glm-5.3-flash")
+
+
+class FakeStore2:
+    """translations 收集器（真实 SqliteStore.upsert_translation 同签名）。"""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, dict] = {}
+
+    def upsert_translation(
+        self,
+        item_key: str,
+        payload: dict,
+        *,
+        engine: str,
+        source_language: str,
+        target_language: str,
+        translated_at: str,
+    ) -> None:
+        self.rows[(item_key, target_language)] = payload
+
+
+def test_translation_llm_path_and_verify() -> None:
+    import asyncio
+
+    from oh_agents.translation_agent import build_translation_graph
+
+    store = FakeStore2()
+    g = build_translation_graph(
+        router=FakeTransRouter(), store=store,
+        now_fn=lambda: "2026-09-02T12:00:00+00:00",
+    )
+    out = asyncio.run(
+        g.ainvoke(
+            {
+                "item_key": "wscn:x:2026-08-30T00:00:00+00:00",
+                "title": "美联储暗示九月暂停加息",
+                "text": "Fed officials said on Wednesday that inflation has slowed.",
+                "source_language": "zh",
+                "target_language": "en",
+            }
+        )
+    )
+    tr = out["translation"]
+    assert tr["engine"] == "llm"
+    assert tr["target_language"] == "en"
+    assert "Fed" in tr["body_translated"]
+    assert any("复核" in n or "保留" in n for n in tr["term_notes"])
+
+
+def test_translation_failure_degrades_offline() -> None:
+    import asyncio
+
+    from oh_agents.translation_agent import build_translation_graph
+
+    class BoomRouter:
+        async def invoke(self, tier: Any, system: str, user: str, schema: type) -> tuple:
+            raise RuntimeError("timeout after 90s")
+
+    store = FakeStore2()
+    g = build_translation_graph(
+        router=BoomRouter(), store=store,
+        now_fn=lambda: "2026-09-02T12:00:00+00:00",
+    )
+    out = asyncio.run(
+        g.ainvoke(
+            {
+                "item_key": "wscn:y:2026-08-30T00:00:00+00:00",
+                "title": "t",
+                "text": "x",
+                "source_language": "zh",
+                "target_language": "en",
+            }
+        )
+    )
+    tr = out["translation"]
+    assert tr["engine"] == "offline"
+    assert tr["body_translated"] == ""
+    assert any("翻译未完成" in n for n in tr["term_notes"])
