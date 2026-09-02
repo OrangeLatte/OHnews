@@ -323,11 +323,12 @@ async function get<T>(path: string): Promise<T> {
   return r.json();
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
+async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const r = await fetch(`/api${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
   return r.json();
@@ -379,6 +380,19 @@ export const api = {
     post<components["schemas"]["WatchReview"]>(`/watches/${encodeURIComponent(id)}/review`, {}),
   home: (days = 7, top = 5) =>
     get<components["schemas"]["HomePayload"]>(`/home?days=${days}&top=${top}`),
+  dissectArticle: (itemKey: string, force = false, signal?: AbortSignal) =>
+    post<components["schemas"]["ArticleDissection"]>(
+      "/agent/dissect",
+      {
+        item_key: itemKey,
+        force,
+      },
+      signal,
+    ),
+  dissectionOf: (itemKey: string) =>
+    get<components["schemas"]["ArticleDissection"] | null>(
+      `/agent/dissections/${encodeURIComponent(itemKey)}`,
+    ),
   agentSessionCreate: (kind: string, title: string) =>
     post<{ thread_id: string; kind: string }>("/agent/sessions", { kind, title }),
   agentSessionInput: (threadId: string, text: string, kind = "info") =>

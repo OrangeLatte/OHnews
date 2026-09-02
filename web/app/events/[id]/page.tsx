@@ -4,6 +4,7 @@ import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { ASSESS_STATUS as ASSESS, SIGNAL } from "@/lib/tokens";
 import { AgentDock } from "@/components/agent/agent-dock";
+import { DissectionPanel } from "@/components/dissection/dissection-panel";
 
 import {
   api,
@@ -330,6 +331,7 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
                 ))}
               </div>
             </details>
+            <DissectionPanel itemKeys={[...new Set(evidence.map((r) => r.item_key))]} />
           </div>
         )}
 

@@ -44,6 +44,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sessions */
+        get: operations["list_sessions_api_agent_sessions_get"];
+        put?: never;
+        /** Create Session */
+        post: operations["create_session_api_agent_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/sessions/{thread_id}/inputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Push Input */
+        post: operations["push_input_api_agent_sessions__thread_id__inputs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/dissect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent Dissect
+         * @description B1 文章拆解：item_key → 18 元素（缓存复用，force=true 重拆）。
+         *
+         *     LLM 全候选失败 → offline 词典兜底（engine=offline，诚实降级）。
+         */
+        post: operations["agent_dissect_api_agent_dissect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/dissections/{item_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Agent Dissection Get */
+        get: operations["agent_dissection_get_api_agent_dissections__item_key__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/keys": {
         parameters: {
             query?: never;
@@ -1167,6 +1241,45 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * ArticleDissection
+         * @description 一篇文章的拆解结果（item_key 即主键，重跑幂等覆盖）。
+         *
+         *     elements 可为部分元素（LLM 按需产出）；渲染时未出现的元素显示
+         *     「未提取」而非空壳。language 为文章源语言（拆解解释语言由 UI 层决定）。
+         */
+        ArticleDissection: {
+            /** Item Key */
+            item_key: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /** Elements */
+            elements?: components["schemas"]["DissectionElement"][];
+            /**
+             * Engine
+             * @default llm
+             * @enum {string}
+             */
+            engine: "llm" | "lexicon" | "offline";
+            /**
+             * Language
+             * @default
+             */
+            language: string;
+            /**
+             * Model Hint
+             * @default
+             */
+            model_hint: string;
+            /**
+             * Dissected At
+             * Format: date-time
+             */
+            dissected_at: string;
+        };
+        /**
          * BeliefCreate
          * @description 用户提交判断的请求体（snapshot_id/change_type/believed_at 由服务端生成）。
          */
@@ -1410,6 +1523,31 @@ export interface components {
             note: string;
         };
         /**
+         * DissectionElement
+         * @description 单个拆解元素：闭集 key + 内容 + 可选原文定位。
+         */
+        DissectionElement: {
+            /**
+             * Element
+             * @enum {string}
+             */
+            element: "actor" | "target" | "stakeholder" | "hard_fact" | "quant_data" | "data_scope" | "action" | "causal_link" | "timeline" | "perspective" | "explicit_stance" | "implicit_bias" | "tone" | "diction" | "source_reliability" | "argument_structure" | "intent" | "context";
+            /** Content */
+            content: string;
+            /** Spans */
+            spans?: components["schemas"]["DissectionSpan"][];
+        };
+        /**
+         * DissectionSpan
+         * @description 原文定位片段（前端颜色标注用）。start/end 为字符偏移，end>start。
+         */
+        DissectionSpan: {
+            /** Start */
+            start: number;
+            /** End */
+            end: number;
+        };
+        /**
          * EvidenceCitation
          * @description 产品层证据条目：引用原文的最后一公里（url 即外链）。
          *
@@ -1615,6 +1753,30 @@ export interface components {
             code: "low_coverage" | "single_source_dominant" | "window_empty" | "stale_data" | "no_qualified_changes" | "gate_insufficient_coverage" | "source_composition_shift";
             /** Message */
             message: string;
+        };
+        /** SessionCreate */
+        SessionCreate: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "dissection" | "tracking" | "memory" | "parent";
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+        };
+        /** SessionInput */
+        SessionInput: {
+            /**
+             * Kind
+             * @default info
+             * @enum {string}
+             */
+            kind: "info" | "instruction" | "redirect";
+            /** Text */
+            text: string;
         };
         /**
          * SourceStream
@@ -1842,6 +2004,177 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    list_sessions_api_agent_sessions_get: {
+        parameters: {
+            query?: {
+                kind?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_session_api_agent_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_input_api_agent_sessions__thread_id__inputs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_dissect_api_agent_dissect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArticleDissection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_dissection_get_api_agent_dissections__item_key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArticleDissection"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
