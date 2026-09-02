@@ -66,6 +66,12 @@ _WHY_NOW: dict[ChangeKind, str] = {
     "expectation_gap": "官方与市场语料的温差在本窗口达到显著水平",
 }
 
+_STANCE_ZH: dict[str, str] = {
+    "SUPPORTIVE": "支持",
+    "CRITICAL": "质疑",
+    "NEUTRAL": "中性",
+    "ABSTAIN": "弃权",
+}
 _STANCE_TO_BUCKET: dict[str, EvidenceBucket] = {
     StanceLabel.SUPPORTIVE.value: "supporting",
     StanceLabel.CRITICAL.value: "contradicting",
@@ -291,13 +297,16 @@ def bucket_evidence(
     tier_map: dict[str, SourceTier],
     as_of: datetime,
     registry: EntityRegistry | None = None,
+    claim: str = "",
 ) -> EvidenceSet:
-    """信号证据链 → 三桶 + 缺口。
+    """信号证据链 → 三桶 + 缺口（U3 证据语义）。
 
     分桶依据：stance 行的 SUPPORTIVE/CRITICAL 直接落桶；
     其余（NEUTRAL/ABSTAIN/无 stance 行的引文）进 context。
     item_key 语义直接命中反查；event_id 语义经 stance 行展开。
     registry 提供实体别名供引文相关性切取（1.5-b 质量门）。
+    U3：每条引文填 claim/relation/reason/independent_source_id/primary_status，
+    并按独立来源折叠出 is_best_for_source（默认每源只展示一条最佳证据）。
     """
     aliases = list(registry.get(signal.entity_id).aliases) if registry is not None else []
     rows = store.stances_asof(as_of)
@@ -330,7 +339,43 @@ def bucket_evidence(
             if mapped is not None:
                 bucket = mapped
                 break
-        buckets[bucket].append(cite)
+        stance_rows = rows_by_key.get(cite.item_key, [])
+        relation = (
+            "supports"
+            if bucket == "supporting"
+            else ("weakens" if bucket == "contradicting" else "context")
+        )
+        if stance_rows:
+            r0 = stance_rows[0]
+            stance_value = r0.stance.value if hasattr(r0.stance, "value") else str(r0.stance)
+            reason = f"立场标注为「{_STANCE_ZH.get(stance_value, stance_value)}」"
+        else:
+            reason = "无立场标注，仅提供背景信息"
+        enriched = cite.model_copy(
+            update={
+                "claim": claim or f"关于 {signal.entity_id} 的{signal.kind.value}信号",
+                "relation": relation,
+                "reason": reason,
+                "independent_source_id": cite.source_id,
+                "primary_status": cite.source_tier is SourceTier.OFFICIAL,
+            }
+        )
+        buckets[bucket].append(enriched)
+
+    # U3 同源折叠：每桶内每个独立来源只保留一条最佳证据（primary 优先 → 引文更长优先）
+    for bucket_items in buckets.values():
+        best_by_source: dict[str, EvidenceCitation] = {}
+        for c in bucket_items:
+            cur = best_by_source.get(c.independent_source_id)
+            if cur is None or (c.primary_status, len(c.quote), c.item_key) > (
+                cur.primary_status,
+                len(cur.quote),
+                cur.item_key,
+            ):
+                best_by_source[c.independent_source_id] = c
+        for c in bucket_items:
+            if best_by_source.get(c.independent_source_id) is c:
+                c.is_best_for_source = True
 
     gaps = _evidence_gaps(signal, buckets)
     return EvidenceSet(**buckets, gaps=gaps)
@@ -396,6 +441,7 @@ def build_dossier(
     if signal is None:
         return None
 
+    brief = _brief(signal, registry)
     bronze_by_key = {r.item_key: r for r in records}
     evidence = bucket_evidence(
         signal,
@@ -404,6 +450,7 @@ def build_dossier(
         tier_map=tier_map,
         as_of=now,
         registry=registry,
+        claim=brief.headline,
     )
 
     # 质量门 1.5-b：coverage 一律从分桶引文实算（与 EvidenceSet 严格一致），
