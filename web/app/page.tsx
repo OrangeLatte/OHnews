@@ -20,6 +20,7 @@ import {
 } from "@/lib/api";
 import { SIGNAL } from "@/lib/tokens";
 import { track } from "@/lib/track";
+import { useT } from "@/lib/i18n/use-t";
 import { watchStatus } from "@/lib/insight";
 import { ChangeOverview } from "@/components/change-overview/change-overview";
 
@@ -77,6 +78,7 @@ function FreshnessLine({ b }: { b: BriefingResponse }) {
 /* ── 页面 ── */
 
 export default function IntelligencePage() {
+  const t = useT();
   // T4：单源 /api/home——briefing/landscape/watches 一次聚合，消除并发竞态；
   // briefing_viewed 只在本页 track 一次（ChangeOverview 改受控不再上报）。
   const [home, setHome] = useState<components["schemas"]["HomePayload"] | null>(null);
@@ -124,10 +126,10 @@ export default function IntelligencePage() {
           <p className="paper-kicker">Today&apos;s Briefing</p>
           <h1 className="font-paper mt-1 text-3xl tracking-tight">
             {briefing === null
-              ? "正在扫描信息流…"
+              ? t("common.loading")
               : changes.length > 0
-                ? `最近一次简报：${changes.length} 件值得注意的变化`
-                : "本期简报没有值得看的变化"}
+                ? t("home.briefing.changes", { n: changes.length })
+                : t("home.briefing.none")}
           </h1>
           {briefing && <FreshnessLine b={briefing} />}
           {error && (
