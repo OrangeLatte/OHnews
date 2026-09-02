@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
+import { ChartGrid } from "@/components/charts/chart-grid";
 import { ChangeFieldPanel } from "@/components/change-field/change-field";
 import { api } from "@/lib/api";
 import { divergenceLevel } from "@/lib/insight";
@@ -112,6 +113,7 @@ export default function EventsPage() {
           深度工具在顶部导航与各分区入口：AI 研究对话、情报巡逻、叙事时间轴。
         </p>
       </header>
+      <ChartGrid />
 
       {/* ① 当前问题：调查焦点 */}
       <section aria-label="当前问题">

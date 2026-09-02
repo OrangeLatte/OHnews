@@ -450,6 +450,13 @@ export const api = {
     }),
   parentBrief: () =>
     get<components["schemas"]["ParentBrief"]>("/agent/parent/brief"),
+  // E3 聚合端点（返回裸 list[dict]，无命名 schema——内联类型）
+  flowDaily: (days = 30) =>
+    get<Array<Record<string, number | string>>>(`/flow/daily?days=${days}`),
+  ndiRank: (limit = 8) =>
+    get<Array<{ entity: string; label: string; ndi: number; event_id: string; ts: string; n_sources: number }>>(`/ndi/rank?limit=${limit}`),
+  emotionDensity: (days = 30) =>
+    get<Array<Record<string, number | string>>>(`/annotations/emotion?days=${days}`),
   changeField: (days = 30) =>
     get<components["schemas"]["ChangeFieldPayload"]>(`/change-field?days=${days}`),
   changeLandscape: (days = 7, top = 5) =>

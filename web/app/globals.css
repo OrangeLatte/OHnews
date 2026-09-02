@@ -363,3 +363,15 @@
 .xsec[open] .xsec-summary::before { content: "▾ "; }
 .xsec-body { border-top: 1px solid var(--border); padding: 0.5rem 0.9rem 0.9rem; }
 @media (prefers-reduced-motion: reduce) { .xsec-summary { transition: none; } }
+
+/* ── E3 图表组（报纸风浅色） ── */
+.cg-section { border-top: 1px solid var(--border); padding: 1.25rem 0; }
+.cg-head { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
+.cg-kicker { font-size: 0.7rem; letter-spacing: 0.14em; color: var(--muted-foreground); }
+.cg-windows { display: flex; gap: 0.3rem; }
+.cg-win { border: 1px solid var(--border); background: transparent; font-size: 0.75rem; padding: 0.2rem 0.6rem; cursor: pointer; }
+.cg-win[data-active="true"] { background: var(--foreground); color: var(--background); border-color: var(--foreground); }
+.cg-grid { display: grid; gap: 0.9rem; }
+@media (min-width: 1024px) { .cg-grid { grid-template-columns: 1fr 1fr; } }
+.cg-card { border: 1px solid var(--border); padding: 0.6rem 0.8rem; min-width: 0; }
+.cg-title { font-family: var(--font-newspaper); font-size: 0.82rem; font-weight: 600; margin-bottom: 0.3rem; }
