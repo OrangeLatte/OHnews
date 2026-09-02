@@ -814,3 +814,23 @@ def test_change_field_endpoint(client: TestClient) -> None:
         for lane, frames in point["lanes"].items():
             assert lane in {"official", "press", "market", "social", "unknown"}
             assert all(v >= 1 for v in frames.values())
+
+
+def test_agent_sessions_flow(client: TestClient) -> None:
+    """A4：会话创建/列表/user_gate 随时补充输入通道。"""
+    r = client.post("/api/agent/sessions", json={"kind": "dissection", "title": "拆解演示"})
+    assert r.status_code == 201
+    tid = r.json()["thread_id"]
+    assert tid.startswith("dissection:")
+    assert client.post("/api/agent/sessions", json={"kind": "bogus"}).status_code == 422
+    sessions = client.get("/api/agent/sessions?kind=dissection").json()["sessions"]
+    assert any(x["thread_id"] == tid for x in sessions)
+    push = client.post(
+        f"/api/agent/sessions/{tid}/inputs", json={"text": "重点看利率段"}
+    )
+    assert push.status_code == 202
+    assert client.post(f"/api/agent/sessions/{tid}/inputs", json={"text": "  "}).status_code == 422
+    ghost = client.post(
+        "/api/agent/sessions/ghost:0000/inputs", json={"text": "x"}
+    )
+    assert ghost.status_code == 404

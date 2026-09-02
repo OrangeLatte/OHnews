@@ -35,6 +35,7 @@ from oh_agents.orchestrator import (
 )
 from oh_agents.research import run_research
 from oh_agents.watch_update import compute_watch_update
+from oh_api.agents import build_router as build_agent_sessions_router
 from oh_api.briefing import build_briefing, build_briefing_with_signals, build_dossier
 from oh_api.change_landscape import build_change_field, build_change_landscape
 from oh_api.metrics import build_router as build_metrics_router
@@ -194,6 +195,18 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         )
     )
     app.include_router(build_metrics_router(lambda: _product_events()))
+
+    # ---- Agent 会话（A4）：会话账本 + user_gate 随时补充输入 ----
+    def _agent_sessions() -> Any:
+        from oh_agents.agent_base import AgentSessions
+
+        singleton = getattr(app.state, "_agent_sessions", None)
+        if singleton is None:
+            singleton = AgentSessions(paths.root / "agent_sessions.sqlite")
+            app.state._agent_sessions = singleton
+        return singleton
+
+    app.include_router(build_agent_sessions_router(lambda: _agent_sessions()))
 
     # ---- 运行时 API keys（UI 配置 → data/runtime_keys.json，gitignored；env 优先）----
     def _runtime_keys_path() -> Path:
