@@ -431,6 +431,10 @@ export const api = {
   archivePapers: () => get<components["schemas"]["AgentPaper"][]>("/archive/papers"),
   reportGenerate: (itemKey: string, kind: string, signal?: AbortSignal) =>
     post<components["schemas"]["AgentReport"]>("/agent/report", { item_key: itemKey, kind }, signal),
+  translateArticle: (itemKey: string, target = "en", signal?: AbortSignal) =>
+    post<components["schemas"]["TranslationItem"]>("/agent/translate", { item_key: itemKey, target_language: target }, signal),
+  translationOf: (itemKey: string, target = "en") =>
+    get<components["schemas"]["TranslationItem"] | null>(`/agent/translations/${encodeURIComponent(itemKey)}?target_language=${target}`),
   reportsForItem: (itemKey: string) =>
     get<components["schemas"]["AgentReport"][]>(`/agent/reports/${encodeURIComponent(itemKey)}`),
   dissectionOf: (itemKey: string) =>

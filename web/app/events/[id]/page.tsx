@@ -7,6 +7,7 @@ import { AgentDock } from "@/components/agent/agent-dock";
 import { DissectionPanel } from "@/components/dissection/dissection-panel";
 import { QueueSection } from "@/components/dissection/queue-section";
 import { ReportSection } from "@/components/dissection/report-section";
+import { TranslationSection } from "@/components/dissection/translation-section";
 
 import {
   api,
@@ -344,6 +345,7 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
             <QueueSection />
             <DissectionPanel itemKeys={[...new Set(evidence.map((r) => r.item_key))]} />
             <ReportSection itemKeys={[...new Set(evidence.map((r) => r.item_key))]} />
+            <TranslationSection itemKeys={[...new Set(evidence.map((r) => r.item_key))]} />
           </div>
         )}
 

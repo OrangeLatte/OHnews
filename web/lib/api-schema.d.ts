@@ -141,6 +141,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/translate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent Translate
+         * @description E1：翻译学家工作流——生成翻译副本（独立表，不改写原文）。
+         *
+         *     LLM 失败/超时 → engine=offline 空译文诚实降级。
+         */
+        post: operations["agent_translate_api_agent_translate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/translations/{item_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agent Translation
+         * @description 已存翻译副本（按目标语言；无则 None）。
+         */
+        get: operations["agent_translation_api_agent_translations__item_key__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/report": {
         parameters: {
             query?: never;
@@ -2267,6 +2309,52 @@ export interface components {
             /** Last Checked At */
             last_checked_at?: string | null;
         };
+        /**
+         * TranslationItem
+         * @description 单篇文章的翻译副本（独立表，不改写 bronze 原文）。
+         */
+        TranslationItem: {
+            /** Translation Id */
+            translation_id: string;
+            /** Item Key */
+            item_key: string;
+            /**
+             * Source Language
+             * @default
+             */
+            source_language: string;
+            /**
+             * Target Language
+             * @default en
+             * @enum {string}
+             */
+            target_language: "en" | "zh" | "ja" | "ko" | "fr" | "es" | "de" | "ru" | "ar";
+            /**
+             * Title Translated
+             * @default
+             */
+            title_translated: string;
+            /**
+             * Body Translated
+             * @default
+             */
+            body_translated: string;
+            /** Term Notes */
+            term_notes?: string[];
+            /**
+             * Engine
+             * @default llm
+             * @enum {string}
+             */
+            engine: "llm" | "offline";
+            /**
+             * Model Hint
+             * @default
+             */
+            model_hint: string;
+            /** Translated At */
+            translated_at: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -2597,6 +2685,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArticleDissection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_translate_api_agent_translate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranslationItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_translation_api_agent_translations__item_key__get: {
+        parameters: {
+            query?: {
+                target_language?: string;
+            };
+            header?: never;
+            path: {
+                item_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranslationItem"] | null;
                 };
             };
             /** @description Validation Error */
