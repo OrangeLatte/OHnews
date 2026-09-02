@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ASSESS_STATUS as ASSESS, SIGNAL } from "@/lib/tokens";
 import { AgentDock } from "@/components/agent/agent-dock";
 import { DissectionPanel } from "@/components/dissection/dissection-panel";
+import { QueueSection } from "@/components/dissection/queue-section";
 import { ReportSection } from "@/components/dissection/report-section";
 
 import {
@@ -332,6 +333,7 @@ export default function EventDetailPage({ params }: PageProps<"/events/[id]">) {
                 ))}
               </div>
             </details>
+            <QueueSection />
             <DissectionPanel itemKeys={[...new Set(evidence.map((r) => r.item_key))]} />
             <ReportSection itemKeys={[...new Set(evidence.map((r) => r.item_key))]} />
           </div>

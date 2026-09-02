@@ -19,6 +19,7 @@ export type SubjectRef = components["schemas"]["SubjectRef"];
 // 阶段 2 判断闭环
 export type BeliefSnapshot = components["schemas"]["BeliefSnapshot"];
 export type BeliefCreate = components["schemas"]["BeliefCreate"];
+export type Suggestion = { item_key: string; score: number; reasons?: string[] };
 export type EvidenceBucket = "supporting" | "contradicting" | "context";
 
 export type EventRow = {
@@ -389,6 +390,10 @@ export const api = {
       },
       signal,
     ),
+  dissectSuggestions: (limit = 5) =>
+    get<Suggestion[]>(`/agent/dissect/suggestions?limit=${limit}`),
+  queueDecide: (itemKey: string, action: "accept" | "dismiss") =>
+    post<{ ok: boolean; status: string }>("/agent/dissect/queue", { item_key: itemKey, action }),
   reportGenerate: (itemKey: string, kind: string, signal?: AbortSignal) =>
     post<components["schemas"]["AgentReport"]>("/agent/report", { item_key: itemKey, kind }, signal),
   reportsForItem: (itemKey: string) =>
