@@ -10,6 +10,8 @@ import { api } from "@/lib/api";
 import { SIGNAL } from "@/lib/tokens";
 import { track } from "@/lib/track";
 
+const ARCHIVED = new Set<string>();
+
 type Report = Awaited<ReturnType<typeof api.reportsForItem>>[number];
 
 const KINDS = ["truth", "intent", "causal", "narrative", "trend", "summary"] as const;
@@ -27,6 +29,7 @@ export function ReportSection({ itemKeys }: { itemKeys: string[] }) {
   const [reports, setReports] = useState<Report[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
   const alive = useRef(true);
 
   useEffect(() => {
@@ -112,6 +115,7 @@ export function ReportSection({ itemKeys }: { itemKeys: string[] }) {
         </div>
       )}
       {error && <p className="rs-error">{error}</p>}
+      {note && <p className="rs-note-ok">{note}</p>}
       {reports.map((r) => (
         <article key={r.report_id} className="rs-card">
           <header className="rs-head">
@@ -128,6 +132,30 @@ export function ReportSection({ itemKeys }: { itemKeys: string[] }) {
               <p>{sec.body}</p>
             </div>
           ))}
+          <button
+            type="button"
+            className="rs-save"
+            disabled={ARCHIVED.has(r.report_id)}
+            onClick={() => {
+              api
+                .archiveSave({
+                  kind: "report",
+                  title: r.title,
+                  ref_kind: "report",
+                  ref_id: r.report_id,
+                  payload: r as unknown as Record<string, unknown>,
+                  note: "来自研究报告区",
+                })
+                .then(() => {
+                  ARCHIVED.add(r.report_id);
+                  track("evidence_opened", { objectId: r.report_id, fromPage: "/events#archive" });
+                  setNote("已存入研究档案（MEMORY 可查看）");
+                })
+                .catch(() => setNote("存档失败——请稍后重试"));
+            }}
+          >
+            {ARCHIVED.has(r.report_id) ? "已存入档案" : "存入研究档案"}
+          </button>
         </article>
       ))}
       <style jsx>{`
@@ -140,6 +168,10 @@ export function ReportSection({ itemKeys }: { itemKeys: string[] }) {
         .rs-kind:disabled { opacity: 0.5; cursor: wait; }
         .rs-note { font-size: 0.75rem; color: var(--muted-foreground); }
         .rs-error { font-size: 0.8rem; color: ${SIGNAL.divergence}; }
+        .rs-note-ok { font-size: 0.8rem; color: ${SIGNAL.confirmed}; }
+        .rs-save { border: 1px solid var(--border); background: transparent; font-size: 0.78rem; padding: 0.25rem 0.55rem; cursor: pointer; width: fit-content; }
+        .rs-save:hover:not(:disabled) { border-color: ${SIGNAL.narrative}; color: ${SIGNAL.narrative}; }
+        .rs-save:disabled { opacity: 0.6; cursor: default; }
         .rs-card { border: 1px solid var(--border); padding: 0.7rem 0.9rem; display: grid; gap: 0.5rem; }
         .rs-head { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; justify-content: space-between; font-family: var(--font-newspaper); }
         .rs-meta { font-size: 0.72rem; color: var(--muted-foreground); }

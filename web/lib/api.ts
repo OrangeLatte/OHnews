@@ -413,6 +413,22 @@ export const api = {
     get<Suggestion[]>(`/agent/dissect/suggestions?limit=${limit}`),
   queueDecide: (itemKey: string, action: "accept" | "dismiss") =>
     post<{ ok: boolean; status: string }>("/agent/dissect/queue", { item_key: itemKey, action }),
+  archiveSave: (body: {
+    kind: string;
+    title: string;
+    ref_kind: string;
+    ref_id: string;
+    payload: Record<string, unknown>;
+    note?: string;
+  }) => post<components["schemas"]["ArchiveItem"]>("/archive", body),
+  archiveList: (kind?: string) =>
+    get<{ items: components["schemas"]["ArchiveItem"][]; counts: Record<string, number> }>(
+      `/archive${kind ? `?kind=${kind}` : ""}`,
+    ),
+  archiveDelete: (archiveId: string) => del(`/archive/${archiveId}`),
+  paperCreate: (body: { title?: string; kind?: string; item_ids?: string[]; foreword?: string }) =>
+    post<components["schemas"]["AgentPaper"]>("/archive/paper", body),
+  archivePapers: () => get<components["schemas"]["AgentPaper"][]>("/archive/papers"),
   reportGenerate: (itemKey: string, kind: string, signal?: AbortSignal) =>
     post<components["schemas"]["AgentReport"]>("/agent/report", { item_key: itemKey, kind }, signal),
   reportsForItem: (itemKey: string) =>

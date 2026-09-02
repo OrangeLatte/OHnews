@@ -526,6 +526,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Archive List
+         * @description 档案列表（可选 kind 过滤）+ 分库计数。
+         */
+        get: operations["archive_list_api_archive_get"];
+        put?: never;
+        /**
+         * Archive Save
+         * @description 确认式存档（用户显式动作触发）；kind 闭集三档案库。
+         */
+        post: operations["archive_save_api_archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/archive/{archive_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Archive Delete */
+        delete: operations["archive_delete_api_archive__archive_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/archive/paper": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archive Paper
+         * @description D2 档案报纸：按 item_ids 或按库最新 N 条组合 + 卷首语（offline 模板）。
+         */
+        post: operations["archive_paper_api_archive_paper_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/archive/papers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Archive Papers */
+        get: operations["archive_papers_api_archive_papers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tracking": {
         parameters: {
             query?: never;
@@ -1432,6 +1510,25 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AgentPaper
+         * @description 档案报纸：用户筛选组合 + 卷首语（agent 生成，确认式保存）。
+         */
+        AgentPaper: {
+            /** Paper Id */
+            paper_id: string;
+            /** Title */
+            title: string;
+            /** Item Ids */
+            item_ids?: string[];
+            /**
+             * Foreword
+             * @default
+             */
+            foreword: string;
+            /** Created At */
+            created_at: string;
+        };
+        /**
          * AgentReport
          * @description 单篇文章×单一视角的研究报告。report_id=rp-{sha1(item_key|kind)[:8]} 幂等。
          */
@@ -1460,6 +1557,36 @@ export interface components {
              * @default
              */
             model_hint: string;
+            /** Created At */
+            created_at: string;
+        };
+        /**
+         * ArchiveItem
+         * @description 单条档案（payload 为来源对象完整 JSON，回读即用）。
+         */
+        ArchiveItem: {
+            /** Archive Id */
+            archive_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "dissection" | "report" | "cross_analysis";
+            /** Title */
+            title: string;
+            /** Ref Kind */
+            ref_kind: string;
+            /** Ref Id */
+            ref_id: string;
+            /** Payload */
+            payload?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Note
+             * @default
+             */
+            note: string;
             /** Created At */
             created_at: string;
         };
@@ -3144,6 +3271,158 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_list_api_archive_get: {
+        parameters: {
+            query?: {
+                kind?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_save_api_archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArchiveItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_delete_api_archive__archive_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                archive_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_paper_api_archive_paper_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentPaper"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_papers_api_archive_papers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentPaper"][];
                 };
             };
         };
