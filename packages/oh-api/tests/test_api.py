@@ -866,3 +866,41 @@ def test_agent_dissect_flow(client: TestClient, tmp_path: Path) -> None:
     assert r2.json()["dissected_at"] == d1["dissected_at"]  # 缓存未重拆
     assert client.post("/api/agent/dissect", json={"item_key": "ghost"}).status_code == 404
     assert client.post("/api/agent/dissect", json={}).status_code == 422
+
+
+def test_agent_report_flow(client: TestClient, tmp_path: Path) -> None:
+    """B2 报告端点：409 未拆解 → 拆解后生成（测试无 key 走 offline）→ 列表回读。"""
+    from oh_contracts.ids import make_item_key
+    from oh_contracts.schemas import BronzeRecord
+
+    ts = make_now()
+    rec = BronzeRecord(
+        source_id="wscn",
+        item_key=make_item_key("wscn", "report-1", ts),
+        external_id="report-1",
+        url_hash="u",
+        content_hash="c",
+        fetched_at=ts,
+        published_at=ts,
+        raw={},
+        normalized={"title": "美联储暗示九月暂停加息", "body": "通胀放缓。"},
+    )
+    ParquetBronzeWriter(tmp_path / "bronze").write([rec])
+    ik = rec.item_key
+    r0 = client.post("/api/agent/report", json={"item_key": ik, "kind": "truth"})
+    assert r0.status_code == 409
+    r1 = client.post("/api/agent/dissect", json={"item_key": ik})
+    assert r1.status_code == 200
+    r2 = client.post("/api/agent/report", json={"item_key": ik, "kind": "truth"})
+    assert r2.status_code == 200
+    rep = r2.json()
+    assert rep["report_id"].startswith("rp-")
+    assert rep["kind"] == "truth"
+    assert rep["engine"] in {"llm", "offline"}
+    assert len(rep["sections"]) >= 1
+    assert all(len(s["title"]) >= 8 for s in rep["sections"])
+    r3 = client.post("/api/agent/report", json={"item_key": ik, "kind": "bogus"})
+    assert r3.status_code == 422
+    r4 = client.get(f"/api/agent/reports/{ik}")
+    assert r4.status_code == 200
+    assert any(x["report_id"] == rep["report_id"] for x in r4.json())

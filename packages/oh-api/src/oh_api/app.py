@@ -34,6 +34,7 @@ from oh_agents.orchestrator import (
     offline_artifact,
     run_intent,
 )
+from oh_agents.report_agent import REPORT_KIND_ZH, build_report_graph
 from oh_agents.research import run_research
 from oh_agents.watch_update import compute_watch_update
 from oh_api.agents import build_router as build_agent_sessions_router
@@ -47,6 +48,7 @@ from oh_contracts.change_landscape import ChangeFieldPayload, ChangeLandscape
 from oh_contracts.dissection import ArticleDissection
 from oh_contracts.enums import SourceTier
 from oh_contracts.intents import Intent
+from oh_contracts.reports import AgentReport
 from oh_contracts.schemas import NDIPoint
 from oh_contracts.text import strip_html
 from oh_contracts.watching import WatchReview, WatchUpdate
@@ -60,7 +62,7 @@ from oh_pipeline.svo import parse_passage
 from oh_storage.bronze_parquet import ParquetBronzeWriter
 from oh_storage.connection import connect
 from oh_storage.sqlite_store import SqliteStore
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 # --- SSE 总线 v0 ------------------------------------------------------------
 
@@ -249,6 +251,50 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             }
         )
         return out["dissection"]
+
+    @app.post("/api/agent/report", response_model=AgentReport)
+    async def agent_report(body: dict[str, Any]) -> AgentReport:
+        """B2：基于已存拆解生成六型研究报告（llm，失败降级 offline）。
+
+        item_key 必须已拆解（409 先拆解）且 bronze 存在（404）。
+        """
+        item_key = str(body.get("item_key") or "")
+        kind = str(body.get("kind") or "")
+        if not item_key or kind not in REPORT_KIND_ZH:
+            raise HTTPException(status_code=422, detail="item_key 与合法 kind 必填")
+        store = _store()
+        dis = store.get_dissection(item_key)
+        if dis is None:
+            raise HTTPException(status_code=409, detail="该文章尚未拆解，请先拆解再生成报告")
+        rec = next((r for r in _bronze().iter_records() if r.item_key == item_key), None)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="bronze 无此 item_key")
+        norm = rec.normalized or {}
+        text = str(norm.get("body") or norm.get("title") or rec.raw or "")[:2500]
+        graph = build_report_graph(router=_chat_router(), store=store, now_fn=_now)
+        out = await graph.ainvoke(
+            {
+                "item_key": item_key,
+                "kind": kind,
+                "text": text,
+                "dissection_json": json.dumps(dis, ensure_ascii=False)[:6000],
+            }
+        )
+        return out["report"]
+
+    @app.get(
+        "/api/agent/reports/{item_key:path}",
+        response_model=list[AgentReport],
+    )
+    def agent_reports(item_key: str) -> list[AgentReport]:
+        """某文章全部研究报告（按 created_at 升序）。"""
+        out: list[AgentReport] = []
+        for r in _store().reports_for_item(item_key):
+            try:
+                out.append(AgentReport.model_validate(r))
+            except ValidationError:
+                continue
+        return out
 
     @app.get("/api/agent/dissections/{item_key:path}", response_model=ArticleDissection | None)
     def agent_dissection_get(item_key: str) -> ArticleDissection | None:
