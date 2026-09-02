@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -42,6 +43,7 @@ from oh_agents.orchestrator import (
 )
 from oh_agents.report_agent import REPORT_KIND_ZH, build_report_graph
 from oh_agents.research import run_research
+from oh_agents.tracking import TrackingStore
 from oh_agents.watch_update import compute_watch_update
 from oh_api.agents import build_router as build_agent_sessions_router
 from oh_api.briefing import build_briefing, build_briefing_with_signals, build_dossier
@@ -57,6 +59,7 @@ from oh_contracts.intents import Intent
 from oh_contracts.reports import AgentReport
 from oh_contracts.schemas import NDIPoint
 from oh_contracts.text import strip_html
+from oh_contracts.tracking import TrackingUnit
 from oh_contracts.watching import WatchReview, WatchUpdate
 from oh_pipeline.anatomy import cluster_distributions, cluster_pairwise, entity_opposition
 from oh_pipeline.detect import detect_signals
@@ -124,6 +127,16 @@ class HomePayload(BaseModel):
     briefing: BriefingResponse
     landscape: ChangeLandscape
     watches: list[dict[str, Any]]
+
+
+class _WatchLike:
+    """C3：TrackingUnit → compute_watch_update 的 watch 适配（.type/.query/.last_checked_at）。"""
+
+    def __init__(self, unit: Any) -> None:
+        self.watch_id = unit.unit_id
+        self.type = unit.kind
+        self.query = unit.query
+        self.last_checked_at = unit.last_checked_at
 
 
 def create_app(paths: AppPaths | None = None) -> FastAPI:
@@ -870,6 +883,130 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             raise HTTPException(404, "watch not found")
         return WatchReview(watch_id=watch_id, reviewed_at=now.isoformat())
 
+    def _tracking() -> Any:
+        """C3 跟踪预警统一库（清零重建，不迁移旧 watch/alerts 数据）。"""
+        if not hasattr(app.state, "_tracking_store"):
+            app.state._tracking_store = TrackingStore(paths.root / "tracking.sqlite")
+        return app.state._tracking_store
+
+    @app.get("/api/tracking")
+    def tracking_list(kind: str | None = None) -> dict[str, Any]:
+        """统一跟踪/预警单元清单 + 最近命中。"""
+        st = _tracking()
+        units = st.list(kind if kind in {"entity", "topic", "question", "element"} else None)
+        return {
+            "units": [u.model_dump(mode="json") for u in units],
+            "hits": [h.model_dump(mode="json") for h in st.hits(limit=50)],
+        }
+
+    @app.post("/api/tracking", status_code=201, response_model=TrackingUnit)
+    def tracking_add(body: dict[str, Any]) -> TrackingUnit:
+        """新增跟踪/预警单元（四类 kind × track/alert 两模式）。"""
+        kind = str(body.get("kind") or "")
+        query = str(body.get("query") or "").strip()
+        mode = str(body.get("mode") or "track")
+        threshold = body.get("threshold")
+        if kind not in {"entity", "topic", "question", "element"} or not query:
+            raise HTTPException(422, "kind 必须为四类闭集且 query 必填")
+        if mode not in {"track", "alert"}:
+            raise HTTPException(422, "mode 必须为 track 或 alert")
+        th = float(threshold) if threshold is not None else None
+        return _tracking().add(
+            kind=kind,
+            query=query,
+            mode=mode,
+            label=str(body.get("label") or ""),
+            threshold=th,
+        )
+
+    @app.delete("/api/tracking/{unit_id}", status_code=204)
+    def tracking_remove(unit_id: str) -> Response:
+        if not _tracking().remove(unit_id):
+            raise HTTPException(404, "unit not found")
+        return Response(status_code=204)
+
+    @app.get("/api/tracking/{unit_id}/update")
+    def tracking_update(unit_id: str) -> dict[str, Any]:
+        """增量视图：track=briefing 命中；alert=最近触发；element=拆解元素命中。"""
+        st = _tracking()
+        unit = st.get(unit_id)
+        if unit is None:
+            raise HTTPException(404, "unit not found")
+        now = _now()
+        if unit.mode == "alert":
+            hits = st.hits(unit_id, limit=1)
+            return {
+                "summary": hits[0].summary if hits else "尚无触发记录",
+                "review_hint": "",
+                "new_changes": [],
+                "since": unit.last_checked_at,
+            }
+        if unit.kind == "entity":
+            briefing, _sig = build_briefing_with_signals(
+                bronze_iter=_bronze().iter_records(),
+                store=_store(),
+                registry=_registry(),
+                tier_map=_tier_map(),
+                now=now,
+                days=7,
+                top=30,
+            )
+            upd = compute_watch_update(_WatchLike(unit), briefing, beliefs=_beliefs(), now=now)
+        elif unit.kind == "topic":
+            briefing, _sig = build_briefing_with_signals(
+                bronze_iter=_bronze().iter_records(),
+                store=_store(),
+                registry=_registry(),
+                tier_map=_tier_map(),
+                now=now,
+                days=7,
+                top=30,
+            )
+            upd = compute_watch_update(
+                _WatchLike(unit),
+                briefing,
+                beliefs=None,
+                now=now,
+                topic_hits=_topic_hits(unit.query, now),
+            )
+        elif unit.kind == "element":
+            ek, _, val = unit.query.partition(":")
+            n = 0
+            for d in _store().dissections_asof(now):
+                for e in d.get("elements") or []:
+                    content = str(e.get("content", "")).lower()
+                    if e.get("element") == ek and (not val or val.lower() in content):
+                        n += 1
+            upd = SimpleNamespace(
+                summary=f"窗口内 {n} 篇拆解命中元素「{unit.query}」",
+                review_hint="有新命中时建议复核你的相关判断" if n else "",
+                new_changes=[],
+                since=unit.last_checked_at,
+            )
+        else:
+            upd = SimpleNamespace(
+                summary="问题类暂不支持增量比较（阶段 4 接入）",
+                review_hint="",
+                new_changes=[],
+                since=unit.last_checked_at,
+            )
+        return {
+            "summary": upd.summary,
+            "review_hint": upd.review_hint,
+            "new_changes": [
+                c.model_dump(mode="json") if hasattr(c, "model_dump") else c
+                for c in getattr(upd, "new_changes", []) or []
+            ],
+            "since": upd.since,
+        }
+
+    @app.post("/api/tracking/{unit_id}/review")
+    def tracking_review(unit_id: str) -> dict[str, Any]:
+        """标记已复核：仅推进 last_checked_at。"""
+        if not _tracking().mark_checked(unit_id, now=_now().isoformat()):
+            raise HTTPException(404, "unit not found")
+        return {"ok": True}
+
     @app.get("/api/library")
     def library_list(item_type: str | None = None) -> dict[str, Any]:
         try:
@@ -1058,8 +1195,16 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         gov_hits = ("gov", "centralbank", "federalreserve", "ecb", "boj", "pbc")
         tier = "L4" if host in social else ("L1" if any(g in host for g in gov_hits) else "L3")
         tld_lang = {
-            "cn": "zh", "kr": "ko", "jp": "ja", "de": "de", "fr": "fr",
-            "ru": "ru", "br": "pt", "in": "hi", "tw": "zh", "hk": "zh",
+            "cn": "zh",
+            "kr": "ko",
+            "jp": "ja",
+            "de": "de",
+            "fr": "fr",
+            "ru": "ru",
+            "br": "pt",
+            "in": "hi",
+            "tw": "zh",
+            "hk": "zh",
         }
         tld = host.rsplit(".", 1)[-1]
         language = tld_lang.get(tld, "en")

@@ -986,7 +986,13 @@ def test_source_suggest_and_register(client: TestClient) -> None:
     assert any(s["source_id"] == sid for s in lst)
     r2 = client.post(
         "/api/sources",
-        json={"source_id": sid, "adapter": "rss", "tier": "L3", "language": "zh", "url": "https://x"},
+        json={
+            "source_id": sid,
+            "adapter": "rss",
+            "tier": "L3",
+            "language": "zh",
+            "url": "https://x",
+        },
     )
     assert r2.status_code == 409
     r3 = client.post("/api/sources/suggest", json={"url": "ftp://bad"})
@@ -1002,3 +1008,43 @@ def test_source_suggest_and_register(client: TestClient) -> None:
         },
     )
     assert r4.status_code == 422
+
+
+def test_tracking_flow(client: TestClient, tmp_path: Path) -> None:
+    """C3 跟踪预警统一：四类单元 CRUD + entity/topic 增量 + element 拆解命中。"""
+    from oh_contracts.ids import make_item_key
+    from oh_contracts.schemas import BronzeRecord
+
+    ts = make_now()
+    rec = BronzeRecord(
+        source_id="wscn",
+        item_key=make_item_key("wscn", "track-1", ts),
+        external_id="track-1",
+        url_hash="u",
+        content_hash="c",
+        fetched_at=ts,
+        published_at=ts,
+        raw={},
+        normalized={"title": "美联储暗示九月暂停加息", "body": "通胀放缓。"},
+    )
+    ParquetBronzeWriter(tmp_path / "bronze").write([rec])
+    r1 = client.post("/api/tracking", json={"kind": "entity", "query": "fed", "label": "美联储"})
+    assert r1.status_code == 201
+    unit = r1.json()
+    assert unit["unit_id"].startswith("tu-en-")
+    assert client.post("/api/tracking", json={"kind": "bogus", "query": "x"}).status_code == 422
+    assert client.post("/api/tracking", json={"kind": "topic", "query": ""}).status_code == 422
+    lst = client.get("/api/tracking").json()
+    assert any(u["unit_id"] == unit["unit_id"] for u in lst["units"])
+    upd = client.get(f"/api/tracking/{unit['unit_id']}/update").json()
+    assert "summary" in upd and "since" in upd
+    u2 = client.post(
+        "/api/tracking",
+        json={"kind": "element", "query": "tone:optimism", "mode": "track"},
+    ).json()
+    client.post("/api/agent/dissect", json={"item_key": rec.item_key})
+    upd2 = client.get(f"/api/tracking/{u2['unit_id']}/update").json()
+    assert "元素" in upd2["summary"]
+    assert client.post(f"/api/tracking/{u2['unit_id']}/review").status_code == 200
+    assert client.delete(f"/api/tracking/{u2['unit_id']}").status_code == 204
+    assert client.delete(f"/api/tracking/{u2['unit_id']}").status_code == 404
