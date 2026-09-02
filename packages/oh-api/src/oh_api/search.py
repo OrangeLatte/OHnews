@@ -23,6 +23,7 @@ v2 语义（对 v1 子串整串匹配的升级）：
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any
@@ -70,14 +71,32 @@ def _snippet(text: str, hit_start: int, hit_len: int, *, width: int = _SNIPPET_W
     return f"{prefix}{text[start:end]}{suffix}"
 
 
+def _is_latin_token(term: str) -> bool:
+    """英文/数字查询采用完整词边界，避免 fed 命中 federal / federer。"""
+    return bool(term) and all(ch.isascii() and (ch.isalnum() or ch in "_-") for ch in term)
+
+
 def _match_window(text: str, needle: str) -> int | None:
-    """casefold 子串定位；返回命中下标（-1 视为未命中）。
+    """casefold 定位；拉丁词按边界匹配，中日韩文本保留子串匹配。
 
     注意：casefold 极少数场景（如 ß→ss）会改变串长，导致下标无法映射回
     原文——此时直接以折叠文本截取 snippet（展示层面可接受的妥协）。
     """
-    idx = text.casefold().find(needle)
+    folded = text.casefold()
+    if _is_latin_token(needle):
+        match = re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", folded)
+        return match.start() if match else None
+    idx = folded.find(needle)
     return None if idx < 0 else idx
+
+
+def _contains_term(text: str, term: str) -> bool:
+    return _match_window(text, term) is not None
+
+
+def _canonical_title(title: str) -> str:
+    """展示层标题指纹：折叠大小写与连续空白，用于消除重复结果。"""
+    return " ".join(title.casefold().split())
 
 
 def _terms(q: str) -> list[str]:
@@ -125,10 +144,16 @@ def search_bronze(
         去重保留最前一条；snippet 为命中词前后各 60 字符窗口。
     """
     needle = q.strip().casefold()
-    if len(needle) < _MIN_QUERY_LEN:
+    if len(needle) < _MIN_QUERY_LEN or limit <= 0:
         return []
     terms = _terms(q) or [needle]
-    boosts = [b.strip().casefold() for b in boost_terms if b.strip()]
+    all_boosts = [b.strip().casefold() for b in boost_terms if b.strip()]
+    # 只使用与本次查询相关的实体别名；全局别名不得提升无关文章。
+    boosts = [
+        b
+        for b in all_boosts
+        if any(_contains_term(b, term) or _contains_term(term, b) for term in terms)
+    ]
 
     hits: list[tuple[tuple[int, float], dict[str, Any]]] = []
     for rec in records:
@@ -137,7 +162,7 @@ def search_bronze(
         body = str(n.get("body") or "")
         title_cf, body_cf = title.casefold(), body.casefold()
 
-        if not all(t in title_cf or t in body_cf for t in terms):
+        if not all(_contains_term(title_cf, t) or _contains_term(body_cf, t) for t in terms):
             continue
 
         # snippet 取第一个在 title 命中的词（title 优先展示），否则 body 命中词
@@ -154,10 +179,10 @@ def search_bronze(
                     snippet = _snippet(body, idx, len(t))
                     break
 
-        in_title = any(t in title_cf for t in terms)
+        in_title = any(_contains_term(title_cf, t) for t in terms)
         # 别名提升分层：title 命中别名 > body 命中别名 > 无别名（T5）
-        title_boost = any(b in title_cf for b in boosts)
-        body_boost = any(b in body_cf for b in boosts)
+        title_boost = any(_contains_term(title_cf, b) for b in boosts)
+        body_boost = any(_contains_term(body_cf, b) for b in boosts)
         boost_rank = 0 if title_boost else (1 if body_boost else 2)
         rank = (boost_rank, 0 if in_title else 1)
 
@@ -179,12 +204,20 @@ def search_bronze(
     hits.sort(key=lambda pair: pair[0])
     out: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
+    seen_titles: set[tuple[str, str, str]] = set()
     for _, item in hits:
         url = item["url"]
         if url:
             if url in seen_urls:
                 continue
             seen_urls.add(url)
+        title = _canonical_title(item["title"])
+        published_day = (item["published_at"] or "")[:10]
+        title_key = (item["source_id"], title, published_day)
+        if title:
+            if title_key in seen_titles:
+                continue
+            seen_titles.add(title_key)
         out.append(item)
         if len(out) >= limit:
             break
@@ -208,7 +241,7 @@ def search_events(
         title = ev.title or ""
         summary = ev.summary or ""
         title_cf, summary_cf = title.casefold(), summary.casefold()
-        if not all(t in title_cf or t in summary_cf for t in terms):
+        if not all(_contains_term(title_cf, t) or _contains_term(summary_cf, t) for t in terms):
             continue
         snippet = ""
         for t in terms:
@@ -236,7 +269,22 @@ def search_events(
             )
         )
     hits.sort(key=lambda pair: pair[0])
-    return [item for _, item in hits[:limit]]
+    out: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    seen_titles: set[tuple[str, str]] = set()
+    for _, item in hits:
+        event_id = item["id"]
+        title = _canonical_title(item["title"])
+        title_key = (title, (item["published_at"] or "")[:10])
+        if event_id in seen_ids or (title and title_key in seen_titles):
+            continue
+        seen_ids.add(event_id)
+        if title:
+            seen_titles.add(title_key)
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def build_router(
@@ -263,11 +311,16 @@ def build_router(
     @router.get("/api/search")
     def search(q: str = Query(...), limit: int = Query(20, ge=1, le=50)) -> list[dict[str, Any]]:
         """分词 AND 检索（事件前置 + 文章）；limit 超界与缺失 q 由 FastAPI 校验 422。"""
-        events = search_events(events_fn(), q) if events_fn is not None else []
+        events = (
+            search_events(events_fn(), q, limit=min(_EVENT_LIMIT, limit))
+            if events_fn is not None
+            else []
+        )
+        remaining = max(0, limit - len(events))
         articles = search_bronze(
             bronze_iter_fn(),
             q,
-            limit=limit,
+            limit=remaining,
             boost_terms=alias_fn() if alias_fn is not None else (),
         )
         return [*events, *articles]

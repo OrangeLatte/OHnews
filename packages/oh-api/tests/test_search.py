@@ -89,6 +89,17 @@ def test_case_insensitive_matching() -> None:
     assert search_bronze(recs, "FED") == search_bronze(recs, "fed")
 
 
+def test_latin_query_uses_word_boundaries() -> None:
+    """实体短词不能误召回同前缀的普通英文单词。"""
+    recs = [
+        _rec("s1", "fed", title="Fed signals a policy shift"),
+        _rec("s1", "federal", title="Federal Register publishes a notice"),
+        _rec("s1", "federer", title="Federer enters the hall of fame"),
+    ]
+    out = search_bronze(recs, "Fed")
+    assert [row["item_key"] for row in out] == [recs[0].item_key]
+
+
 def test_snippet_window_and_word_boundary() -> None:
     """snippet=命中词前后各 60 字符；不截断词，优先句号边界。"""
     filler = "前" * 80
@@ -212,3 +223,28 @@ def test_search_events_kind_and_router_merge() -> None:
     out = client.get("/api/search", params={"q": "美联储"}).json()
     assert out[0]["kind"] == "event" and out[0]["id"] == "ev-fed-20260828"
     assert out[1]["kind"] == "article"
+
+
+def test_event_title_dedupe_and_router_total_limit() -> None:
+    """重复事件只展示一次，limit 约束事件与文章合并后的总数。"""
+    from oh_api.search import search_events
+    from oh_contracts.schemas import EventRecord
+
+    events = [
+        EventRecord(
+            event_id=f"ev-fed-{i}",
+            title="Fed signals a policy shift" if i < 2 else f"Fed event {i}",
+            summary="Fed update",
+            entities=["fed"],
+            as_of=NOW - timedelta(minutes=i),
+        )
+        for i in range(5)
+    ]
+    assert len(search_events(events, "Fed", limit=5)) == 4
+
+    recs = [_rec("s1", f"article-{i}", title=f"Fed article {i}") for i in range(5)]
+    app = FastAPI()
+    app.include_router(build_router(lambda: iter(recs), events_fn=lambda: events))
+    out = TestClient(app).get("/api/search", params={"q": "Fed", "limit": 3}).json()
+    assert len(out) == 3
+    assert all(row["kind"] == "event" for row in out)
