@@ -132,13 +132,19 @@ function OverviewStage({
         const label = params[0]?.name;
         const n = frames.find((f) => f.label === label);
         if (!n) return label ?? "";
+        // U3 弃权门：共同来源 <3 不展示百分比；<5 标注方向性迹象
+        if (n.n_cohort_sources < 3) {
+          return `${label}<br/>共同来源不足（${n.n_cohort_sources} 个）——仅方向性迹象，不呈现百分比`;
+        }
+        const tag = n.n_cohort_sources < 5 ? "方向性迹象（共同来源 <5）" : null;
         const bias =
           n.adjusted_share_baseline != null
             ? `共同来源 ${n.n_cohort_sources} 个（校正口径）`
             : "原始口径，来源构成差异未校正";
         const b = n.adjusted_share_baseline ?? n.share_baseline;
         const c = n.adjusted_share_current ?? n.share_current;
-        return `${label}<br/>${bias}<br/>${Math.round(b * 100)}% → ${Math.round(c * 100)}%（Δ ${Math.round((c - b) * 100)}）`;
+        const nums = `${Math.round(b * 100)}% → ${Math.round(c * 100)}%（Δ ${Math.round((c - b) * 100)}）`;
+        return `${label}<br/>${bias}${tag ? `<br/>${tag}` : ""}<br/>${nums}`;
       },
     },
     legend: { top: 0, textStyle: { color: SIGNAL.muted, fontSize: 11 } },

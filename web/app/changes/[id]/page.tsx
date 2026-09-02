@@ -86,12 +86,41 @@ function CoverageLine({ c }: { c: CoverageSummary }) {
 
 function CitationCard({ c }: { c: EvidenceCitation }) {
   const when = c.published_at ? c.published_at.slice(0, 10) : null;
+  const REL_ZH: Record<string, string> = {
+    supports: "支持",
+    weakens: "削弱",
+    context: "背景",
+  };
   return (
     <li className="border-b border-foreground/10 py-3">
+      {c.claim && (
+        <p className="paper-kicker mb-1 text-[11px] text-muted-foreground">
+          验证的主张：{c.claim}
+        </p>
+      )}
       <p className="text-[14px] leading-relaxed">{c.quote}</p>
+      {(c.reason || c.relation) && (
+        <p className="mt-1 text-[12px] text-muted-foreground">
+          {c.relation && <span>归桶：{REL_ZH[c.relation] ?? c.relation}</span>}
+          {c.reason && <span> · {c.reason}</span>}
+        </p>
+      )}
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
         <span className="font-paper">{c.source_id}</span>
         <span>{c.source_tier}</span>
+        {c.primary_status && (
+          <span
+            className="border px-1 py-px text-[10px]"
+            style={{ borderColor: SIGNAL.confirmed, color: SIGNAL.confirmed }}
+          >
+            一手来源
+          </span>
+        )}
+        {c.is_best_for_source && (
+          <span className="border px-1 py-px text-[10px] text-muted-foreground">
+            该来源最佳
+          </span>
+        )}
         {when && <span>{when}</span>}
         {c.url && (
           <a
@@ -137,7 +166,10 @@ function GapList({ gaps }: { gaps: EvidenceGap[] }) {
 
 function Drawer({ d, changeId }: { d: ChangeDossier; changeId: string }) {
   const [bucket, setBucket] = useState<EvidenceBucket>("supporting");
-  const items = (d.evidence[bucket] as EvidenceCitation[] | undefined) ?? [];
+  const [showAll, setShowAll] = useState(false);
+  const all = (d.evidence[bucket] as EvidenceCitation[] | undefined) ?? [];
+  const best = all.filter((c) => c.is_best_for_source);
+  const items = showAll || best.length === 0 ? all : best;
   const empty =
     (((d.evidence.supporting ?? []).length +
       (d.evidence.contradicting ?? []).length +
@@ -195,6 +227,15 @@ function Drawer({ d, changeId }: { d: ChangeDossier; changeId: string }) {
             <CitationCard key={c.item_key} c={c} />
           ))}
         </ul>
+      )}
+      {best.length > 0 && best.length < all.length && (
+        <button
+          type="button"
+          className="mt-2 text-[12px] text-muted-foreground underline underline-offset-2"
+          onClick={() => setShowAll(!showAll)}
+        >
+          {showAll ? "收起同源重复条目" : `展开同源其余 ${all.length - best.length} 条`}
+        </button>
       )}
       <GapList gaps={d.evidence.gaps ?? []} />
     </div>

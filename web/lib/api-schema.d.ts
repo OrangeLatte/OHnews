@@ -1412,6 +1412,10 @@ export interface components {
         /**
          * EvidenceCitation
          * @description 产品层证据条目：引用原文的最后一公里（url 即外链）。
+         *
+         *     U3 证据语义：每条证据必须说明「验证什么主张（claim）/与主张的关系
+         *     （relation）/为何归入该桶（reason）/独立来源（independent_source_id）/
+         *     是否一手（primary_status）」——分桶不是装饰，是可检验的语义。
          */
         EvidenceCitation: {
             /** Item Key */
@@ -1427,6 +1431,37 @@ export interface components {
             url?: string | null;
             /** Published At */
             published_at?: string | null;
+            /**
+             * Claim
+             * @default
+             */
+            claim: string;
+            /**
+             * Relation
+             * @default context
+             * @enum {string}
+             */
+            relation: "supports" | "weakens" | "context";
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Independent Source Id
+             * @default
+             */
+            independent_source_id: string;
+            /**
+             * Primary Status
+             * @default false
+             */
+            primary_status: boolean;
+            /**
+             * Is Best For Source
+             * @default false
+             */
+            is_best_for_source: boolean;
         };
         /**
          * EvidenceGap
