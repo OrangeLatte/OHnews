@@ -1,91 +1,66 @@
 "use client";
 
+/**
+ * 03 WATCH · 跟踪预警（C3 统一模型）
+ * 单元四类（entity/topic/question/element）× 两模式（track 持续追踪 / alert 超限提醒）。
+ * 语义：查看 ≠ 复核——只有点「标记已复核」才推进认知基线（last_checked_at）。
+ */
+
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { watchStatus } from "@/lib/insight";
 import AlertsSection from "@/app/watch/alerts-section";
-
-import { api, type SignalRow, type WatchRow } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { api } from "@/lib/api";
+import { SIGNAL } from "@/lib/tokens";
 import { track } from "@/lib/track";
 
-type WatchUpdateRow = Awaited<ReturnType<typeof api.watchUpdate>>;
+type Unit = Awaited<ReturnType<typeof api.trackingList>>["units"][number];
+type UnitUpdate = Awaited<ReturnType<typeof api.trackingUpdate>>;
 
-const TYPE_META: Record<string, { label: string; hint: string; color: string }> = {
-  entity: { label: "实体", hint: "实体名称（如 美联储 / 欧洲央行）", color: "#58a6ff" },
-  topic: { label: "主题", hint: "关键词，逗号分隔（如 衰退,关税）", color: "#d29922" },
-  question: { label: "问题", hint: "研究问题句（系统将自动检索并回答）", color: "#bc8cff" },
+const KIND_ZH: Record<string, string> = {
+  entity: "实体",
+  topic: "主题",
+  question: "研究问题",
+  element: "文章元素",
 };
-
-function summaryLines(w: WatchRow): string[] {
-  const s = w.last_summary as Record<string, unknown> | null;
-  if (!s) return ["尚未刷新"];
-  const lines: string[] = [];
-  if (s.kind === "entity") {
-    lines.push(`${s.n_signals} 个相关变化 · ${s.n_events} 个关联事件`);
-    const sigs = (s.signals as SignalRow[]) ?? [];
-    for (const g of sigs.slice(0, 3))
-      lines.push(`· [${g.kind}] ${g.title}（强度 ${Math.round(g.strength)}）`);
-    const evs = (s.events as { event_id: string; title: string }[]) ?? [];
-    for (const e of evs.slice(0, 3)) lines.push(`· 事件 ${e.event_id}：${e.title}`);
-    const alerts = (s.alerts as { event_title: string; ndi: number; baseline: number }[]) ?? [];
-    if (alerts.length)
-      for (const a of alerts)
-        lines.push(`⚠ 预警：${a.event_title}（NDI ${a.ndi.toFixed(2)} > 基线 ${a.baseline.toFixed(2)}）`);
-    else if ((s.n_alert_rules as number) === 0)
-      lines.push("该实体尚未设置高级预警规则。");
-  } else if (s.kind === "topic") {
-    lines.push(`近 7 日 ${s.n_articles} 篇文章命中「${(s.terms as string[]).join(" / ")}」`);
-    const tops = (s.top_sources as { source_id: string; n: number }[]) ?? [];
-    if (tops.length)
-      lines.push(`主要来源：${tops.map((t) => `${t.source_id}(${t.n})`).join("、")}`);
-    lines.push(`${s.n_events} 个关联事件`);
-  } else {
-    // 研究问题：优先展示可读摘要，隐藏底层引擎与配置细节。
-    const status = s.status as string;
-    const answer = s.answer as string | null;
-    if (status === "answered" && answer) {
-      const engine = s.engine === "llm" ? "研究助理回答" : "本地资料摘要";
-      lines.push(`已回答（${engine}）· 匹配 ${s.n_matched_events} 个事件`);
-      for (const ln of answer.split("\n")) if (ln.trim()) lines.push(ln);
-    } else {
-      lines.push(`问题已记录 · 匹配 ${s.n_matched_events} 个事件 · 暂无足够材料形成回答`);
-    }
-    const evs = (s.events as { event_id: string; title: string }[]) ?? [];
-    for (const e of evs.slice(0, 3)) lines.push(`· 事件 ${e.event_id}：${e.title}`);
-  }
-  return lines;
-}
+const MODE_ZH: Record<string, string> = { track: "持续追踪", alert: "超限提醒" };
 
 export default function WatchPage() {
-  const [watches, setWatches] = useState<WatchRow[]>([]);
-  const [type, setType] = useState("entity");
-  const [query, setQuery] = useState("");
+  const [units, setUnits] = useState<Unit[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [updates, setUpdates] = useState<Record<string, WatchUpdateRow | null>>({});
+  const [updates, setUpdates] = useState<Record<string, UnitUpdate | null>>({});
+  const [kind, setKind] = useState("entity");
+  const [mode, setMode] = useState("track");
+  const [query, setQuery] = useState("");
+  const [label, setLabel] = useState("");
+  const [threshold, setThreshold] = useState("0.7");
 
   const load = useCallback(() => {
-    api.watches().then((r) => setWatches(r.watches)).catch((e) => setError(String(e)));
+    api
+      .trackingList()
+      .then((r) => setUnits(r.units ?? []))
+      .catch((e) => setError(String(e)));
   }, []);
-  useEffect(load, [load]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   async function add() {
     if (!query.trim()) return;
     setBusy("add");
     try {
-      await api.watchAdd(type, query);
+      await api.trackingAdd({
+        kind,
+        query: query.trim(),
+        mode,
+        label: label.trim(),
+        threshold: mode === "alert" ? Number(threshold) || undefined : undefined,
+      });
       track("watch_created", { objectId: query.trim(), fromPage: "/watch" });
       setQuery("");
+      setLabel("");
       load();
     } catch (e) {
       setError(String(e));
@@ -94,28 +69,15 @@ export default function WatchPage() {
     }
   }
 
-  async function refresh(id: string) {
-    setBusy(id);
-    try {
-      await api.watchRefresh(id);
-      load();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  // 阶段 3：查看更新 = 只读计算；复核 = 用户显式动作才推进基线
   async function toggleUpdate(id: string) {
     if (updates[id]) {
-      setUpdates((m) => ({ ...m, [id]: null }));
+      setUpdates((p) => ({ ...p, [id]: null }));
       return;
     }
     setBusy(id);
     try {
-      const u = await api.watchUpdate(id);
-      setUpdates((m) => ({ ...m, [id]: u }));
+      const u = await api.trackingUpdate(id);
+      setUpdates((p) => ({ ...p, [id]: u }));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -126,206 +88,180 @@ export default function WatchPage() {
   async function review(id: string) {
     setBusy(id);
     try {
-      await api.watchReview(id);
+      await api.trackingReview(id);
       track("watch_update_reviewed", { objectId: id, fromPage: "/watch" });
-      setUpdates((m) => ({ ...m, [id]: null }));
+      setUpdates((p) => ({ ...p, [id]: null }));
       load();
-    } catch (e) {
-      setError(String(e));
     } finally {
       setBusy(null);
     }
   }
 
   return (
-    <div className="flex flex-col gap-8">
-      <div>
-        <h2 className="font-paper text-xl">我的订阅</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          订阅实体、主题与研究问题——系统在你关心的方向上持续监测变化。
-          分位数预警规则与触发记录在页面下方。
-          信息源管理已移至 <Link href="/settings/developer" className="underline">开发者设置</Link>。
-        </p>
-      </div>
+    <main className="mx-auto max-w-3xl px-4 py-8">
+      <p className="paper-kicker mb-1">03 / WATCH</p>
+      <h1 className="font-paper text-2xl">关注与追踪</h1>
+      <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+        订阅实体、主题、研究问题或文章元素——系统在你关心的方向上持续追踪变化，
+        或在超出阈值时提醒你。分位数预警规则在页面下方。
+      </p>
 
-      <Card>
-        <CardContent className="flex flex-col gap-3 pt-4">
-          <div className="flex gap-2">
-            {(Object.keys(TYPE_META) as string[]).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setType(t)}
-                className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
-                  type === t
-                    ? "border-transparent text-white"
-                    : "border-border text-muted-foreground hover:text-foreground"
-                }`}
-                style={type === t ? { backgroundColor: TYPE_META[t].color } : undefined}
-              >
-                {TYPE_META[t].label}
-              </button>
-            ))}
+      {error && <p className="mt-3 text-sm" style={{ color: SIGNAL.divergence }}>{error}</p>}
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="font-paper text-base">新建跟踪单元</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <div className="flex flex-wrap gap-2">
+            <select
+              aria-label="单元类型"
+              className="border border-[var(--border)] bg-transparent px-2 py-1 text-sm"
+              value={kind}
+              onChange={(e) => setKind(e.target.value)}
+            >
+              {Object.entries(KIND_ZH).map(([k, zh]) => (
+                <option key={k} value={k}>
+                  {zh}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="模式"
+              className="border border-[var(--border)] bg-transparent px-2 py-1 text-sm"
+              value={mode}
+              onChange={(e) => setMode(e.target.value)}
+            >
+              {Object.entries(MODE_ZH).map(([k, zh]) => (
+                <option key={k} value={k}>
+                  {zh}
+                </option>
+              ))}
+            </select>
+            {kind === "element" && (
+              <span className="self-center text-xs text-[var(--muted-foreground)]">
+                元素格式 element_key:value（如 tone:optimism）
+              </span>
+            )}
           </div>
-          <div className="flex gap-2">
-            <Input
+          <div className="flex flex-wrap gap-2">
+            <input
+              aria-label="跟踪对象"
+              className="min-w-0 flex-1 border border-[var(--border)] bg-transparent px-2 py-1 text-sm"
+              placeholder={kind === "entity" ? "实体（如 fed）" : kind === "element" ? "tone:optimism" : "关键词或问题"}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={TYPE_META[type].hint}
-              onKeyDown={(e) => e.key === "Enter" && add()}
             />
-            <Button onClick={add} disabled={busy === "add"}>
-              {busy === "add" ? "添加中…" : "订阅"}
-            </Button>
+            <input
+              aria-label="备注名（可选）"
+              className="min-w-0 flex-1 border border-[var(--border)] bg-transparent px-2 py-1 text-sm"
+              placeholder="备注名（可选）"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+            />
+            {mode === "alert" && (
+              <input
+                aria-label="阈值"
+                className="w-20 border border-[var(--border)] bg-transparent px-2 py-1 text-sm"
+                title="触发阈值 0–1"
+                value={threshold}
+                onChange={(e) => setThreshold(e.target.value)}
+              />
+            )}
+            <button
+              type="button"
+              className="border border-[var(--border)] px-3 py-1 text-sm hover:border-[var(--foreground)] disabled:opacity-50"
+              disabled={busy === "add" || !query.trim()}
+              onClick={add}
+            >
+              订阅
+            </button>
           </div>
         </CardContent>
       </Card>
 
-      {error && <p className="text-destructive">{error}</p>}
-
-      <div className="flex flex-col gap-3">
-        {watches.length === 0 ? (
-          <div className="rounded border border-border bg-card px-4 py-8 text-center">
-            <p className="font-paper text-lg">你的情报雷达还是空的</p>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-              订阅实体（如 fed、nvidia）、主题（如「关税、降息」）或研究问题后，系统会在每次刷新时汇报它们的状态：安静、发展中、关注度骤增或叙事分歧。订阅将成为你的个人情报雷达。
-            </p>
-            <div className="mt-3 flex justify-center gap-2 text-xs">
-              <Link href="/investigate" className="text-primary hover:underline">
-                先看看有什么事件 →
-              </Link>
-            </div>
-          </div>
-        ) : (
-          (["entity", "topic", "question"] as const).map((group) => {
-            const items = watches.filter((w) => w.type === group);
-            if (items.length === 0) return null;
-            const gmeta = TYPE_META[group];
-            return (
-              <div key={group} className="flex flex-col gap-2">
-                <p className="paper-kicker mt-2 border-b border-border pb-1">
-                  {group === "entity"
-                    ? "Tracked entities · 追踪实体"
-                    : group === "topic"
-                      ? "Tracked topics · 追踪主题"
-                      : "Research questions · 研究问题"}
-                  （{items.length}）
-                </p>
-                {items.map((w) => {
-                  const meta = gmeta;
-                  const status = watchStatus(w.last_summary as Record<string, unknown> | null);
-                  return (
-              <Card key={w.watch_id}>
-                <CardHeader className="pb-2">
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant="outline"
-                      className="text-[10px]"
-                      style={{ borderColor: meta.color, color: meta.color }}
-                    >
-                      {meta.label}
-                    </Badge>
-                    <CardTitle className="flex-1 font-mono text-sm">{w.query}</CardTitle>
-                    <span
-                      className="text-[10px] font-semibold uppercase tracking-wide"
-                      style={{ color: status.color }}
-                    >
-                      ● {status.label}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy === w.watch_id}
-                      onClick={() => toggleUpdate(w.watch_id)}
-                    >
-                      {updates[w.watch_id] ? "收起" : busy === w.watch_id ? "…" : "查看更新"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy === w.watch_id}
-                      onClick={() => refresh(w.watch_id)}
-                    >
-                      {busy === w.watch_id ? "…" : "刷新"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-muted-foreground"
-                      onClick={() => api.watchRemove(w.watch_id).then(load)}
-                    >
-                      删除
-                    </Button>
-                  </div>
-                  {w.last_checked_at && (
-                    <p className="text-xs text-muted-foreground">
-                      上次复核 {w.last_checked_at.replace("T", " ").slice(0, 16)}
+      <div className="mt-6 grid gap-4">
+        {units.length === 0 && (
+          <p className="text-sm text-[var(--muted-foreground)]">
+            暂无跟踪单元——用上方表单创建第一个。
+          </p>
+        )}
+        {units.map((u) => (
+          <Card key={u.unit_id}>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <CardTitle className="font-paper text-base">
+                {u.label || u.query}
+                <span className="ml-2 align-middle">
+                  <Badge variant="outline">{KIND_ZH[u.kind] ?? u.kind}</Badge>{" "}
+                  <Badge variant={u.mode === "alert" ? "destructive" : "secondary"}>
+                    {MODE_ZH[u.mode] ?? u.mode}
+                  </Badge>
+                </span>
+              </CardTitle>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="text-xs underline-offset-2 hover:underline"
+                  onClick={() => toggleUpdate(u.unit_id)}
+                  disabled={busy === u.unit_id}
+                >
+                  {updates[u.unit_id] ? "收起更新" : "查看更新"}
+                </button>
+                <button
+                  type="button"
+                  className="text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  onClick={() => api.trackingDelete(u.unit_id).then(load)}
+                >
+                  删除
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-[var(--muted-foreground)]">
+                {u.mode === "alert"
+                  ? `阈值 ${(u.threshold ?? 0).toFixed(2)} · `
+                  : ""}
+                {u.last_checked_at
+                  ? `上次复核 ${new Date(u.last_checked_at).toLocaleString("zh-CN")}`
+                  : "尚无复核记录（无基线——全部视为新）"}
+              </p>
+              {updates[u.unit_id] && (
+                <div className="mt-3 border-t border-dotted border-[var(--border)] pt-3 text-sm">
+                  <p>{updates[u.unit_id]!.summary}</p>
+                  {updates[u.unit_id]!.review_hint && (
+                    <p className="mt-1" style={{ color: SIGNAL.attention }}>
+                      ⚠ {updates[u.unit_id]!.review_hint}
                     </p>
                   )}
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <ul className="space-y-1 text-sm">
-                    {summaryLines(w).map((line, i) => (
-                      <li key={i} className={i === 0 ? "text-foreground" : "text-muted-foreground"}>
-                        {line}
-                      </li>
-                    ))}
-                  </ul>
-                  {updates[w.watch_id] && (
-                    <div className="mt-3 rounded border border-dashed border-border bg-muted/30 px-3 py-3">
-                      <p className="font-paper text-sm text-foreground">
-                        {updates[w.watch_id]!.summary}
-                      </p>
-                      {updates[w.watch_id]!.review_hint && (
-                        <p className="mt-1 text-xs" style={{ color: "#b08d3f" }}>
-                          ⚠ {updates[w.watch_id]!.review_hint}
-                        </p>
-                      )}
-                      {updates[w.watch_id]!.note && (
-                        <p className="mt-1 text-xs text-muted-foreground">{updates[w.watch_id]!.note}</p>
-                      )}
-                      {(updates[w.watch_id]!.new_changes ?? []).length > 0 && (
-                        <ul className="mt-2 space-y-1">
-                          {(updates[w.watch_id]!.new_changes ?? []).map((c) => (
-                            <li key={c.change_id} className="text-sm">
-                              <Link href={`/changes/${c.change_id}`} className="hover:underline">
-                                {c.headline}
-                              </Link>
-                              <span className="ml-2 text-xs text-muted-foreground">
-                                {c.strength_word === "strong"
-                                  ? "显著变化"
-                                  : c.strength_word === "notable"
-                                    ? "值得关注"
-                                    : c.strength_word === "minor"
-                                      ? "轻微迹象"
-                                      : "证据不足"}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      <div className="mt-3 flex items-center gap-2">
-                        <Button size="sm" variant="outline" onClick={() => review(w.watch_id)}>
-                          标记已复核
-                        </Button>
-                        <span className="text-xs text-muted-foreground">
-                          {updates[w.watch_id]!.since
-                            ? `认知基线（上次复核或判断）：${updates[w.watch_id]!.since!.replace("T", " ").slice(0, 16)}`
-                            : "无基线——全部视为新变化"}
-                        </span>
-                      </div>
-                    </div>
+                  {(updates[u.unit_id]!.new_changes ?? []).length > 0 && (
+                    <ul className="mt-2 grid gap-1">
+                      {(updates[u.unit_id]!.new_changes as Array<{ change_id?: string; headline?: string }>).map((c) => (
+                        <li key={c.change_id}>
+                          <a className="underline-offset-2 hover:underline" href={`/changes/${c.change_id}`}>
+                            {c.headline}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
                   )}
-                </CardContent>
-              </Card>
-                );
-              })}
-            </div>
-          );
-        })
-        )}
+                  <button
+                    type="button"
+                    className="mt-3 border border-[var(--border)] px-3 py-1 text-xs hover:border-[var(--foreground)]"
+                    onClick={() => review(u.unit_id)}
+                    disabled={busy === u.unit_id}
+                  >
+                    标记已复核
+                  </button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ))}
       </div>
-      <AlertsSection />
-    </div>
+
+      <div className="mt-10">
+        <AlertsSection />
+      </div>
+    </main>
   );
 }

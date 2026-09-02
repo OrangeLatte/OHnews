@@ -338,6 +338,7 @@ async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promi
 async function del<T>(path: string): Promise<T> {
   const r = await fetch(`/api${path}`, { method: "DELETE" });
   if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+  if (r.status === 204) return {} as T; // 204 无 body（C3 tracking delete）
   return r.json();
 }
 
@@ -375,6 +376,24 @@ export const api = {
   libraryRemove: (id: string) => del<{ removed: string }>(`/library/${id}`),
   watchRefresh: (id: string, minPerSource = 10) =>
     post<WatchRow>(`/watches/${id}/refresh?min_per_source=${minPerSource}`, {}),
+  // C3 跟踪预警统一（/api/tracking，清零重建不迁移旧 watch/alerts）
+  trackingList: (kind?: string) =>
+    get<{ units: components["schemas"]["TrackingUnit"][]; hits: unknown[] }>(
+      `/tracking${kind ? `?kind=${kind}` : ""}`,
+    ),
+  trackingAdd: (body: {
+    kind: string;
+    query: string;
+    mode?: string;
+    label?: string;
+    threshold?: number;
+  }) => post<components["schemas"]["TrackingUnit"]>("/tracking", body),
+  trackingDelete: (id: string) => del<{ removed: string }>(`/tracking/${id}`),
+  trackingUpdate: (id: string) =>
+    get<{ summary: string; review_hint: string; new_changes: unknown[]; since: string | null }>(
+      `/tracking/${encodeURIComponent(id)}/update`,
+    ),
+  trackingReview: (id: string) => post<{ ok: boolean }>(`/tracking/${encodeURIComponent(id)}/review`, {}),
   watchUpdate: (id: string) =>
     get<components["schemas"]["WatchUpdate"]>(`/watches/${encodeURIComponent(id)}/update`),
   watchReview: (id: string) =>

@@ -526,6 +526,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tracking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tracking List
+         * @description 统一跟踪/预警单元清单 + 最近命中。
+         */
+        get: operations["tracking_list_api_tracking_get"];
+        put?: never;
+        /**
+         * Tracking Add
+         * @description 新增跟踪/预警单元（四类 kind × track/alert 两模式）。
+         */
+        post: operations["tracking_add_api_tracking_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tracking/{unit_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Tracking Remove */
+        delete: operations["tracking_remove_api_tracking__unit_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tracking/{unit_id}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tracking Update
+         * @description 增量视图：track=briefing 命中；alert=最近触发；element=拆解元素命中。
+         */
+        get: operations["tracking_update_api_tracking__unit_id__update_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tracking/{unit_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tracking Review
+         * @description 标记已复核：仅推进 last_checked_at。
+         */
+        post: operations["tracking_review_api_tracking__unit_id__review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library": {
         parameters: {
             query?: never;
@@ -673,11 +754,39 @@ export interface paths {
         };
         /**
          * Sources List
-         * @description 信息源管理面（订阅中心）：全源清单 + Bronze 产出统计（订阅中心主表数据）。
+         * @description 信息源管理面（订阅中心）：全源清单 + Bronze 产出统计（C1 服务端筛选）。
          */
         get: operations["sources_list_api_sources_get"];
         put?: never;
-        post?: never;
+        /**
+         * Source Register
+         * @description C2：确认建议后注册信源（文本追加写 config/sources.yaml，保留既有注释）。
+         *
+         *     source_id 冲突 409；adapter 闭集校验 422。
+         */
+        post: operations["source_register_api_sources_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Source Suggest
+         * @description C2：URL → 信源注册建议（确定性启发式，无 LLM 依赖）。
+         *
+         *     用户确认后走 POST /api/sources 落库；本端点只读不写。
+         */
+        post: operations["source_suggest_api_sources_suggest_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1999,6 +2108,38 @@ export interface components {
              */
             n_sources: number;
         };
+        /**
+         * TrackingUnit
+         * @description 一个跟踪/预警单元。mode=track 增量比较；mode=alert 分位线触发。
+         */
+        TrackingUnit: {
+            /** Unit Id */
+            unit_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "entity" | "topic" | "question" | "element";
+            /** Query */
+            query: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Mode
+             * @default track
+             * @enum {string}
+             */
+            mode: "track" | "alert";
+            /** Threshold */
+            threshold?: number | null;
+            /** Created At */
+            created_at: string;
+            /** Last Checked At */
+            last_checked_at?: string | null;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -3007,6 +3148,169 @@ export interface operations {
             };
         };
     };
+    tracking_list_api_tracking_get: {
+        parameters: {
+            query?: {
+                kind?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tracking_add_api_tracking_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackingUnit"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tracking_remove_api_tracking__unit_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                unit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tracking_update_api_tracking__unit_id__update_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                unit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tracking_review_api_tracking__unit_id__review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                unit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     library_list_api_library_get: {
         parameters: {
             query?: {
@@ -3284,7 +3588,13 @@ export interface operations {
     };
     sources_list_api_sources_get: {
         parameters: {
-            query?: never;
+            query?: {
+                tier?: string | null;
+                kind?: string | null;
+                language?: string | null;
+                q?: string | null;
+                enabled?: boolean | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3300,6 +3610,89 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    source_register_api_sources_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    source_suggest_api_sources_suggest_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
