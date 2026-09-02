@@ -362,6 +362,7 @@ def build_change_landscape(
     days: int = 7,
     min_per_source: int = 10,
     top: int = 5,
+    briefing_result: tuple[BriefingResponse, list[Signal]] | None = None,
 ) -> ChangeLandscape:
     """变化场场景唯一聚合入口（后端拼图，前端渲染）。
 
@@ -390,16 +391,19 @@ def build_change_landscape(
     rows = store.stances_asof(now)
     narr = _narrative_streams(rows, lo_cur, lo_base, now, tier_map)
 
-    briefing, signals = build_briefing_with_signals(
-        bronze_iter=iter(records),
-        store=store,
-        registry=registry,
-        tier_map=tier_map,
-        now=now,
-        days=max(1, days),
-        top=top,
-        min_per_source=min_per_source,
-    )
+    if briefing_result is None:
+        briefing, signals = build_briefing_with_signals(
+            bronze_iter=iter(records),
+            store=store,
+            registry=registry,
+            tier_map=tier_map,
+            now=now,
+            days=max(1, days),
+            top=top,
+            min_per_source=min_per_source,
+        )
+    else:
+        briefing, signals = briefing_result
     bronze_by_key = {r.item_key: r for r in records}
     changes, refs, gated_out = _qualified_changes(
         briefing,

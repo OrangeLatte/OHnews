@@ -35,7 +35,7 @@ from oh_agents.orchestrator import (
 )
 from oh_agents.research import run_research
 from oh_agents.watch_update import compute_watch_update
-from oh_api.briefing import build_briefing, build_dossier
+from oh_api.briefing import build_briefing, build_briefing_with_signals, build_dossier
 from oh_api.change_landscape import build_change_field, build_change_landscape
 from oh_api.metrics import build_router as build_metrics_router
 from oh_api.search import build_router as build_search_router
@@ -356,24 +356,28 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
         消除前端 4 并发请求竞态；briefing_viewed 去重到前端单一数据源。
         """
+        now = _now()
+        records = list(_bronze().iter_records())
+        briefing_result = build_briefing_with_signals(
+            bronze_iter=iter(records),
+            store=_store(),
+            registry=_registry(),
+            tier_map=_tier_map(),
+            now=now,
+            days=max(1, days),
+            top=top,
+        )
         return HomePayload(
-            briefing=build_briefing(
-                bronze_iter=_bronze().iter_records(),
-                store=_store(),
-                registry=_registry(),
-                tier_map=_tier_map(),
-                now=_now(),
-                days=max(1, days),
-                top=top,
-            ),
+            briefing=briefing_result[0],
             landscape=build_change_landscape(
-                bronze_iter=_bronze().iter_records(),
+                bronze_iter=iter(records),
                 store=_store(),
                 registry=_registry(),
                 tier_map=_tier_map(),
-                now=_now(),
+                now=now,
                 days=max(1, days),
                 top=top,
+                briefing_result=briefing_result,
             ),
             watches=[w.__dict__ for w in _watch_store().list()],
         )
