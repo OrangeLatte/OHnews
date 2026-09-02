@@ -101,6 +101,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent Report
+         * @description B2：基于已存拆解生成六型研究报告（llm，失败降级 offline）。
+         *
+         *     item_key 必须已拆解（409 先拆解）且 bronze 存在（404）。
+         */
+        post: operations["agent_report_api_agent_report_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/reports/{item_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agent Reports
+         * @description 某文章全部研究报告（按 created_at 升序）。
+         */
+        get: operations["agent_reports_api_agent_reports__item_key__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/dissections/{item_key}": {
         parameters: {
             query?: never;
@@ -1241,6 +1283,38 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AgentReport
+         * @description 单篇文章×单一视角的研究报告。report_id=rp-{sha1(item_key|kind)[:8]} 幂等。
+         */
+        AgentReport: {
+            /** Report Id */
+            report_id: string;
+            /** Item Key */
+            item_key: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "truth" | "intent" | "causal" | "narrative" | "trend" | "summary";
+            /** Title */
+            title: string;
+            /** Sections */
+            sections?: components["schemas"]["ReportSection"][];
+            /**
+             * Engine
+             * @default llm
+             * @enum {string}
+             */
+            engine: "llm" | "offline";
+            /**
+             * Model Hint
+             * @default
+             */
+            model_hint: string;
+            /** Created At */
+            created_at: string;
+        };
+        /**
          * ArticleDissection
          * @description 一篇文章的拆解结果（item_key 即主键，重跑幂等覆盖）。
          *
@@ -1754,6 +1828,16 @@ export interface components {
             /** Message */
             message: string;
         };
+        /**
+         * ReportSection
+         * @description 报告分节：title 非空 + body 非空。
+         */
+        ReportSection: {
+            /** Title */
+            title: string;
+            /** Body */
+            body: string;
+        };
         /** SessionCreate */
         SessionCreate: {
             /**
@@ -2135,6 +2219,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArticleDissection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_report_api_agent_report_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_reports_api_agent_reports__item_key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReport"][];
                 };
             };
             /** @description Validation Error */

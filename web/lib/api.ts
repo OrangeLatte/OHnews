@@ -389,6 +389,10 @@ export const api = {
       },
       signal,
     ),
+  reportGenerate: (itemKey: string, kind: string, signal?: AbortSignal) =>
+    post<components["schemas"]["AgentReport"]>("/agent/report", { item_key: itemKey, kind }, signal),
+  reportsForItem: (itemKey: string) =>
+    get<components["schemas"]["AgentReport"][]>(`/agent/reports/${encodeURIComponent(itemKey)}`),
   dissectionOf: (itemKey: string) =>
     get<components["schemas"]["ArticleDissection"] | null>(
       `/agent/dissections/${encodeURIComponent(itemKey)}`,
