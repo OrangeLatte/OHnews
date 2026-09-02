@@ -1048,3 +1048,32 @@ def test_tracking_flow(client: TestClient, tmp_path: Path) -> None:
     assert client.post(f"/api/tracking/{u2['unit_id']}/review").status_code == 200
     assert client.delete(f"/api/tracking/{u2['unit_id']}").status_code == 204
     assert client.delete(f"/api/tracking/{u2['unit_id']}").status_code == 404
+
+
+def test_archive_and_paper_flow(client: TestClient) -> None:
+    """Phase D：确认式存档 → 三库列表/计数 → 报纸组合 → 删除。"""
+    r0 = client.post("/api/archive", json={"kind": "bogus", "title": "不合法的库", "ref_id": "x"})
+    assert r0.status_code == 422
+    r1 = client.post(
+        "/api/archive",
+        json={
+            "kind": "report",
+            "title": "美联储暂停加息核查报告",
+            "ref_kind": "report",
+            "ref_id": "rp-x",
+            "payload": {"engine": "offline"},
+        },
+    )
+    assert r1.status_code == 201
+    aid = r1.json()["archive_id"]
+    assert aid.startswith("ar-")
+    lst = client.get("/api/archive", params={"kind": "report"}).json()
+    assert lst["counts"].get("report") == 1
+    assert any(x["archive_id"] == aid for x in lst["items"])
+    paper = client.post("/api/archive/paper", json={"title": "本期档案报纸 · 美联储专题"}).json()
+    assert paper["paper_id"].startswith("pp-")
+    assert len(paper["item_ids"]) == 1
+    papers = client.get("/api/archive/papers").json()
+    assert any(x["paper_id"] == paper["paper_id"] for x in papers)
+    assert client.delete(f"/api/archive/{aid}").status_code == 204
+    assert client.delete(f"/api/archive/{aid}").status_code == 404

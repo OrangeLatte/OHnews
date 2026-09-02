@@ -26,6 +26,7 @@ import yaml
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from oh_agents.alerts import check_alerts
+from oh_agents.archive import ArchiveStore
 from oh_agents.chat import ChatStore, run_chat
 from oh_agents.decision_log import DecisionLog
 from oh_agents.dissection_agent import (
@@ -50,6 +51,7 @@ from oh_api.briefing import build_briefing, build_briefing_with_signals, build_d
 from oh_api.change_landscape import build_change_field, build_change_landscape
 from oh_api.metrics import build_router as build_metrics_router
 from oh_api.search import build_router as build_search_router
+from oh_contracts.archive import ARCHIVE_KINDS, AgentPaper, ArchiveItem
 from oh_contracts.belief import BeliefCreate, BeliefSnapshot
 from oh_contracts.briefing import BriefingResponse, ChangeDossier, EvidenceCitation
 from oh_contracts.change_landscape import ChangeFieldPayload, ChangeLandscape
@@ -202,6 +204,14 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
         db = paths.root / "product_events.sqlite"
         return _lazy("product_events", lambda: ProductEventStore(db))
+
+    def _archive() -> Any:
+        """Phase D 档案库（确认式存档；agent 报纸组合）。"""
+        cached = getattr(app.state, "_archive_store", None)
+        if cached is None:
+            cached = ArchiveStore(paths.root / "archive.sqlite")
+            app.state._archive_store = cached
+        return cached
 
     def _beliefs() -> Any:
         from oh_agents.beliefs import BeliefStore
@@ -888,6 +898,73 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         if not hasattr(app.state, "_tracking_store"):
             app.state._tracking_store = TrackingStore(paths.root / "tracking.sqlite")
         return app.state._tracking_store
+
+    @app.post("/api/archive", response_model=ArchiveItem, status_code=201)
+    def archive_save(body: dict[str, Any]) -> ArchiveItem:
+        """确认式存档（用户显式动作触发）；kind 闭集三档案库。"""
+        kind = str(body.get("kind") or "")
+        if kind not in ARCHIVE_KINDS:
+            raise HTTPException(status_code=422, detail="kind 必须为三档案库闭集")
+        title = str(body.get("title") or "").strip()
+        if len(title) < 8:
+            raise HTTPException(status_code=422, detail="title 至少 8 字")
+        aid = _archive().save_item(
+            kind=kind,
+            title=title,
+            ref_kind=str(body.get("ref_kind") or kind),
+            ref_id=str(body.get("ref_id") or ""),
+            payload=dict(body.get("payload") or {}),
+            note=str(body.get("note") or ""),
+        )
+        got = _archive().get_item(aid)
+        assert got is not None
+        return ArchiveItem.model_validate(got)
+
+    @app.get("/api/archive")
+    def archive_list(kind: str | None = None) -> dict[str, Any]:
+        """档案列表（可选 kind 过滤）+ 分库计数。"""
+        if kind is not None and kind not in ARCHIVE_KINDS:
+            raise HTTPException(status_code=422, detail="未知档案库")
+        return {"items": _archive().list_items(kind), "counts": _archive().counts()}
+
+    @app.delete("/api/archive/{archive_id}", status_code=204)
+    def archive_delete(archive_id: str) -> Response:
+        if not _archive().remove_item(archive_id):
+            raise HTTPException(status_code=404, detail="档案不存在")
+        return Response(status_code=204)
+
+    @app.post("/api/archive/paper", response_model=AgentPaper, status_code=201)
+    def archive_paper(body: dict[str, Any]) -> AgentPaper:
+        """D2 档案报纸：按 item_ids 或按库最新 N 条组合 + 卷首语（offline 模板）。"""
+        st = _archive()
+        item_ids = [str(x) for x in (body.get("item_ids") or [])]
+        if not item_ids:
+            kind = body.get("kind")
+            items = st.list_items(kind if kind in ARCHIVE_KINDS else None, limit=12)
+            item_ids = [it["archive_id"] for it in items]
+        items = [st.get_item(i) for i in item_ids]
+        items = [it for it in items if it is not None]
+        if not items:
+            raise HTTPException(status_code=409, detail="没有可选的档案条目")
+        by_kind: dict[str, int] = {}
+        for it in items:
+            by_kind[it["kind"]] = by_kind.get(it["kind"], 0) + 1
+        comp = "、".join(f"{k}×{n}" for k, n in sorted(by_kind.items()))
+        foreword = str(
+            body.get("foreword")
+            or f"编者按：本期报纸由 {len(items)} 条档案组合而成（{comp}）。"
+            "系统按用户筛选汇总，观点归属原档案，未自动添加新结论。"
+        )
+        title = str(body.get("title") or "").strip() or f"档案报纸 · {comp}"
+        if len(title) < 8:
+            title = title + "（自动命名）"
+        pid = st.save_paper(title=title, item_ids=item_ids, foreword=foreword)
+        papers = [x for x in st.list_papers() if x["paper_id"] == pid]
+        return AgentPaper.model_validate(papers[0])
+
+    @app.get("/api/archive/papers", response_model=list[AgentPaper])
+    def archive_papers() -> list[AgentPaper]:
+        return [AgentPaper.model_validate(x) for x in _archive().list_papers()]
 
     @app.get("/api/tracking")
     def tracking_list(kind: str | None = None) -> dict[str, Any]:
