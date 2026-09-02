@@ -58,7 +58,12 @@ class SubjectRef(_StrictBase):
 
 
 class EvidenceCitation(_StrictBase):
-    """产品层证据条目：引用原文的最后一公里（url 即外链）。"""
+    """产品层证据条目：引用原文的最后一公里（url 即外链）。
+
+    U3 证据语义：每条证据必须说明「验证什么主张（claim）/与主张的关系
+    （relation）/为何归入该桶（reason）/独立来源（independent_source_id）/
+    是否一手（primary_status）」——分桶不是装饰，是可检验的语义。
+    """
 
     item_key: NonEmptyStr
     source_id: NonEmptyStr
@@ -67,6 +72,12 @@ class EvidenceCitation(_StrictBase):
     quote: Annotated[str, StringConstraints(min_length=1, max_length=400)]
     url: str | None = None
     published_at: datetime | None = None
+    claim: str = ""
+    relation: Literal["supports", "weakens", "context"] = "context"
+    reason: str = ""
+    independent_source_id: str = ""
+    primary_status: bool = False
+    is_best_for_source: bool = False
 
 
 class EvidenceGap(_StrictBase):
