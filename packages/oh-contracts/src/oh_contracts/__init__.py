@@ -98,6 +98,7 @@ from oh_contracts.ranking import (
     intelligence_score,
     novelty_factor,
 )
+from oh_contracts.reports import AgentReport, ReportKind, ReportSection
 from oh_contracts.schemas import (
     BronzeRecord,
     Claim,
@@ -159,6 +160,9 @@ __all__ = [
     "ExtractionEngine",
     "FrameLabel",
     "ArticleDissection",
+    "AgentReport",
+    "ReportKind",
+    "ReportSection",
     "ChangeFieldPayload",
     "DissectionElement",
     "DissectionSpan",
