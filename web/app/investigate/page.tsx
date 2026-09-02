@@ -42,6 +42,14 @@ const STRENGTH_ZH: Record<string, string> = {
   insufficient: "证据不足",
 };
 
+const INITIAL_EVENT_COUNT = 5;
+const EVENT_PAGE_SIZE = 10;
+const MAX_VISIBLE_EVENTS = 25;
+
+function titleFingerprint(title: string): string {
+  return title.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 /**
  * 调查工作台（T6 任务流重组）：
  * 当前问题 → 高质量变化（过 Hero Gate）→ 证据工作区 → 用户判断。
@@ -53,7 +61,7 @@ export default function EventsPage() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [openChange, setOpenChange] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_EVENT_COUNT);
 
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search).get("q");
@@ -73,15 +81,26 @@ export default function EventsPage() {
   }, []);
 
   const ql = q.trim().toLowerCase();
-  const filtered = events
-    ? ql
-      ? events.filter(
+  const ranked = events
+    ? [...events]
+        .filter((event) => event.n_sources > 0)
+        .sort((a, b) => b.n_sources - a.n_sources)
+    : [];
+  const matched = ql
+    ? ranked.filter(
           (e) =>
             e.title.toLowerCase().includes(ql) ||
             e.entities.some((x) => x.toLowerCase().includes(ql)),
         )
-      : [...events].sort((a, b) => b.n_sources - a.n_sources) // 调查优先级=信源数
-    : [];
+    : ranked;
+  const seenTitles = new Set<string>();
+  const filtered = matched.filter((event) => {
+    const key = `${event.as_of.slice(0, 10)}:${titleFingerprint(event.title)}`;
+    if (!key || seenTitles.has(key)) return false;
+    seenTitles.add(key);
+    return true;
+  });
+  const shownEvents = filtered.slice(0, visibleCount);
 
   return (
     <div className="flex flex-col gap-8">
@@ -99,7 +118,10 @@ export default function EventsPage() {
         <p className="paper-kicker mb-2">① 当前问题</p>
         <input
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setVisibleCount(INITIAL_EVENT_COUNT);
+          }}
           placeholder="你正在调查什么？（按实体或标题过滤下方事件，如 fed / tariff）"
           className="w-full max-w-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary"
         />
@@ -174,7 +196,7 @@ export default function EventsPage() {
         )}
         {events && filtered.length > 0 && (
           <div className="flex flex-col">
-            {(showAll ? filtered : filtered.slice(0, 5)).map((e) => {
+            {shownEvents.map((e) => {
               const lv = divergenceLevel(e.ndi);
               return (
                 <Link
@@ -195,14 +217,23 @@ export default function EventsPage() {
                 </Link>
               );
             })}
-            {filtered.length > 5 && (
+            {filtered.length > visibleCount && visibleCount < MAX_VISIBLE_EVENTS && (
               <button
                 type="button"
                 className="mt-3 self-start border border-border px-3 py-1.5 text-xs hover:border-primary"
-                onClick={() => setShowAll((v) => !v)}
+                onClick={() =>
+                  setVisibleCount((count) =>
+                    Math.min(count + EVENT_PAGE_SIZE, MAX_VISIBLE_EVENTS, filtered.length),
+                  )
+                }
               >
-                {showAll ? "收起列表" : `显示全部 ${filtered.length} 个事件（或用顶部搜索精确检索）`}
+                再显示 {Math.min(EVENT_PAGE_SIZE, filtered.length - visibleCount)} 条
               </button>
+            )}
+            {filtered.length > MAX_VISIBLE_EVENTS && visibleCount >= MAX_VISIBLE_EVENTS && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                其余 {filtered.length - MAX_VISIBLE_EVENTS} 条已收起。输入更具体的问题可缩小证据范围。
+              </p>
             )}
           </div>
         )}
