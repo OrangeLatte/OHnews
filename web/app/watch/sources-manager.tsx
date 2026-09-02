@@ -60,10 +60,16 @@ export default function SourcesManager() {
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [q, setQ] = useState("");
   const [tier, setTier] = useState<string | null>(null);
+  const [lang, setLang] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [articles, setArticles] = useState<ArticleRow[]>([]);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
+  const [backfillDays, setBackfillDays] = useState(1);
+  const [addUrl, setAddUrl] = useState("");
+  const [suggestion, setSuggestion] = useState<Record<string, unknown> | null>(null);
+  const [suggestNote, setSuggestNote] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     fetch("/api/sources")
@@ -72,9 +78,15 @@ export default function SourcesManager() {
       .catch(() => undefined);
   }, []);
 
+  const languages = useMemo(
+    () => [...new Set(sources.map((s) => s.language))].sort(),
+    [sources],
+  );
+
   const filtered = sources.filter(
     (s) =>
       (tier === null || s.tier === tier) &&
+      (lang === null || s.language === lang) &&
       (q === "" || s.source_id.toLowerCase().includes(q.toLowerCase())),
   );
 
@@ -93,9 +105,9 @@ export default function SourcesManager() {
       .finally(() => setLoadingId(null));
   }
 
-  function refresh(sid: string) {
-    setRefreshMsg(`采集中 ${sid}…`);
-    fetch(`/api/sources/${sid}/refresh?days=1`, { method: "POST" })
+  function refresh(sid: string, days: number) {
+    setRefreshMsg(`采集中 ${sid}（近 ${days} 天，回溯）…`);
+    fetch(`/api/sources/${sid}/refresh?days=${days}`, { method: "POST" })
       .then((r) => r.json())
       .then((d) => {
         setRefreshMsg(
@@ -107,6 +119,48 @@ export default function SourcesManager() {
       })
       .then((d) => setSources(d.sources ?? []))
       .catch((e) => setRefreshMsg(`失败：${String(e)}`));
+  }
+
+  function suggest() {
+    setSuggestion(null);
+    setSuggestNote("识别中…");
+    fetch("/api/sources/suggest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: addUrl.trim() }),
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error((await r.json()).detail ?? "建议失败");
+        return r.json();
+      })
+      .then((d) => {
+        setSuggestion(d.suggestion);
+        setSuggestNote(null);
+      })
+      .catch((e) => setSuggestNote(`识别失败：${String(e.message ?? e)}`));
+  }
+
+  function registerSuggested() {
+    if (!suggestion || adding) return;
+    setAdding(true);
+    fetch("/api/sources", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(suggestion),
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error((await r.json()).detail ?? "注册失败");
+        return r.json();
+      })
+      .then(() => {
+        setSuggestNote(`已注册 ${String(suggestion.source_id)}——可在列表中启用采集`);
+        setSuggestion(null);
+        setAddUrl("");
+        return fetch("/api/sources").then((r) => r.json());
+      })
+      .then((d) => setSources(d.sources ?? []))
+      .catch((e) => setSuggestNote(`注册失败：${String(e.message ?? e)}`))
+      .finally(() => setAdding(false));
   }
 
   return (
@@ -138,10 +192,62 @@ export default function SourcesManager() {
             </button>
           ))}
         </div>
+        <select
+          aria-label="语言筛选"
+          value={lang ?? ""}
+          onChange={(e) => setLang(e.target.value || null)}
+          className="border border-input bg-card px-2 py-1 text-xs"
+        >
+          <option value="">全部语言</option>
+          {languages.map((l) => (
+            <option key={l} value={l}>
+              {l}
+            </option>
+          ))}
+        </select>
         <span className="ml-auto text-xs text-muted-foreground">
           {filtered.length} / {sources.length} 源 · 点行展开内容与标注
         </span>
       </div>
+      <details className="mb-3 border border-border px-3 py-2 text-sm">
+        <summary className="cursor-pointer text-xs text-muted-foreground">＋ 添加信源（输入网址识别）</summary>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            value={addUrl}
+            onChange={(e) => setAddUrl(e.target.value)}
+            placeholder="https://example.com/rss.xml"
+            className="min-w-0 flex-1 border border-input bg-card px-2.5 py-1.5 text-sm"
+          />
+          <button
+            type="button"
+            onClick={suggest}
+            disabled={!addUrl.trim()}
+            className="border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+          >
+            识别
+          </button>
+        </div>
+        {suggestNote && <p className="mt-2 text-xs text-muted-foreground">{suggestNote}</p>}
+        {suggestion && (
+          <div className="mt-2 border border-border/60 p-2 text-xs">
+            <p className="font-mono">
+              {String(suggestion.source_id)} · {String(suggestion.adapter)} ·{" "}
+              {String(suggestion.tier)} · {String(suggestion.language)}
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              启发式建议（主机名/路径/域名推断），确认前请人工核对等级与语言。
+            </p>
+            <button
+              type="button"
+              onClick={registerSuggested}
+              disabled={adding}
+              className="mt-2 border border-border px-2 py-1 hover:bg-muted disabled:opacity-50"
+            >
+              {adding ? "注册中…" : "确认注册"}
+            </button>
+          </div>
+        )}
+      </details>
       {refreshMsg && <p className="mb-2 text-xs text-primary">{refreshMsg}</p>}
       <div className="border-t border-foreground/20">
         {filtered.map((s) => (
@@ -167,12 +273,24 @@ export default function SourcesManager() {
             {openId === s.source_id && (
               <div className="px-6 pb-4">
                 <div className="mb-1 flex items-center justify-end gap-3">
+                  <select
+                    aria-label={`回溯天数 ${s.source_id}`}
+                    value={backfillDays}
+                    onChange={(e) => setBackfillDays(Number(e.target.value))}
+                    className="border border-input bg-card px-1.5 py-1 text-[11px]"
+                  >
+                    {[1, 7, 30, 90].map((d) => (
+                      <option key={d} value={d}>
+                        近 {d} 天
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="button"
-                    onClick={() => refresh(s.source_id)}
+                    onClick={() => refresh(s.source_id, backfillDays)}
                     className="border border-border px-2 py-1 text-[11px] hover:bg-muted"
                   >
-                    {loadingId === s.source_id ? "采集中…" : "立即采集（近1天）"}
+                    {loadingId === s.source_id ? "采集中…" : "立即采集"}
                   </button>
                 </div>
                 {loadingId === s.source_id && (
