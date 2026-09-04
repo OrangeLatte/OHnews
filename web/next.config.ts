@@ -15,22 +15,38 @@ const nextConfig: NextConfig = {
     ];
   },
   async redirects() {
+    // Clean-slate A7：旧 IA 全部 REPLACE/DELETE，级联合并为单一新映射（30d redirect）。
     return [
-      // 阶段 1.5 IA 手术：19 路由 → NOW/WATCH/INVESTIGATE/MEMORY + settings
-      { source: "/command", destination: "/", permanent: false },
-      { source: "/today", destination: "/", permanent: false },
-      { source: "/brief", destination: "/", permanent: false },
-      { source: "/alerts", destination: "/watch", permanent: false },
-      { source: "/agent", destination: "/investigate/research", permanent: false },
-      { source: "/research", destination: "/investigate/research", permanent: false },
-      { source: "/chat", destination: "/investigate/research", permanent: false },
-      { source: "/intel", destination: "/investigate/patrol", permanent: false },
-      { source: "/timeline", destination: "/investigate/timeline", permanent: false },
-      { source: "/events", destination: "/investigate", permanent: false },
-      { source: "/analyze", destination: "/investigate", permanent: false },
-      { source: "/analyze/:id", destination: "/events/:id", permanent: false },
-      { source: "/library", destination: "/memory", permanent: false },
-      { source: "/decisions", destination: "/memory", permanent: false },
+      // 旧 NOW 首页族 → OBSERVE
+      { source: "/", destination: "/observe", permanent: false },
+      { source: "/command", destination: "/observe", permanent: false },
+      { source: "/today", destination: "/observe", permanent: false },
+      { source: "/brief", destination: "/observe", permanent: false },
+      // 旧 WATCH 族 → MONITORS
+      { source: "/alerts", destination: "/monitors", permanent: false },
+      { source: "/watch", destination: "/monitors", permanent: false },
+      // 旧 INVESTIGATE/对话族 → CASES（对话并入全局 Agent Dock）
+      { source: "/agent", destination: "/cases", permanent: false },
+      { source: "/research", destination: "/cases", permanent: false },
+      { source: "/chat", destination: "/cases", permanent: false },
+      { source: "/investigate", destination: "/cases", permanent: false },
+      { source: "/investigate/research", destination: "/cases", permanent: false },
+      { source: "/analyze", destination: "/cases", permanent: false },
+      { source: "/analyze/:id", destination: "/cases", permanent: false },
+      { source: "/events/:id", destination: "/cases", permanent: false },
+      // 事件流/patrol/timeline 族 → OBSERVE（实体历史入 Entities Lens）
+      { source: "/intel", destination: "/observe", permanent: false },
+      { source: "/investigate/patrol", destination: "/observe", permanent: false },
+      { source: "/investigate/timeline", destination: "/observe", permanent: false },
+      { source: "/timeline", destination: "/observe", permanent: false },
+      { source: "/events", destination: "/observe", permanent: false },
+      { source: "/changes", destination: "/observe", permanent: false },
+      { source: "/changes/:id", destination: "/observe", permanent: false },
+      // 旧 MEMORY 族 → ARCHIVE
+      { source: "/library", destination: "/archive", permanent: false },
+      { source: "/decisions", destination: "/archive", permanent: false },
+      { source: "/memory", destination: "/archive", permanent: false },
+      // 开发者工具入口保留（settings/developer 未在 A7 删除范围）
       { source: "/dev/monitor", destination: "/settings/developer", permanent: false },
     ];
   },

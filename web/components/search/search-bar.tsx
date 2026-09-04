@@ -5,14 +5,17 @@
  *
  * - AbortController 防竞态：新请求发起前中断上一个（含 timer 清理）
  * - q trim 后 <2 字符不请求（对齐后端 search_bronze 最小长度语义）
- * - 点击结果项 window.open 原文（无 url 则禁用），并埋点 source_opened
+ * - 文章点击 = 研究此文：取 bronze 全文 → 建 Research Case → 挂载文档 → 跳转工作台
+ * - 「原文」次链接仅在文章有 url 时显示（window.open 外跳）
  * - Esc / 外部点击关闭；空结果「无匹配文章」；加载中不阻塞既有列表
  */
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { objectApi } from "@/lib/object-api";
 import { track } from "@/lib/track";
+import { useT } from "@/lib/i18n/use-t";
+import { toast } from "@/components/ui/toast";
 
 type SearchResult = {
   kind: "article" | "event";
@@ -29,6 +32,9 @@ const DEBOUNCE_MS = 300;
 const FETCH_LIMIT = 8;
 const MIN_QUERY_LEN = 2;
 
+const stampId = (prefix: string) =>
+  `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
 function fmtDate(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
@@ -42,7 +48,9 @@ export function SearchBar() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   const term = q.trim();
   const active = open && term.length >= MIN_QUERY_LEN;
@@ -83,15 +91,46 @@ export function SearchBar() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [active]);
 
-  function openResult(item: SearchResult) {
+  /** 文章点击 = 研究此文：全文入案建 Case，事件跳 OBSERVE。 */
+  async function research(item: SearchResult) {
     if (item.kind === "event" && item.id) {
       track("change_opened", { objectId: item.id, fromPage: "/search-bar" });
-      router.push(`/events/${item.id}`);
+      router.push("/observe");
       return;
     }
-    if (!item.url) return;
-    track("source_opened", { objectId: item.item_key, fromPage: "/search-bar" });
-    window.open(item.url, "_blank", "noopener,noreferrer");
+    if (!item.source_id || !item.item_key || busyId) return;
+    const key = item.item_key;
+    setBusyId(key);
+    try {
+      const detail = await objectApi.articleDetail(item.source_id, key);
+      const now = new Date().toISOString();
+      const caseId = stampId("case");
+      const docId = stampId(`doc-${item.source_id}`);
+      await objectApi.createCase({
+        case_id: caseId,
+        question: detail.title || item.title || caseId,
+        origin: "observe",
+        created_at: now,
+        updated_at: now,
+      });
+      await objectApi.attachDocument(caseId, {
+        document_id: docId,
+        document_revision_id: `rev-${docId}`,
+        source_id: item.source_id,
+        body: detail.body,
+        language: detail.language,
+        canonical_url: detail.url || item.url,
+      });
+      track("case_created", { objectId: caseId, fromPage: "/search-bar" });
+      toast.success(t("search.researchOk"));
+      setOpen(false);
+      setQ("");
+      router.push(`/cases/${caseId}`);
+    } catch {
+      toast.error(t("search.researchFail"));
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
@@ -107,51 +146,80 @@ export function SearchBar() {
         onKeyDown={(e) => {
           if (e.key === "Escape") setOpen(false);
         }}
-        placeholder="搜索文章…"
-        aria-label="搜索文章"
+        placeholder={t("search.placeholder")}
+        aria-label={t("search.placeholder")}
         className="h-7 w-40 rounded-none border border-black/10 bg-card px-2 text-xs focus:border-foreground focus:outline-none md:w-56"
       />
       {active && (
         <div className="absolute right-0 top-full z-50 mt-1 w-80 border border-black/10 bg-card shadow-sm">
           {results.length === 0 && !loading ? (
-            <p className="px-3 py-3 text-xs text-muted-foreground">无匹配文章</p>
+            <p className="px-3 py-3 text-xs text-muted-foreground">{t("search.noMatch")}</p>
           ) : (
             <ul className="max-h-96 overflow-y-auto">
-              {results.map((item) => (
-                <li key={item.item_key ?? item.id}>
-                  <button
-                    type="button"
-                    onClick={() => openResult(item)}
-                    disabled={item.kind === "article" && !item.url}
-                    className="block w-full px-3 py-2 text-left hover:bg-foreground/5 disabled:cursor-default"
-                  >
-                    <span className="font-paper block truncate text-sm">
-                      {item.kind === "event" && (
-                        <span className="mr-1 border border-black/20 px-1 text-[10px] align-middle">
-                          事件
-                        </span>
+              {results.map((item) => {
+                const key = item.item_key ?? item.id ?? "";
+                const busy = busyId === item.item_key;
+                return (
+                  <li key={key} className="border-b border-black/5 last:border-b-0">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => research(item)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") research(item);
+                      }}
+                      aria-busy={busy}
+                      className="block w-full cursor-pointer px-3 py-2 text-left hover:bg-foreground/5"
+                    >
+                      <span className="font-paper flex items-center gap-1 truncate text-sm">
+                        {item.kind === "event" && (
+                          <span className="mr-1 border border-black/20 px-1 text-[10px] align-middle">
+                            {t("search.eventTag")}
+                          </span>
+                        )}
+                        {item.title || t("search.untitled")}
+                      </span>
+                      <span className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span>{item.source_id ?? t("search.eventTag")}</span>
+                        {item.published_at && <span>{fmtDate(item.published_at)}</span>}
+                      </span>
+                      <span className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                        {item.snippet}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 px-3 pb-2 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => research(item)}
+                        disabled={busy}
+                        className="border border-foreground/30 px-1.5 py-0.5 hover:!text-primary disabled:opacity-50"
+                      >
+                        {busy ? t("search.researching") : t("search.researchThis")}
+                      </button>
+                      {item.kind === "article" && item.url && (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-muted-foreground hover:!text-primary"
+                        >
+                          {t("search.openOriginal")} ↗
+                        </a>
                       )}
-                      {item.title || "（无标题）"}
-                    </span>
-                    <span className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                      <span>{item.source_id ?? "事件"}</span>
-                      {item.published_at && <span>{fmtDate(item.published_at)}</span>}
-                    </span>
-                    <span className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                      {item.snippet}
-                    </span>
-                  </button>
-                </li>
-              ))}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
-          <Link
-            href={`/investigate?q=${encodeURIComponent(term)}`}
+          <a
+            href={`/cases?q=${encodeURIComponent(term)}`}
             onClick={() => setOpen(false)}
             className="block border-t border-black/10 px-3 py-2 text-xs hover:!text-primary"
           >
-            在调查台搜索 &ldquo;{term}&rdquo; →
-          </Link>
+            {t("search.searchInCases", { q: term })} →
+          </a>
         </div>
       )}
     </div>

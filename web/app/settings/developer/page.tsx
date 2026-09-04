@@ -6,9 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type LogFile } from "@/lib/api";
-import KeySetup from "@/app/investigate/research/key-setup";
+import KeySetup from "@/app/settings/developer/key-setup";
 import MetricsSection from "@/app/settings/developer/metrics-section";
-import SourcesManager from "@/app/watch/sources-manager";
 
 export default function DeveloperSettingsPage() {
   return (
@@ -16,11 +15,10 @@ export default function DeveloperSettingsPage() {
       <div>
         <h1 className="font-paper text-3xl tracking-tight">DEVELOPER · 系统设置</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          信息源管理、LLM Keys 与运行监控——产品前台不展示的工程面。
+          LLM Keys 与运行监控——产品前台不展示的工程面。信源管理已迁移至 /sources 工作空间。
         </p>
       </div>
       <KeySetup />
-      <SourcesManager />
       <MetricsSection />
       <DevMonitorSection />
     </div>

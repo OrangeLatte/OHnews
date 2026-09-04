@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "generate:api": "openapi-typescript http://127.0.0.1:8787/openapi.json -o lib/api-schema.d.ts"
+    "generate:api": "openapi-typescript http://127.0.0.1:8787/openapi.json -o lib/api-schema.d.ts",
+    "gen:api-types": "openapi-typescript ${OHNEWS_API_URL:-http://localhost:8787}/openapi.json -o lib/api-types.generated.ts"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.3.3",

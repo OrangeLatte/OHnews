@@ -31,7 +31,10 @@ export type TrackedEvent =
   | "judgment_change_type"
   // 阶段 3 追踪闭环
   | "watch_created"
-  | "watch_update_reviewed";
+  | "watch_update_reviewed"
+  // Research Case 闭环
+  | "case_created"
+  | "case_closed";
 
 export function track(
   event: TrackedEvent,

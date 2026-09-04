@@ -318,12 +318,20 @@
 .ag-right { right: 0; top: 30%; }
 .ag-left { left: 0; top: 30%; }
 .ag-bottom { left: 50%; transform: translateX(-50%); bottom: 0; }
+/* 全屏 Control Center（阶段2 四形态）：覆盖视口，五标签全部可用，宽高自适应 */
+.ag-dock.ag-expanded { inset: 0.5rem; transform: none; z-index: 50; }
+.ag-dock.ag-expanded .ag-toggle { display: none; }
+.ag-dock.ag-expanded .ag-body { width: auto; max-height: none; height: 100%; }
+.ag-dock.ag-expanded .ag-cards { min-height: 0; }
 .ag-toggle { font-size: 0.72rem; letter-spacing: 0.12em; border: 1px solid var(--border); background: var(--background); padding: 0.4rem 0.6rem; cursor: pointer; }
 .ag-right .ag-toggle { border-right: 0; }
 .ag-left .ag-toggle { border-left: 0; }
 .ag-bottom .ag-toggle { border-bottom: 0; }
-.ag-body { width: min(21rem, 86vw); max-height: 60vh; overflow: auto; background: var(--background); border: 1px solid var(--border); padding: 0.75rem; }
-.ag-bottom .ag-body { width: min(40rem, 92vw); max-height: 45vh; }
+.ag-body { width: var(--ag-w, 26rem); max-width: 92vw; max-height: 72vh; overflow: auto; background: var(--background); border: 1px solid var(--border); padding: 0.75rem; position: relative; }
+.ag-bottom .ag-body { width: max(var(--ag-w, 26rem), 40rem); max-height: 55vh; }
+.ag-resize { position: absolute; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; z-index: 5; }
+.ag-resize[data-side="left"] { left: -4px; }
+.ag-resize[data-side="right"] { right: -4px; }
 .ag-head { font-family: var(--font-newspaper); font-size: 0.85rem; font-weight: 600; margin-bottom: 0.5rem; }
 .ag-empty { font-size: 0.8rem; color: var(--muted-foreground); }
 .ag-cards { display: grid; gap: 0.5rem; margin-bottom: 0.6rem; }
