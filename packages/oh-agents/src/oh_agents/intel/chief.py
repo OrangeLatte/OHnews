@@ -56,7 +56,7 @@ class ChiefAnalystAgent:
         if self._router is None:
             return self._offline(bundle, ach, ndi_percentile)
         try:
-            draft, _ref = await self._router.invoke(
+            draft, _ref, _usage = await self._router.invoke(
                 Tier.STRATEGIC,
                 self.SYSTEM,
                 (

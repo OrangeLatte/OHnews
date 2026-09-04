@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from pathlib import Path
 
+import pytest
 from conftest import TIER_MAP, make_now, seed_event
 from oh_agents.chat import (
     MAX_TOOL_ROUNDS,
@@ -60,7 +62,7 @@ class ScriptRouter:
 
     async def invoke(self, tier, system, user, schema):
         self.prompts.append(user)
-        return self.outs.pop(0), object()
+        return self.outs.pop(0), object(), None
 
 
 def test_chat_tool_loop(tmp_path: Path) -> None:
@@ -184,6 +186,53 @@ def test_chat_store(tmp_path: Path) -> None:
     assert len(threads) == 2
     assert threads[0]["thread_id"] == "t2"  # 按最后消息时间倒序
     assert threads[0]["n"] == 1
+
+
+def test_chat_store_message_types(tmp_path: Path) -> None:
+    """消息九类型：默认 answer；abstention/error 显式标注。"""
+    cs = ChatStore(tmp_path / "chat.sqlite")
+    ts = "2026-09-04T00:00:00+00:00"
+    cs.append("t1", "user", "美联储会暂停加息吗", ts)
+    cs.append("t1", "assistant", "基于现有证据…", ts, message_type="answer")
+    cs.append("t1", "assistant", "证据不足，无法确认", ts, message_type="abstention")
+    cs.append("t1", "assistant", "模型调用未成功", ts, message_type="error")
+    msgs = cs.messages("t1")
+    assert [m["message_type"] for m in msgs] == [
+        "answer",
+        "answer",
+        "abstention",
+        "error",
+    ]
+
+
+def test_chat_store_legacy_db_migration(tmp_path: Path) -> None:
+    """旧库（无 message_type 列）打开即幂等补列，历史消息默认 answer。"""
+    db = tmp_path / "legacy.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "CREATE TABLE chat_messages ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " thread_id TEXT NOT NULL, role TEXT NOT NULL,"
+        " content TEXT NOT NULL, ts TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO chat_messages (thread_id, role, content, ts)"
+        " VALUES ('t0', 'assistant', '旧消息', '2026-01-01T00:00:00+00:00')"
+    )
+    conn.commit()
+    conn.close()
+    cs = ChatStore(db)
+    msgs = cs.messages("t0")
+    assert msgs[0]["message_type"] == "answer"
+    # 补列后仍可写入带类型的消息（同一张表）
+    cs.append("t0", "assistant", "新消息", "2026-01-02T00:00:00+00:00", message_type="error")
+    assert [m["message_type"] for m in cs.messages("t0")] == ["answer", "error"]
+
+
+def test_chat_store_rejects_unknown_message_type(tmp_path: Path) -> None:
+    cs = ChatStore(tmp_path / "chat.sqlite")
+    with pytest.raises(ValueError):
+        cs.append("t1", "assistant", "x", "2026-09-04T00:00:00+00:00", message_type="nope")
 
 
 def test_chat_context_injection(tmp_path: Path) -> None:

@@ -8,18 +8,49 @@ BaseChatModel 适配，统一 tier 路由/fallback/后校验。工具全只读
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
+import threading
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
+from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
+from oh_contracts.case import AnalysisRun
 from oh_contracts.text import strip_html
 from pydantic import BaseModel, Field
 
+from .parent_planner import build_research_plan
+
 MAX_TOOL_ROUNDS = 5
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+
+# 消息九类型（阶段 2 对话约束：每条消息 ∈ 九类型闭集，禁止只回显）。
+MessageType = Literal[
+    "answer",
+    "plan",
+    "tool_call",
+    "progress",
+    "artifact",
+    "challenge",
+    "hitl_request",
+    "abstention",
+    "error",
+]
+MESSAGE_TYPES: tuple[MessageType, ...] = (
+    "answer",
+    "plan",
+    "tool_call",
+    "progress",
+    "artifact",
+    "challenge",
+    "hitl_request",
+    "abstention",
+    "error",
+)
 
 CHAT_SYSTEM = """\
 你是 OH!News 情报研究员。你本人不直接调用任何函数：所有数据查询（事件/实体/
@@ -236,7 +267,7 @@ def _agent_node(deps: _ChatDeps):
             "信息足够请给 reply，否则声明 tool_calls。可用工具：\n"
             f"{TOOL_HELP}"
         )
-        out, _ref = await deps.router.invoke(deps.tier, CHAT_SYSTEM, user, ChatOutput)
+        out, _ref, _usage = await deps.router.invoke(deps.tier, CHAT_SYSTEM, user, ChatOutput)
         payload: dict[str, Any] = {"rounds": rounds + 1}
         if out.tool_calls and rounds < MAX_TOOL_ROUNDS:
             payload["pending_calls"] = [tc.model_dump() for tc in out.tool_calls]
@@ -343,11 +374,583 @@ async def run_chat(
     }
 
 
+# ---------------------------------------------------------------- command mode
+
+
+# 指挥意图闭集：chat 从「补充信息聊天」升级为可指挥工作流的对话 Agent。
+ChatIntent = Literal[
+    "plan",
+    "dissect",
+    "compare",
+    "report",
+    "challenge",
+    "status",
+    "observe",
+    "question",
+    "hitl",
+]
+CHAT_INTENTS: tuple[ChatIntent, ...] = (
+    "plan",
+    "dissect",
+    "compare",
+    "report",
+    "challenge",
+    "status",
+    "observe",
+    "question",
+    "hitl",
+)
+
+# 规则兜底（高置信领域词，顺序即优先级：status/hitl 元意图先于执行意图，
+# 避免「拆解状态如何」被误路由为 dissect）。中文+英文；未命中 → question。
+_INTENT_RULES: tuple[tuple[ChatIntent, tuple[str, ...]], ...] = (
+    ("status", ("状态", "进度", "运行记录", "执行记录", "跑到哪", "status", "progress", "runs")),
+    ("hitl", ("待审批", "待审核", "待确认", "审批", "批准", "确认事项", "hitl", "approval")),
+    ("plan", ("计划", "规划", "研究方案", "怎么研究", "下一步", "plan")),
+    ("dissect", ("拆解", "十八元素", "18元素", "18 元素", "dissect")),
+    ("compare", ("比较", "对比", "跨源", "口径", "compare", "diff")),
+    ("challenge", ("挑战", "反证", "质询", "证伪", "challenge")),
+    ("report", ("报告", "写一份", "生成报", "总结成", "report")),
+    ("observe", ("收件箱", "观察", "变化", "信号", "最新动态", "observe", "inbox", "what's new")),
+)
+
+INTENT_SYSTEM = """\
+你是 OH!News 对话路由器。把用户消息分类为以下意图之一：
+- plan: 请求规划研究步骤
+- dissect: 请求拆解文档（十八元素）
+- compare: 请求跨源/跨版本比较
+- report: 请求生成研究报告
+- challenge: 请求对主张做反证质询
+- status: 查询 Case 内工作流运行状态/进度
+- observe: 请求观察最新变化/收件箱/信号概览
+- hitl: 查询待人工确认（HITL）事项
+- question: 其他问答（基于已有数据回答问题）
+"""
+
+
+class IntentOut(BaseModel):
+    """LLM 意图分类输出契约（pattern 闭集校验，非法输出按分类失败处理）。"""
+
+    intent: str = Field(
+        pattern=r"^(plan|dissect|compare|report|challenge|status|observe|question|hitl)$"
+    )
+
+
+_INTERROGATIVE_MARKS = (
+    "为什么", "为什么", "怎么", "如何", "什么意思", "是什么", "吗？", "呢？",
+    " explain", " why ", " how ", " what ", "?",
+)
+
+
+def _is_interrogative(text: str) -> bool:
+    """疑问语境判定：疑问词/问号命中即视为追问（回答优先于执行）。"""
+    stripped = text.strip()
+    return stripped.endswith("?") or stripped.endswith("？") or any(
+        m in stripped for m in _INTERROGATIVE_MARKS
+    )
+
+
+def classify_intent(message: str) -> ChatIntent:
+    """规则兜底：领域词命中即返回对应意图，未命中一律 question（不猜）。"""
+    text = message.strip().lower()
+    # 多轮追问优先：疑问语境下即使出现执行类工作流关键词（"为什么要拆解…"），
+    # 也应回答而非再次执行；元意图（status/observe/hitl）本身是查询，保留。
+    if _is_interrogative(text):
+        for intent, keywords in _INTENT_RULES:
+            if intent in ("status", "observe", "hitl") and any(
+                k in text for k in keywords
+            ):
+                return intent
+        return "question"
+    for intent, keywords in _INTENT_RULES:
+        if any(k in text for k in keywords):
+            return intent
+    return "question"
+
+
+async def classify_intent_llm(router: Any, tier: Any, message: str) -> ChatIntent | None:
+    """LLM 意图分类：router 缺失/输出非法/调用失败 → None（交还规则兜底）。"""
+    if router is None:
+        return None
+    try:
+        if tier is None:
+            from oh_contracts.enums import Tier
+
+            tier = Tier.IO
+        out, _ref, _usage = await router.invoke(tier, INTENT_SYSTEM, message, IntentOut)
+        return out.intent  # type: ignore[return-value]
+    except Exception:  # noqa: BLE001 分类失败不阻断对话主路
+        return None
+
+
+async def resolve_intent(
+    message: str, *, router: Any = None, tier: Any = None
+) -> tuple[ChatIntent, str]:
+    """意图路由中间件：规则命中（高置信领域词）→ 直接采用；
+    未命中且有 router → LLM 分类；再兜底 question。返回 (intent, by)。"""
+    by_rule = classify_intent(message)
+    if by_rule != "question" or router is None:
+        return by_rule, "rule"
+    by_llm = await classify_intent_llm(router, tier, message)
+    if by_llm is not None:
+        return by_llm, "llm"
+    return "question", "fallback"
+
+
+def context_injector(research: Any, case_id: str) -> str:
+    """上下文注入中间件：ResearchState 摘要 → 注入 LLM prompt（question 路径锚点）。
+
+    research 缺失或 case 不存在返回空串（诚实：不虚构 Case 上下文）。
+    """
+    if research is None or not case_id:
+        return ""
+    case = research.get_case(case_id)
+    if case is None:
+        return ""
+    docs = research.case_documents(case_id)
+    claims = research.claims_for_case(case_id)
+    kinds = research.case_run_kinds(case_id)
+    return "\n".join(
+        [
+            f"当前 Case: {case.case_id}｜{case.title}",
+            f"研究问题: {case.question}",
+            f"挂载文档 {len(docs)} 篇；claims {len(claims)} 条；"
+            f"已跑工作流: {','.join(kinds) or '（无）'}",
+        ]
+    )
+
+
+def hitl_gate(research: Any) -> list[dict[str, Any]]:
+    """HITL 闸门中间件：有 pending HITL 时在回复前注入 hitl 卡（无则空）。"""
+    if research is None:
+        return []
+    return [
+        {
+            "type": "hitl",
+            "hitl_id": h.hitl_id,
+            "summary": f"{h.action} · run={h.run_id} · 等待用户裁决",
+        }
+        for h in research.pending_hitl()
+    ]
+
+
+# ---- 结构化卡片构造（cards 闭集，随消息持久化）----
+
+
+def _card_tool_call(tool: str, status: str, detail: str = "") -> dict[str, Any]:
+    return {"type": "tool_call", "tool": tool, "status": status, "detail": detail}
+
+
+def _card_progress(run_id: str, kind: str, status: str) -> dict[str, Any]:
+    return {"type": "progress", "run_id": run_id, "kind": kind, "status": status}
+
+
+def _card_case(case: Any) -> dict[str, Any]:
+    return {"type": "case", "case_id": str(case.case_id), "question": str(case.question)}
+
+
+def _observe_card(store: Any, now: datetime) -> dict[str, Any]:
+    """观察摘要卡（只读派生自 Silver 事件表，不造数据）。"""
+    events = store.events_asof(now)
+    return {
+        "type": "observe_summary",
+        "n_events": len(events),
+        "recent_events": [
+            {"event_id": e.event_id, "title": e.title, "as_of": e.as_of.isoformat()}
+            for e in events[-5:]
+        ],
+        "hint": "在研究台从收件箱选文建 Case，或对已有 Case 下达拆解/比较/报告指令",
+    }
+
+
+def _runs_summary_card(runs: list[Any]) -> dict[str, Any]:
+    return {
+        "type": "runs_summary",
+        "runs": [
+            {
+                "run_id": r.run_id,
+                "kind": r.kind,
+                "status": r.status,
+                "started_at": r.started_at,
+                "error": r.error,
+            }
+            for r in runs[:10]
+        ],
+    }
+
+
+_COMMAND_WORKFLOWS: dict[str, tuple[str, str]] = {
+    # intent → (WORKFLOWS 闭集名, analysis_runs kind)
+    "dissect": ("DissectDocument", "dissect"),
+    "compare": ("CompareSources", "compare"),
+    "report": ("BuildReport", "report"),
+    "challenge": ("ChallengeClaim", "challenge"),
+}
+_LLM_RUN_KINDS = frozenset({"dissect", "report", "translate"})
+
+
+def _prepare_run(
+    store: Any, *, kind: str, case_id: str, refs: list[str], now: str
+) -> tuple[dict[str, Any] | None, Any]:
+    """幂等复用或新建 queued run；返回 (existing, run)。existing 非 None = 复用。"""
+    refs_json = json.dumps(list(refs), ensure_ascii=False, separators=(",", ":"))
+    existing = store.active_run(kind, case_id, refs_json)
+    if existing is not None:
+        return existing, None
+    run = AnalysisRun(
+        run_id=f"run-{uuid4().hex[:14]}",
+        case_id=case_id,
+        kind=kind,  # type: ignore[arg-type]
+        engine="llm" if kind in _LLM_RUN_KINDS else "rule",
+        status="queued",
+        input_refs=list(refs),
+        started_at=now,
+    )
+    store.add_analysis_run(run)
+    return None, run
+
+
+def _finish_failed(research: Any, run_id: str, exc: Exception, now: str) -> None:
+    """后台/内联执行失败 → run 落 failed（根因留痕，不传染会话）。"""
+    try:
+        research.finish_analysis_run(
+            run_id,
+            status="failed",
+            error=str(exc) or type(exc).__name__,
+            finished_at=now,
+        )
+    except Exception:  # noqa: BLE001 连接级失败不反噬线程
+        pass
+
+
+def _launch_workflow(
+    *,
+    kind: str,
+    case_id: str,
+    refs: list[str],
+    call: Any,
+    research: Any,
+    research_factory: Any = None,
+    workflows: Any = None,
+    workflows_factory: Any = None,
+    now: str,
+) -> dict[str, Any]:
+    """chat 侧异步启动（与 object_api._launch 同协议，生产主路）：
+
+    幂等复用活跃 run → queued 落库 → 后台线程执行 → chat 只负责触发不等待。
+    sqlite 连接禁止跨线程复用：后台线程内经 factory 重建线程本地连接/工作流
+    （线程内无事件循环，asyncio.run 安全）。仅当 research_factory /
+    workflows_factory 任一提供时进入本路径。
+    """
+    store = research_factory() if research_factory is not None else research
+    existing, run = _prepare_run(store, kind=kind, case_id=case_id, refs=refs, now=now)
+    if existing is not None:
+        return {
+            "run_id": str(existing["run_id"]),
+            "status": str(existing["status"]),
+            "reused": True,
+        }
+
+    def _exec() -> None:
+        try:
+            wf = workflows_factory() if workflows_factory is not None else workflows
+            out = call(wf, run.run_id)
+            if asyncio.iscoroutine(out):
+                asyncio.run(out)  # async workflow（dissect/report/translate）
+        except Exception as exc:  # noqa: BLE001
+            rs = research_factory() if research_factory is not None else research
+            _finish_failed(rs, run.run_id, exc, now)
+
+    threading.Thread(target=_exec, daemon=True, name=f"chat-{kind}-{run.run_id}").start()
+    return {"run_id": run.run_id, "status": "queued", "reused": False}
+
+
+async def _run_workflow_inline(
+    *,
+    kind: str,
+    case_id: str,
+    refs: list[str],
+    call: Any,
+    research: Any,
+    workflows: Any,
+    now: str,
+) -> dict[str, Any]:
+    """无 factory 的退化路径（测试/CLI）：当前事件循环内联 await 执行。
+
+    run_chat_command 本身是协程，调用方必在事件循环内——此处不可 asyncio.run
+    （RuntimeError），改为直接 await；返回前读取 run 终态，卡片状态如实反映。
+    """
+    existing, run = _prepare_run(research, kind=kind, case_id=case_id, refs=refs, now=now)
+    if existing is not None:
+        return {
+            "run_id": str(existing["run_id"]),
+            "status": str(existing["status"]),
+            "reused": True,
+        }
+    try:
+        out = call(workflows, run.run_id)
+        if asyncio.iscoroutine(out):
+            await out
+    except Exception as exc:  # noqa: BLE001
+        _finish_failed(research, run.run_id, exc, now)
+    final = research.get_analysis_run(run.run_id)
+    return {
+        "run_id": run.run_id,
+        "status": str((final or {}).get("status") or "queued"),
+        "reused": False,
+    }
+
+
+async def run_chat_command(
+    message: str,
+    history: list[dict[str, str]],
+    *,
+    bronze: Any,
+    store: Any,
+    gold: Any,
+    registry: Any,
+    research: Any = None,
+    workflows: Any = None,
+    research_factory: Any = None,
+    workflows_factory: Any = None,
+    router: Any = None,
+    tier: Any = None,
+    gdelt_proxy: str | None = None,
+    now: datetime | None = None,
+    case_id: str = "",
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """指挥模式单轮会话：意图路由 → 中间件链 → 执行接线 → 结构化卡片。
+
+    中间件链（函数链，不引框架）：resolve_intent → context_injector（question
+    路径注入 ResearchState 摘要）→ hitl_gate（pending HITL 卡前置注入）。
+    执行类意图（plan/dissect/compare/report/challenge）触发工作流后立即返回
+    run_id（异步 202 协议，chat 不等待）；status/observe/hitl 只读汇总；
+    question 走既有 run_chat LLM 循环。返回 {reply, message_type, intent,
+    intent_by, cards, citations, tools_used, rounds}。
+    """
+    now_dt = now or datetime.now(UTC)
+    now_s = now_dt.isoformat()
+    p = dict(params or {})
+    intent, intent_by = await resolve_intent(message, router=router, tier=tier)
+    cards: list[dict[str, Any]] = hitl_gate(research)
+    case = research.get_case(case_id) if (research is not None and case_id) else None
+    base = {
+        "citations": [],
+        "tools_used": (),
+        "rounds": 0,
+        "intent": intent,
+        "intent_by": intent_by,
+        "cards": cards,
+    }
+
+    def _abstain(reason: str) -> dict[str, Any]:
+        reply = (
+            f"请先打开一个研究 Case，再在 Case 上下文中指挥工作流执行。（无法执行根因：{reason}）"
+        )
+        return {**base, "reply": reply, "message_type": "abstention"}
+
+    if intent in _COMMAND_WORKFLOWS:
+        if case is None:
+            reason = f"case not found: {case_id}" if case_id else "未提供 case_id"
+            return _abstain(reason)
+        wf_name, run_kind = _COMMAND_WORKFLOWS[intent]
+        docs = research.case_documents(case_id)
+        launch_args: dict[str, Any] = {"kind": run_kind, "case_id": case_id}
+        if intent == "dissect":
+            rev_id = str(
+                p.get("document_revision_id") or (docs[0]["document_revision_id"] if docs else "")
+            )
+            if not rev_id:
+                return _abstain("该 Case 尚未挂载任何文档（请先在收件箱入案）")
+            launch_args.update(
+                refs=[rev_id],
+                call=lambda wf, rid: wf.dissect_document(case_id, rev_id, run_id=rid),
+            )
+        elif intent == "compare":
+            rev_ids = [str(x) for x in (p.get("document_revision_ids") or [])]
+            if len(rev_ids) < 2:
+                rev_ids = [str(d["document_revision_id"]) for d in docs[:2]]
+            if len(rev_ids) < 2:
+                return _abstain("跨源比较需要至少 2 个文档版本，该 Case 目前不足")
+            launch_args.update(
+                refs=rev_ids, call=lambda wf, rid: wf.compare_sources(case_id, rev_ids, run_id=rid)
+            )
+        elif intent == "report":
+            report_type = str(p.get("report_type") or "structured_summary")
+            title = str(p.get("title") or "").strip() or (case.title or case.question)[:40]
+            item_key = str(p.get("item_key") or "")
+            launch_args.update(
+                refs=[item_key or title],
+                call=lambda wf, rid: wf.build_report(
+                    case_id,
+                    report_type=report_type,
+                    title=title,
+                    item_key=item_key,
+                    run_id=rid,
+                ),
+            )
+        else:  # challenge
+            claims = research.claims_for_case(case_id)
+            claim_id = str(p.get("claim_id") or (claims[-1].claim_id if claims else ""))
+            if not claim_id:
+                return _abstain("该 Case 尚无 claim（先从拆解元素建立可质询的主张）")
+            launch_args.update(
+                refs=[claim_id],
+                call=lambda wf, rid: wf.challenge_claim(case_id, claim_id, run_id=rid),
+            )
+        use_thread = research_factory is not None or workflows_factory is not None
+        if use_thread:
+            launched = _launch_workflow(  # 线程模式：触发即返回，不等待
+                research=research,
+                research_factory=research_factory,
+                workflows=workflows,
+                workflows_factory=workflows_factory,
+                now=now_s,
+                **launch_args,
+            )
+        else:
+            launched = await _run_workflow_inline(
+                research=research,
+                workflows=workflows,
+                now=now_s,
+                **launch_args,
+            )
+        cards.append(
+            _card_tool_call(
+                wf_name,
+                str(launched["status"]),
+                f"case={case_id} refs={','.join(launch_args['refs'])}",
+            )
+        )
+        cards.append(_card_progress(str(launched["run_id"]), run_kind, str(launched["status"])))
+        cards.append(_card_case(case))
+        reused = "复用进行中的运行" if launched["reused"] else "已在后台执行"
+        run_id = launched["run_id"]
+        return {
+            **base,
+            "cards": cards,
+            "reply": (
+                f"已触发 {wf_name}（run_id={run_id}，状态 {launched['status']}，{reused}）。"
+                f"可用「状态」查询进度，或轮询 GET /api/analysis-runs/{run_id}。"
+            ),
+            "message_type": "tool_call",
+        }
+
+    if intent == "plan":
+        if case is None:
+            reason = f"case not found: {case_id}" if case_id else "未提供 case_id"
+            return _abstain(reason)
+        result = await build_research_plan(
+            case_id,
+            research=research,
+            router=router,
+            question=str(p.get("question") or message),
+            now_fn=lambda: now_s,
+        )
+        steps = list(result.get("steps") or [])
+        status = str(result.get("status") or "")
+        cards.append(_card_progress(str(result.get("run_id") or ""), "plan", status))
+        cards.append(_card_case(case))
+        if steps:
+            titles = "；".join(f"{i + 1}. {s['title']}" for i, s in enumerate(steps[:6]))
+            return {
+                **base,
+                "cards": cards,
+                "reply": f"研究计划已生成（run {result.get('run_id')}）：{titles}",
+                "message_type": "plan",
+            }
+        error = str(result.get("error") or "模型返回空计划（诚实弃权）")
+        return {
+            **base,
+            "cards": cards,
+            "reply": f"计划未能生成：{error}",
+            "message_type": "abstention",
+        }
+
+    if intent == "status":
+        if research is None:
+            return {
+                **base,
+                "reply": "研究库上下文不可用（research 未注入）。",
+                "message_type": "abstention",
+            }
+        runs = [r for r in research.analysis_runs(50) if not case_id or r.case_id == case_id]
+        cards.append(_runs_summary_card(runs))
+        if case is not None:
+            cards.append(_card_case(case))
+        counts = Counter(r.status for r in runs)
+        summary = "、".join(f"{k}×{v}" for k, v in sorted(counts.items())) or "无运行记录"
+        return {
+            **base,
+            "cards": cards,
+            "reply": f"最近 {len(runs)} 次分析运行：{summary}。详情见 runs_summary 卡。",
+            "message_type": "answer",
+        }
+
+    if intent == "observe":
+        card = _observe_card(store, now_dt)
+        cards.append(card)
+        n = int(card["n_events"])
+        latest = card["recent_events"][-1] if card["recent_events"] else None
+        if latest is not None:
+            lead = f"当前共 {n} 个事件；最新：{latest['event_id']}「{latest['title']}」。"
+        else:
+            lead = "当前窗口暂无事件。"
+        return {
+            **base,
+            "cards": cards,
+            "reply": f"{lead} {card['hint']}。",
+            "message_type": "answer",
+        }
+
+    if intent == "hitl":
+        if not cards:
+            return {**base, "reply": "当前没有待人工确认（HITL）事项。", "message_type": "answer"}
+        listing = "；".join(f"{c['hitl_id']}（{c['summary']}）" for c in cards)
+        return {
+            **base,
+            "cards": cards,
+            "reply": f"当前有 {len(cards)} 条待人工确认：{listing}。请在 HITL 队列裁决。",
+            "message_type": "hitl_request",
+        }
+
+    # question（默认）：既有 LLM⇄tools 循环 + 上下文注入
+    ctx = context_injector(research, case_id)
+    result = await run_chat(
+        message,
+        history,
+        bronze=bronze,
+        store=store,
+        gold=gold,
+        registry=registry,
+        router=router,
+        tier=tier,
+        gdelt_proxy=gdelt_proxy,
+        now=now_dt,
+        context=ctx,
+    )
+    if case is not None:
+        cards.append(_card_case(case))
+    return {
+        **base,
+        **result,  # reply/citations/tools_used/rounds 以真实运行结果为准
+        "cards": cards,
+        # 无模型离线聚合=诚实弃权（与端点既有语义一致）
+        "message_type": "answer" if router is not None else "abstention",
+    }
+
+
 # ---------------------------------------------------------------- store
 
 
 class ChatStore:
-    """会话历史（独立 sqlite；thread_id 会话，每轮全量注入）。"""
+    """会话历史（独立 sqlite；thread_id 会话，每轮全量注入）。
+
+    message_type 为消息九类型（默认 'answer'）；cards_json 为结构化卡片
+    （JSON 数组，默认 '[]'）。旧库缺列时打开即幂等 ALTER TABLE 补列
+    （DEFAULT 值），历史消息自动归为 answer / 空卡片。
+    """
 
     def __init__(self, path: str | Any) -> None:
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
@@ -356,8 +959,21 @@ class ChatStore:
             "CREATE TABLE IF NOT EXISTS chat_messages ("
             " id INTEGER PRIMARY KEY AUTOINCREMENT,"
             " thread_id TEXT NOT NULL, role TEXT NOT NULL,"
-            " content TEXT NOT NULL, ts TEXT NOT NULL)"
+            " content TEXT NOT NULL, ts TEXT NOT NULL,"
+            " message_type TEXT NOT NULL DEFAULT 'answer',"
+            " cards_json TEXT NOT NULL DEFAULT '[]')"
         )
+        cols = {
+            str(r[1]) for r in self._conn.execute("PRAGMA table_info(chat_messages)").fetchall()
+        }
+        if "message_type" not in cols:
+            self._conn.execute(
+                "ALTER TABLE chat_messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'answer'"
+            )
+        if "cards_json" not in cols:
+            self._conn.execute(
+                "ALTER TABLE chat_messages ADD COLUMN cards_json TEXT NOT NULL DEFAULT '[]'"
+            )
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_thread ON chat_messages(thread_id, id)"
         )
@@ -372,27 +988,65 @@ class ChatStore:
 
     def messages(self, thread_id: str) -> list[dict[str, Any]]:
         rows = self._conn.execute(
-            "SELECT role, content, ts FROM chat_messages WHERE thread_id=? ORDER BY id",
+            "SELECT role, content, ts, message_type, cards_json FROM chat_messages"
+            " WHERE thread_id=? ORDER BY id",
             (thread_id,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            msg = dict(r)
+            try:
+                cards = json.loads(msg.pop("cards_json") or "[]")
+            except (TypeError, ValueError):
+                cards = []
+            msg["cards"] = cards if isinstance(cards, list) else []
+            out.append(msg)
+        return out
 
-    def append(self, thread_id: str, role: str, content: str, ts: str) -> None:
+    def append(
+        self,
+        thread_id: str,
+        role: str,
+        content: str,
+        ts: str,
+        message_type: MessageType = "answer",
+        cards: list[dict[str, Any]] | None = None,
+    ) -> None:
+        if message_type not in MESSAGE_TYPES:
+            raise ValueError(f"unknown message_type: {message_type}")
         self._conn.execute(
-            "INSERT INTO chat_messages(thread_id, role, content, ts) VALUES (?,?,?,?)",
-            (thread_id, role, content, ts),
+            "INSERT INTO chat_messages(thread_id, role, content, ts, message_type, cards_json)"
+            " VALUES (?,?,?,?,?,?)",
+            (
+                thread_id,
+                role,
+                content,
+                ts,
+                message_type,
+                json.dumps(cards or [], ensure_ascii=False),
+            ),
         )
         self._conn.commit()
 
 
 __all__ = [
+    "CHAT_INTENTS",
     "CHAT_SYSTEM",
     "ChatOutput",
     "ChatStore",
     "ChatToolCall",
+    "ChatIntent",
     "MAX_TOOL_ROUNDS",
+    "MESSAGE_TYPES",
+    "MessageType",
     "TOOL_NAMES",
     "build_chat_graph",
+    "classify_intent",
+    "classify_intent_llm",
+    "context_injector",
     "execute_tool",
+    "hitl_gate",
+    "resolve_intent",
     "run_chat",
+    "run_chat_command",
 ]

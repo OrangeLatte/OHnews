@@ -51,7 +51,7 @@ class LLMTagger:
     ) -> StanceRow | None:
         """单（文章,实体）对的 LLM 标注；模型失败由 router 内部 fallback 处理。"""
         user = f"实体：{entity_id}\n\n文本：{text[:2000]}"
-        out, _ref = await self._router.invoke(
+        out, _ref, _usage = await self._router.invoke(
             self._tier, _STANCE_PROMPT + "\n\n" + CODEBOOK_PROMPT, user, LLMFrameOutput
         )
         dist = out.frame_dist.to_dict()

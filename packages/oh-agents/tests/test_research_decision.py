@@ -56,7 +56,7 @@ def test_research_llm_mode_with_fake_router(tmp_path: Path) -> None:
                 confidence=0.75,
                 citations=["E01"],
             )
-            return out, object()
+            return out, object(), None
 
     result = asyncio.run(
         run_research(

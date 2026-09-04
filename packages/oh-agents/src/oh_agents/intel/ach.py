@@ -97,7 +97,7 @@ class RedTeamAgent:
         if self._router is None:
             return self._offline(bundle, evidence)
         try:
-            draft, _ref = await self._router.invoke(
+            draft, _ref, _usage = await self._router.invoke(
                 Tier.STRATEGIC,
                 self.SYSTEM,
                 f"巡逻范围：{bundle.scope}\n证据清单：\n" + "\n".join(f"- {e}" for e in evidence),

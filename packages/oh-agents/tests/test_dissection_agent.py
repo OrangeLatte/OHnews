@@ -26,7 +26,7 @@ class FakeRouter:
                 DissectionElement(element="tone", content="谨慎"),
             ]
         )
-        return out, ModelRef(provider="zhipu", model_id="glm-5.3-flash")
+        return out, ModelRef(provider="zhipu", model_id="glm-5.3-flash"), None
 
 
 class FakeStore:
@@ -94,7 +94,7 @@ def test_llm_empty_output_degrades_offline() -> None:
 
     class EmptyRouter:
         async def invoke(self, tier: Any, system: str, user: str, schema: type) -> tuple:
-            return DissectionOutputP(elements=[]), ModelRef(provider="z", model_id="m")
+            return DissectionOutputP(elements=[]), ModelRef(provider="z", model_id="m"), None
 
     store = FakeStore()
     g = build_dissection_graph(

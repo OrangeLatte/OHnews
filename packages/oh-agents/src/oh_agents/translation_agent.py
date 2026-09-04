@@ -54,6 +54,7 @@ class TranslationState(TypedDict, total=False):
     llm_failed: str
     errors: Annotated[list[str], operator.add]
     _model_hint: str
+    usage: dict[str, Any]
 
 
 def _system_prompt(source_language: str) -> str:
@@ -96,12 +97,15 @@ def build_translation_graph(
         )
         try:
             async with asyncio.timeout(_LLM_TIMEOUT):
-                parsed, ref = await router.invoke(
-                    Tier.EXECUTE, _system_prompt(state.get("source_language", "")), user,
+                parsed, ref, usage = await router.invoke(
+                    Tier.EXECUTE,
+                    _system_prompt(state.get("source_language", "")),
+                    user,
                     TranslationOutputP,
                 )
         except Exception as exc:  # noqa: BLE001 —— 诚实降级
-            return {"errors": [f"llm_failed: {exc}"], "llm_failed": str(exc)}
+            msg = str(exc) or type(exc).__name__
+            return {"errors": [f"llm_failed: {msg}"], "llm_failed": msg}
         if not parsed.body.strip():
             return {"errors": ["llm_empty_output"], "llm_failed": "LLM 返回空译文"}
         return {
@@ -109,6 +113,14 @@ def build_translation_graph(
             "body_out": parsed.body,
             "notes": list(parsed.term_notes),
             "_model_hint": f"{ref.provider}/{ref.model_id}",
+            "usage": {
+                "provider": ref.provider,
+                "model": ref.model_id,
+                "prompt_tokens": usage.prompt_tokens if usage else 0,
+                "completion_tokens": usage.completion_tokens if usage else 0,
+                "total_tokens": usage.total_tokens if usage else 0,
+                "latency_ms": usage.latency_ms if usage else 0,
+            },
         }
 
     async def persist_node(state: TranslationState) -> dict[str, Any]:

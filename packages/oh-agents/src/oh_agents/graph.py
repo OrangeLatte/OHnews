@@ -122,7 +122,7 @@ async def _default_hypothesis_fn(
         f"各源 stance 行数：{by_source}\n"
         f"实体：{event.entities}"
     )
-    hyp, _ = await deps.router.invoke(Tier.STRATEGIC, HYPOTHESIS_PROMPT, user, Hypothesis)
+    hyp, _, _u = await deps.router.invoke(Tier.STRATEGIC, HYPOTHESIS_PROMPT, user, Hypothesis)
     return hyp
 
 
@@ -135,7 +135,7 @@ async def _default_interpret_fn(
         + "; ".join(h.text for h in hyps)
         + "\n写 3-5 句叙事解释卡，标注置信度与认知状态。"
     )
-    card, _ = await deps.router.invoke(
+    card, _, _u = await deps.router.invoke(
         Tier.EXECUTE,
         "你是证据解释器：只解释给定假设与数据，不做收益预测。",
         user,

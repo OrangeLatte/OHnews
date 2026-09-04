@@ -18,7 +18,7 @@ from langgraph.graph import END, StateGraph
 from oh_contracts.dissection import ELEMENT_KEYS, ArticleDissection
 from oh_contracts.enums import Tier
 from oh_contracts.reports import AgentReport, ReportSection
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from .agent_base import AgentSessions, make_checkpointer
 
@@ -41,9 +41,15 @@ _REPORT_SYSTEM = (
 
 
 class ReportOutputP(BaseModel):
-    """LLM 结构化输出：2-4 个分节。"""
+    """LLM 结构化输出：2-4 个分节；空产出 schema 层拒绝以触发重试。"""
 
     sections: list[ReportSection]
+
+    @model_validator(mode="after")
+    def _non_empty(self) -> "ReportOutputP":
+        if not self.sections:
+            raise ValueError("llm_empty_output: 模型未产出任何报告分节")
+        return self
 
 
 class ReportState(TypedDict, total=False):
@@ -56,6 +62,7 @@ class ReportState(TypedDict, total=False):
     report: AgentReport
     llm_failed: str
     _model_hint: str
+    usage: dict[str, Any]
     errors: Annotated[list[str], operator.add]
 
 
@@ -90,14 +97,23 @@ def build_report_graph(
         )
         try:
             async with asyncio.timeout(90.0):
-                parsed, ref = await router.invoke(
+                parsed, ref, usage = await router.invoke(
                     Tier.STRATEGIC, _REPORT_SYSTEM, user, ReportOutputP
                 )
         except Exception as exc:  # noqa: BLE001 —— 根因落 errors，persist 降级
-            return {"errors": [f"llm_failed: {exc}"], "llm_failed": str(exc)}
+            msg = str(exc) or type(exc).__name__
+            return {"errors": [f"llm_failed: {msg}"], "llm_failed": msg}
         return {
             "sections": list(parsed.sections),
             "_model_hint": f"{ref.provider}/{ref.model_id}",
+            "usage": {
+                "provider": ref.provider,
+                "model": ref.model_id,
+                "prompt_tokens": usage.prompt_tokens if usage else 0,
+                "completion_tokens": usage.completion_tokens if usage else 0,
+                "total_tokens": usage.total_tokens if usage else 0,
+                "latency_ms": usage.latency_ms if usage else 0,
+            },
         }
 
     async def persist_node(state: ReportState) -> dict[str, Any]:

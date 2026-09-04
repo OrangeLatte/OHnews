@@ -119,7 +119,9 @@ def synthesize_node(deps: _ResearchDeps):
                 f"事件：{[e['event_id'] for e in g['events']]}\n"
                 f"NDI 序列：\n{ndi_lines or '（无）'}\n证据链：\n{evidence_lines or '（无）'}"
             )
-            out, _ref = await deps.router.invoke(deps.tier, ANSWER_PROMPT, user, _SynthOutput)
+            out, _ref, _usage = await deps.router.invoke(
+                deps.tier, ANSWER_PROMPT, user, _SynthOutput
+            )
             return {
                 "answer": out.model_dump(),
             }

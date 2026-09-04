@@ -20,7 +20,7 @@ def _fake_router():
     async def invoke(tier, system, user, schema):
         assert tier == Tier.IO
         out = LLMFrameOutput(frame_dist=DIST, stance=StanceLabel.CRITICAL, confidence=0.7)
-        return out, SimpleNamespace(provider="deepseek", model_id="deepseek-v4-flash")
+        return out, SimpleNamespace(provider="deepseek", model_id="deepseek-v4-flash"), None
 
     return SimpleNamespace(invoke=invoke)
 

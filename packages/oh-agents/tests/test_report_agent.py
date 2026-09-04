@@ -28,7 +28,11 @@ class FakeRouter:
             if self.empty
             else [ReportSection(title="核心判断：原文核验", body="原文显示通胀放缓。")]
         )
-        return ReportOutputP(sections=sections), ModelRef(provider="zhipu", model_id="glm-5.3")
+        return (
+            ReportOutputP(sections=sections),
+            ModelRef(provider="zhipu", model_id="glm-5.3"),
+            None,
+        )
 
 
 class FakeStore:
@@ -105,7 +109,7 @@ class FakeTransRouter:
             ),
             term_notes=["机构名保留原文"],
         )
-        return out, ModelRef(provider="zhipu", model_id="glm-5.3-flash")
+        return out, ModelRef(provider="zhipu", model_id="glm-5.3-flash"), None
 
 
 class FakeStore2:
@@ -134,7 +138,8 @@ def test_translation_llm_path_and_verify() -> None:
 
     store = FakeStore2()
     g = build_translation_graph(
-        router=FakeTransRouter(), store=store,
+        router=FakeTransRouter(),
+        store=store,
         now_fn=lambda: "2026-09-02T12:00:00+00:00",
     )
     out = asyncio.run(
@@ -166,7 +171,8 @@ def test_translation_failure_degrades_offline() -> None:
 
     store = FakeStore2()
     g = build_translation_graph(
-        router=BoomRouter(), store=store,
+        router=BoomRouter(),
+        store=store,
         now_fn=lambda: "2026-09-02T12:00:00+00:00",
     )
     out = asyncio.run(

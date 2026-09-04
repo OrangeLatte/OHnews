@@ -16,7 +16,7 @@ from typing import Annotated, Any, TypedDict
 from langgraph.graph import END, StateGraph
 from oh_contracts.dissection import ELEMENT_KEYS, ArticleDissection, DissectionElement
 from oh_contracts.enums import Tier
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 
 from .agent_base import AgentSessions, make_checkpointer
 
@@ -30,9 +30,40 @@ _DISSECT_SYSTEM = (
 
 
 class DissectionOutputP(BaseModel):
-    """LLM 结构化输出：逐元素提取，无则跳过（18 元素闭集校验）。"""
+    """LLM 结构化输出：逐元素提取，无则跳过（18 元素闭集校验）。
+
+    空产出在 schema 层拒绝：空列表是合法 JSON 但几乎必为模型输出问题，
+    在此抛错可触发 router 退避重试，而非静默降级 offline。
+    """
 
     elements: list[DissectionElement]
+
+    @field_validator("elements", mode="before")
+    @classmethod
+    def _drop_bad_spans(cls, v: object) -> object:
+        """剔除退化 span 而非整次拒绝：deepseek 等模型会偶发输出
+        end<=start 或负偏移的坏 span（实测 18 个 validation error 全是
+        spans.0.end=0），元素内容才是主要产物，span 是可选增强。"""
+        if not isinstance(v, list):
+            return v
+        for el in v:
+            if isinstance(el, dict) and el.get("spans"):
+                good = [
+                    s
+                    for s in el["spans"]
+                    if isinstance(s, dict)
+                    and isinstance(s.get("start"), int)
+                    and isinstance(s.get("end"), int)
+                    and 0 <= s["start"] < s["end"]
+                ]
+                el["spans"] = good or None
+        return v
+
+    @model_validator(mode="after")
+    def _non_empty(self) -> "DissectionOutputP":
+        if not self.elements:
+            raise ValueError("llm_empty_output: 模型未产出任何拆解元素")
+        return self
 
 
 class DissectionState(TypedDict, total=False):
@@ -46,6 +77,7 @@ class DissectionState(TypedDict, total=False):
     llm_failed: str
     _model_hint: str
     errors: Annotated[list[str], operator.add]
+    usage: dict[str, Any]
 
 
 def build_dissection_graph(
@@ -73,12 +105,24 @@ def build_dissection_graph(
         )
         try:
             async with asyncio.timeout(llm_timeout):
-                parsed, ref = await router.invoke(
+                parsed, ref, usage = await router.invoke(
                     Tier.EXECUTE, _DISSECT_SYSTEM, user, DissectionOutputP
                 )
         except Exception as exc:  # noqa: BLE001 —— 根因落 errors，persist 降级 offline
-            return {"errors": [f"llm_failed: {exc}"], "llm_failed": str(exc)}
-        return {"elements": list(parsed.elements), "_model_hint": f"{ref.provider}/{ref.model_id}"}
+            msg = str(exc) or type(exc).__name__
+            return {"errors": [f"llm_failed: {msg}"], "llm_failed": msg}
+        return {
+            "elements": list(parsed.elements),
+            "_model_hint": f"{ref.provider}/{ref.model_id}",
+            "usage": {
+                "provider": ref.provider,
+                "model": ref.model_id,
+                "prompt_tokens": usage.prompt_tokens if usage else 0,
+                "completion_tokens": usage.completion_tokens if usage else 0,
+                "total_tokens": usage.total_tokens if usage else 0,
+                "latency_ms": usage.latency_ms if usage else 0,
+            },
+        }
 
     async def persist_node(state: DissectionState) -> dict[str, Any]:
         now = now_fn() if now_fn else _dt.datetime.now(_dt.UTC)
