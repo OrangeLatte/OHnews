@@ -49,8 +49,8 @@ class RecordingRouter(ModelRouter):
         if isinstance(action, Exception):
             raise action
         if isinstance(action, dict):
-            return schema.model_validate(action)
-        return action
+            return schema.model_validate(action), None
+        return action, None
 
 
 def test_validation_failure_falls_back() -> None:
@@ -63,7 +63,7 @@ def test_validation_failure_falls_back() -> None:
                 "zhipu/m2": [{"value": 2}],
             },
         )
-        result, ref = await router.invoke(Tier.IO, "s", "u", Out)
+        result, ref, _u = await router.invoke(Tier.IO, "s", "u", Out)
         assert result.value == 2
         assert ref.model_id == "m2"
         assert router.calls == ["deepseek/m1"] * 3 + ["zhipu/m2"]
@@ -80,7 +80,7 @@ def test_unavailable_candidate_skipped() -> None:
                 "zhipu/m2": [{"value": 3}, {"value": 3}],
             },
         )
-        result, ref = await router.invoke(Tier.IO, "s", "u", Out)
+        result, ref, _u = await router.invoke(Tier.IO, "s", "u", Out)
         assert result.value == 3
         assert router.calls == ["deepseek/m1", "zhipu/m2"]
         # 第二次调用：m1 动作耗尽抛错被吞（FakeRouter 不走 _ensure 标记），
@@ -181,7 +181,7 @@ def test_retry_then_fallback(monkeypatch) -> None:
                 "zhipu/m2": [{"value": 2}],
             },
         )
-        result, ref = await router.invoke(Tier.IO, "s", "u", Out)
+        result, ref, _u = await router.invoke(Tier.IO, "s", "u", Out)
         assert result.value == 1 and ref.model_id == "m1"
         assert router.calls.count("deepseek/m1") == 3  # 1 次原始 + 2 次重试
         assert router.calls.count("zhipu/m2") == 0
@@ -214,7 +214,7 @@ def test_retry_exhausted_falls_to_next_candidate(monkeypatch) -> None:
                 "zhipu/m2": [{"value": 9}],
             },
         )
-        result, ref = await router.invoke(Tier.IO, "s", "u", Out)
+        result, ref, _u = await router.invoke(Tier.IO, "s", "u", Out)
         assert result.value == 9 and ref.provider == "zhipu"
         assert router.calls.count("deepseek/m1") == 2
 
@@ -240,7 +240,7 @@ def test_global_concurrency_cap() -> None:
             state["peak"] = max(state["peak"], state["cur"])
             await asyncio.sleep(0.05)
             state["cur"] -= 1
-            return schema.model_validate({"value": 1})
+            return schema.model_validate({"value": 1}), None
 
         router._invoke_candidate = fake_candidate  # type: ignore[method-assign]
         await asyncio.gather(*(router.invoke(Tier.EXECUTE, "s", "u", Out) for _ in range(10)))
@@ -253,4 +253,4 @@ def test_yaml_loads_runtime_guards() -> None:
     cfg = load_llm_config(ROOT / "config" / "models.yaml")
     assert cfg.max_concurrency == 3
     assert cfg.retry_attempts == 2
-    assert cfg.timeout_s == 120
+    assert cfg.timeout_s == 300

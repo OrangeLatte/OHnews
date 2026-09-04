@@ -26,6 +26,23 @@ class ModelRef:
 
 
 @dataclass(frozen=True)
+class Usage:
+    """单次调用的用量记录（Research OS 阶段0：Token 与费用可观测）。
+
+    cost_estimate 以 0.0 占位——单价表由供应商配置补充后启用；
+    latency_ms 由 Router 调用侧计时。
+    """
+
+    model: str
+    provider: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    latency_ms: int = 0
+    cost_estimate: float = 0.0
+
+
+@dataclass(frozen=True)
 class ProviderSpec:
     """供应商：OpenAI 兼容 base_url + 密钥环境变量 + 模型清单 + extra_body + 策略覆盖。"""
 
