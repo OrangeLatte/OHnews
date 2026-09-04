@@ -10,7 +10,8 @@ defaults:
   max_retries: 1
   # 并发护栏：Send 并行多事件共用 Router，全局信号量限制在途调用峰值，
   # 候选级退避重试（限流/超时），全部失败才降级下一候选。
-  timeout_s: 120
+  # 180s：glm-5.3-flash 十八元素拆解实测 ~100s，120s 贴边易间歇超时。
+  timeout_s: 300
   max_concurrency: 3
   retry_attempts: 2
   retry_delay_s: 1.0
@@ -32,6 +33,10 @@ providers:
   zhipu:
     base_url: https://open.bigmodel.cn/api/paas/v4
     api_key_env: ZHIPU_API_KEY
+    # json_mode（prompt 注入 schema，无 bind/response_format）：实测 fc 在
+    # glm-5.3-flash 上长输出挂起 >300s；bind(response_format) 触发服务端
+    # 连接重置；prompt-only JSON 35s 稳定（2026-09-03 三路径对照）。
+    strategy: json_mode
     models:
       glm-5.3:
         context_window: 200000
@@ -53,9 +58,11 @@ routing:
     primary: deepseek/deepseek-v4-flash
     fallback: [zhipu/glm-5.3-flash]
   # execute：常规分析/标注员 B
+  # deepseek 优先：json_mode 拆解实测 4.7-31s 稳定；zhipu 对长中文正文
+  # 双候选均 300s TimeoutError（2026-09-04 browser-e2e），降为兜底。
   execute:
-    primary: zhipu/glm-5.3-flash
-    fallback: [deepseek/deepseek-v4-flash]
+    primary: deepseek/deepseek-v4-flash
+    fallback: [zhipu/glm-5.3-flash]
   # strategic：最高复杂度/裁决员
   strategic:
     primary: zhipu/glm-5.3
