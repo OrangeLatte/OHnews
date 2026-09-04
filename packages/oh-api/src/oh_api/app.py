@@ -23,11 +23,11 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import yaml
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 from oh_agents.alerts import check_alerts
 from oh_agents.archive import ArchiveStore
-from oh_agents.chat import ChatStore, run_chat
+from oh_agents.chat import ChatStore, run_chat, run_chat_command
 from oh_agents.decision_log import DecisionLog
 from oh_agents.dissection_agent import (
     build_dissection_graph,
@@ -42,8 +42,10 @@ from oh_agents.orchestrator import (
     offline_artifact,
     run_intent,
 )
+from oh_agents.parent_planner import build_research_plan
 from oh_agents.report_agent import REPORT_KIND_ZH, build_report_graph
 from oh_agents.research import run_research
+from oh_agents.specialists import SPECIALISTS
 from oh_agents.tracking import TrackingStore
 from oh_agents.translation_agent import build_translation_graph
 from oh_agents.watch_update import compute_watch_update
@@ -52,13 +54,14 @@ from oh_api.briefing import build_briefing, build_briefing_with_signals, build_d
 from oh_api.change_landscape import build_change_field, build_change_landscape
 from oh_api.charts import build_emotion_density, build_flow_daily, build_ndi_rank
 from oh_api.metrics import build_router as build_metrics_router
+from oh_api.object_api import build_collection_router, build_object_router, build_workflow_router
 from oh_api.search import build_router as build_search_router
 from oh_contracts.archive import ARCHIVE_KINDS, AgentPaper, ArchiveItem
 from oh_contracts.belief import BeliefCreate, BeliefSnapshot
 from oh_contracts.briefing import BriefingResponse, ChangeDossier, EvidenceCitation
 from oh_contracts.change_landscape import ChangeFieldPayload, ChangeLandscape
 from oh_contracts.dissection import ArticleDissection
-from oh_contracts.enums import SourceTier
+from oh_contracts.enums import SourceTier, Tier
 from oh_contracts.intents import Intent
 from oh_contracts.reports import AgentReport
 from oh_contracts.schemas import NDIPoint
@@ -75,6 +78,7 @@ from oh_pipeline.spectra import sentence_spectrum
 from oh_pipeline.svo import parse_passage
 from oh_storage.bronze_parquet import ParquetBronzeWriter
 from oh_storage.connection import connect
+from oh_storage.research_store import ResearchStore
 from oh_storage.sqlite_store import SqliteStore
 from pydantic import BaseModel, ValidationError
 
@@ -96,6 +100,17 @@ async def publish_sse(event: str, payload: dict[str, Any]) -> None:
             q.put_nowait(msg)
         except asyncio.QueueFull:
             _SUBSCRIBERS.discard(q)
+
+
+_RE_TAG = re.compile(r"<[^>]+>")
+
+
+def _strip_tags(text: str) -> str:
+    """剥离 HTML 标签（收件箱预览展示用；内容本身不变）。"""
+    stripped = _RE_TAG.sub(" ", text)
+    for entity, char in (("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">")):
+        stripped = stripped.replace(entity, char)
+    return stripped.strip()
 
 
 @dataclass
@@ -132,6 +147,17 @@ class HomePayload(BaseModel):
     briefing: BriefingResponse
     landscape: ChangeLandscape
     watches: list[dict[str, Any]]
+
+
+class PlanRequestBody(BaseModel):
+    """POST /api/agent/plan 请求体（question 可选覆盖 Case 研究问题）。
+
+    必须模块级定义：app.py 启用 `from __future__ import annotations`，
+    函数内局部类的字符串注解 FastAPI 解析不到会退化为 query 参数。
+    """
+
+    case_id: str
+    question: str = ""
 
 
 class _WatchLike:
@@ -222,6 +248,31 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         db = paths.root / "belief.sqlite"
         return _lazy("beliefs", lambda: BeliefStore(db))
 
+    # Clean-slate Phase 1：research.sqlite 新对象库（零改动旧库）
+    def _research() -> Any:
+        from oh_storage.research_store import ResearchStore
+
+        return _lazy(
+            "research",
+            lambda: ResearchStore.open(paths.root / "research.sqlite"),
+        )
+
+    # Clean-slate Phase 2：案例分析线工作流（keys 缺失时 router=None → offline 诚实降级）
+    def _workflows() -> Any:
+        from oh_agents.case_workflows import CaseWorkflows
+
+        return _lazy(
+            "workflows",
+            lambda: CaseWorkflows(
+                research=_research(),
+                router=_chat_router(),
+                now_fn=lambda: _now().isoformat(),
+                # 必须大于 router 内部超时（models.yaml timeout_s=180），
+                # 否则外层 asyncio.timeout 先触发且 str(TimeoutError) 为空，根因不可见。
+                llm_timeout=320.0,
+            ),
+        )
+
     # 子路由（全局搜索 / 埋点指标）——模块化 APIRouter，主线统一挂载
     app.include_router(
         build_search_router(
@@ -231,6 +282,94 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         )
     )
     app.include_router(build_metrics_router(lambda: _product_events()))
+    app.include_router(build_object_router(lambda: _research(), _now))
+    app.include_router(
+        build_workflow_router(lambda: _workflows(), lambda: _research(), now_fn=_now)
+    )
+    app.include_router(build_collection_router(lambda: _research()))
+
+    # ---- 阶段0e：启动清理——进程重启遗留的 queued/running → failed（interrupted）----
+    def _reap_on_startup() -> int:
+        store = ResearchStore.open(paths.root / "research.sqlite")
+        try:
+            return store.reap_stale_runs(finished_at=_now().isoformat())
+        finally:
+            store.close()
+
+    _reap_on_startup()
+
+    # ---- 阶段0b：真实 LLM 健康检查（轻量 ping + 60s 缓存；非 key 存在性检查）----
+    _llm_health: dict[str, Any] = {
+        "ts": 0.0,
+        "ready": False,
+        "detail": "not checked",
+        "latency_ms": 0,
+    }
+
+    def _ping_llm(force: bool = False) -> dict[str, Any]:
+        import time as _time
+
+        now = _time.time()
+        if not force and now - float(_llm_health["ts"]) < 60.0:
+            return {k: _llm_health[k] for k in ("ready", "detail", "latency_ms", "checked_at")}
+        checked_at = _now().isoformat()
+        router = _chat_router()
+        if router is None:
+            _llm_health.update(
+                ts=now,
+                ready=False,
+                detail="router not configured",
+                latency_ms=0,
+                checked_at=checked_at,
+            )
+        else:
+            t0 = _time.perf_counter()
+            try:
+                asyncio.run(
+                    router.raw_complete(
+                        Tier.EXECUTE,
+                        "You are a connectivity health check.",
+                        "Reply with the single word OK.",
+                    )
+                )
+                _llm_health.update(
+                    ts=now,
+                    ready=True,
+                    detail="ping ok",
+                    latency_ms=int((_time.perf_counter() - t0) * 1000),
+                    checked_at=checked_at,
+                )
+            except Exception as exc:  # noqa: BLE001 - 健康检查捕获一切并如实报告
+                _llm_health.update(
+                    ts=now,
+                    ready=False,
+                    detail=str(exc) or type(exc).__name__,
+                    latency_ms=int((_time.perf_counter() - t0) * 1000),
+                    checked_at=checked_at,
+                )
+        return {
+            "ready": _llm_health["ready"],
+            "detail": _llm_health["detail"],
+            "latency_ms": _llm_health["latency_ms"],
+            "checked_at": _llm_health.get("checked_at") or checked_at,
+        }
+
+    @app.get("/api/llm/health")
+    def llm_health(refresh: bool = False) -> dict[str, Any]:
+        """真实连通性：轻量 ping（60s 缓存；?refresh=true 强制）。"""
+        return _ping_llm(force=refresh)
+
+    # 后台预热（不阻塞启动；失败静默——端点可再次查询）
+    def _warmup() -> None:
+        import time as _t
+
+        _t.sleep(3.0)
+        try:
+            _ping_llm()
+        except Exception:
+            pass
+
+    threading.Thread(target=_warmup, daemon=True, name="llm-health-warmup").start()
 
     # ---- Agent 会话（A4）：会话账本 + user_gate 随时补充输入 ----
     def _agent_sessions() -> Any:
@@ -361,6 +500,95 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             }
         )
         return out["dissection"]
+
+    @app.get("/api/articles/detail")
+    def article_detail(source_id: str, item_key: str) -> dict[str, Any]:
+        """单文全文（搜索→研究入口）：取 bronze 原文不截断，供一键入案。"""
+        rec = next(
+            (
+                r
+                for r in _bronze().iter_records()
+                if r.item_key == item_key and (not source_id or r.source_id == source_id)
+            ),
+            None,
+        )
+        if rec is None:
+            raise HTTPException(status_code=404, detail="bronze 无此 item_key")
+        norm = rec.normalized or {}
+        return {
+            "item_key": rec.item_key,
+            "source_id": rec.source_id,
+            "title": _strip_tags(str(norm.get("title") or "")),
+            "url": str(norm.get("url") or ""),
+            # 剥离 HTML 标签：入案正文必须为纯文本，拆解 span 偏移才与渲染一致
+            "body": _strip_tags(str(norm.get("body") or norm.get("title") or rec.raw or "")),
+            "published_at": (rec.published_at or rec.fetched_at).isoformat(),
+            "language": str(norm.get("language") or ""),
+        }
+
+    @app.get("/api/inbox")
+    def inbox(
+        source_id: list[str] = Query(default_factory=list),  # noqa: B008
+        q: str = "",
+        language: str = "",
+        days: int = 0,
+        element: str = "",
+        value: str = "",
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """研究收件箱：bronze 多条件筛选 + cased/dissected 标记 + 元素级筛选。
+
+        - source_id 多选（空=全部源，按时间倒序取 limit）
+        - q 对 title+body 子串（大小写不敏感）；language 精确；days 时间窗
+        - element/value 查 silver 历史拆解缓存（如 actor=美联储）
+        - cased/dissected 来自 research 库 external_key 联查
+        """
+        research = _research()
+        cased = research.cased_keys()
+        dissected = research.dissected_keys()
+        silver = _store()
+        now = _now()
+        rows: list[dict[str, Any]] = []
+        for rec in _bronze().iter_records():
+            norm = rec.normalized or {}
+            if source_id and rec.source_id not in source_id:
+                continue
+            rec_lang = str(norm.get("language") or "")
+            if language and rec_lang != language:
+                continue
+            pub = rec.published_at or rec.fetched_at
+            if days > 0 and pub is not None and (now - pub).days > days:
+                continue
+            title = str(norm.get("title") or "")
+            body = str(norm.get("body") or "")
+            if q and q.lower() not in (title + "\n" + body).lower():
+                continue
+            if element and value:
+                d = silver.get_dissection(rec.item_key)
+                els = d.get("elements") if isinstance(d, dict) else None
+                hit = any(
+                    isinstance(e, dict)
+                    and e.get("element") == element
+                    and value.lower() in str(e.get("content") or "").lower()
+                    for e in (els or [])
+                )
+                if not hit:
+                    continue
+            rows.append(
+                {
+                    "item_key": rec.item_key,
+                    "source_id": rec.source_id,
+                    "title": _strip_tags(title),
+                    "url": str(norm.get("url") or ""),
+                    "language": rec_lang,
+                    "published_at": pub.isoformat() if hasattr(pub, "isoformat") else str(pub),
+                    "body_preview": _strip_tags(body)[:200],
+                    "cased": rec.item_key in cased,
+                    "dissected": rec.item_key in dissected,
+                }
+            )
+        rows.sort(key=lambda r: str(r["published_at"]), reverse=True)
+        return {"n": len(rows), "rows": rows[:limit]}
 
     @app.post("/api/agent/translate", response_model=TranslationItem)
     async def agent_translate(body: dict[str, Any]) -> TranslationItem:
@@ -589,8 +817,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             }
         else:
             lang_by_source = {
-                sid: str((cfg or {}).get("language") or "other")
-                for sid, cfg in raw_sources.items()
+                sid: str((cfg or {}).get("language") or "other") for sid, cfg in raw_sources.items()
             }
         return build_flow_daily(
             list(_bronze().iter_records()),
@@ -1829,29 +2056,56 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             "tool_calls": list(result.tool_calls),
         }
 
+    # chat 指挥模式可选参数（document/claim/report 定位；透传给工作流）
+    _CHAT_PARAM_KEYS = (
+        "document_revision_id",
+        "document_revision_ids",
+        "claim_id",
+        "report_type",
+        "title",
+        "item_key",
+        "target_language",
+        "question",
+    )
+
     @app.post("/api/chat")
-    async def chat(body: dict[str, str]) -> dict[str, Any]:
-        """多轮会话情报 Agent（chat_graph；无 keys/config 降级离线聚合）。"""
-        message = body.get("message", "").strip()
+    async def chat(body: dict[str, Any]) -> dict[str, Any]:
+        """对话指挥 Agent（chat_graph + command mode）：意图路由 → 工作流触发 → 卡片。
+
+        指挥意图（plan/dissect/compare/report/challenge）触发 CaseWorkflows
+        （异步 202 协议：chat 只回 run_id 不等待）；status/observe/hitl 只读
+        汇总；question 走 LLM⇄tools 循环。响应新增 intent/message_type/cards
+        字段（不破坏既有 reply/citations/tools_used/rounds/offline）。
+        无 keys/config 降级离线聚合；工作流触发不依赖 chat LLM。
+        """
+        message = str(body.get("message", "")).strip()
         if not message:
             raise HTTPException(422, "message required")
-        thread_id = body.get("thread_id") or uuid4().hex[:12]
+        thread_id = str(body.get("thread_id") or uuid4().hex[:12])
+        case_id = str(body.get("case_id") or "")
+        params = {k: body[k] for k in _CHAT_PARAM_KEYS if body.get(k) is not None}
         cs = _chat_store()
         now = _now()
         ts = now.isoformat()
         history = [{"role": m["role"], "content": m["content"]} for m in cs.messages(thread_id)]
         cs.append(thread_id, "user", message, ts)
         try:
-            result = await run_chat(
+            result = await run_chat_command(
                 message,
                 history,
                 bronze=_bronze(),
                 store=_store(),
                 gold=_store(),
                 registry=_registry(),
+                research=_research(),
+                workflows=_workflows(),
+                research_factory=_research,
+                workflows_factory=_workflows,
                 router=_chat_router(),
                 gdelt_proxy=os.getenv("OHNEWS_GDELT_PROXY"),
                 now=now,
+                case_id=case_id,
+                params=params,
             )
         except Exception as exc:  # LLM 全候选失败→离线聚合降级回复，绝不裸 500
             try:
@@ -1874,6 +2128,9 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                     **fallback,
                     "reply": degraded + fallback["reply"],
                     "llm_error": str(exc)[:300],
+                    "intent": "question",
+                    "intent_by": "fallback",
+                    "cards": [],
                 }
             except Exception as exc2:  # 连离线聚合都失败→最小回复
                 result = {
@@ -1881,23 +2138,41 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                     "citations": [],
                     "tools_used": [],
                     "rounds": 0,
+                    "llm_error": str(exc2)[:300],
+                    "intent": "question",
+                    "intent_by": "fallback",
+                    "cards": [],
                 }
-        cs.append(thread_id, "assistant", result["reply"], now.isoformat())
+        # 消息九类型（阶段 2 对话约束）：指挥结果自带类型；错误标 error
+        if result.get("llm_error"):
+            message_type: str = "error"
+        else:
+            message_type = str(result.get("message_type") or "answer")
+        cards = list(result.get("cards") or [])
+        cs.append(
+            thread_id, "assistant", result["reply"], now.isoformat(), message_type, cards=cards
+        )
         await publish_sse(
             "chat_done",
             {
                 "thread_id": thread_id,
-                "rounds": result["rounds"],
-                "tools": list(result["tools_used"]),
+                "rounds": result.get("rounds", 0),
+                "tools": list(result.get("tools_used") or []),
+                "intent": result.get("intent", "question"),
+                "n_cards": len(cards),
             },
         )
         return {
             "thread_id": thread_id,
             "reply": result["reply"],
-            "citations": list(result["citations"]),
-            "tools_used": list(result["tools_used"]),
-            "rounds": result["rounds"],
+            "citations": list(result.get("citations") or []),
+            "tools_used": list(result.get("tools_used") or []),
+            "rounds": result.get("rounds", 0),
             "offline": _chat_router() is None,
+            "intent": result.get("intent", "question"),
+            "intent_by": result.get("intent_by", "fallback"),
+            "message_type": message_type,
+            "cards": cards,
         }
 
     @app.post("/api/agent/invoke")
@@ -1955,6 +2230,39 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         )
         await publish_sse("agent_done", {"intent": intent.intent.value, "target": target_id})
         return {"offline": False, "packet": packet.model_dump(mode="json"), **result}
+
+    # ---- 阶段 2 Agent OS：专项注册表 + Parent 规划 ----
+
+    @app.get("/api/agent/specialists")
+    def agent_specialists() -> dict[str, Any]:
+        """9 专项 Agent 注册表（Parent + 专项 架构的数据真源）。"""
+        return {"n": len(SPECIALISTS), "specialists": [dict(s) for s in SPECIALISTS]}
+
+    @app.post("/api/agent/plan")
+    async def agent_plan(body: PlanRequestBody) -> JSONResponse:
+        """Parent 规划（阶段 2）：同步快操作，202 + run_id 供追踪。
+
+        读 Case 上下文（文档/claims/已跑工作流）→ ModelRouter 结构化输出
+        PlanOut → 落 agent_runs（kind=plan）。模型未配置/失败 → status=failed
+        + 根因（诚实降级，与 case_workflows 语义一致）；空 steps = 弃权。
+        """
+        research = _research()
+        if not research.get_case(body.case_id):
+            raise HTTPException(404, f"case not found: {body.case_id}")
+        result = await build_research_plan(
+            body.case_id,
+            question=body.question,
+            research=research,
+            router=_chat_router(),
+            now_fn=lambda: _now().isoformat(),
+        )
+        return JSONResponse(status_code=202, content=result)
+
+    @app.get("/api/agent/plans")
+    def agent_plans(case_id: str, limit: int = 5) -> dict[str, Any]:
+        """某 Case 最近的研究计划（kind=plan 的 agent_runs，新→旧）。"""
+        plans = _research().plan_runs(case_id=case_id, limit=max(1, min(limit, 50)))
+        return {"n": len(plans), "plans": plans}
 
     @app.get("/api/chat/threads")
     def chat_threads() -> list[dict[str, Any]]:

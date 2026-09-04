@@ -370,10 +370,22 @@ def build_change_landscape(
     composition-adjusted 双口径并列，避免把来源结构变化误读为叙事迁移。
     """
     records = list(bronze_iter)
+    # 数据末梢锚定：采集断流时（now 距最新数据 >1d），检测与窗口锚点跟随数据
+    # 覆盖期，避免检测尾窗空转导致信号恒零；数据过时事实仍由 freshness
+    # 警告如实承担（staleness 以真实 now 计算，不因锚定而被掩盖）。
+    # 锚点取各数据面（bronze 正文 / silver stances）最旧的尾——检测窗口
+    # 必须落在每个数据面的覆盖期内，否则慢面（stances 通常滞后 bronze）
+    # 的 recent 窗为空、信号恒零。
+    _pubs = [r.published_at for r in records if r.published_at]
+    _stance_tail = max((r.ts for r in store.stances_asof(now)), default=None)
+    _tails = [t for t in (max(_pubs) if _pubs else None, _stance_tail) if t]
+    det_now = now
+    if _tails and (now - min(_tails)) > timedelta(days=1):
+        det_now = min(_tails)
     d = max(1, days)
-    lo_base, lo_cur, _ = _iso_window(now, d)
+    lo_base, lo_cur, _ = _iso_window(det_now, d)
     base = _split_window(records, lo_base, lo_cur)
-    cur = _split_window(records, lo_cur, now)
+    cur = _split_window(records, lo_cur, det_now)
 
     baseline_w = TimeWindow(
         start=lo_base.isoformat(),
@@ -383,13 +395,13 @@ def build_change_landscape(
     )
     current_w = TimeWindow(
         start=lo_cur.isoformat(),
-        end=now.isoformat(),
+        end=det_now.isoformat(),
         n_articles=len(cur),
         n_sources=len({r.source_id for r in cur}),
     )
     streams = _source_streams(base, cur, tier_map)
-    rows = store.stances_asof(now)
-    narr = _narrative_streams(rows, lo_cur, lo_base, now, tier_map)
+    rows = store.stances_asof(det_now)
+    narr = _narrative_streams(rows, lo_cur, lo_base, det_now, tier_map)
 
     if briefing_result is None:
         briefing, signals = build_briefing_with_signals(
@@ -397,7 +409,7 @@ def build_change_landscape(
             store=store,
             registry=registry,
             tier_map=tier_map,
-            now=now,
+            now=det_now,
             days=max(1, days),
             top=top,
             min_per_source=min_per_source,
@@ -412,7 +424,7 @@ def build_change_landscape(
         store=store,
         tier_map=tier_map,
         registry=registry,
-        now=now,
+        now=det_now,
     )
     freshness = data_freshness(records, now=now, lookback_days=max(1, days))
     warnings = _warnings(current_w, streams, changes, freshness.staleness, gated_out, narr)

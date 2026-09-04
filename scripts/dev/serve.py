@@ -7,8 +7,26 @@
 from __future__ import annotations
 
 import argparse
+import os
+from pathlib import Path
 
 import uvicorn
+
+
+def _load_dotenv() -> None:
+    """加载项目根 .env（KEY=VALUE 行，# 注释）；不覆盖已有环境变量。
+
+    密钥类配置（如 ZHIPU_API_KEY）经此注入，避免写入 git 追踪的 models.yaml。
+    """
+    env_file = Path(__file__).resolve().parents[2] / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
 def main() -> None:
@@ -17,6 +35,8 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--reload", action="store_true")
     args = parser.parse_args()
+
+    _load_dotenv()
 
     # factory 模式：uvicorn 无参调用 create_app()，AppPaths 默认值即生产布局
     # （root=data/, sources_yaml=config/sources.yaml）；数据目录经环境变量

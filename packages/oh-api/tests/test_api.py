@@ -294,6 +294,13 @@ def test_chat_endpoints(client: TestClient) -> None:
     assert r2["thread_id"] == tid
     msgs = client.get(f"/api/chat/{tid}/messages").json()
     assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
+    # 消息九类型：离线降级回复 = abstention（诚实标注，非 answer）
+    assert [m["message_type"] for m in msgs] == [
+        "answer",
+        "abstention",
+        "answer",
+        "abstention",
+    ]
     threads = client.get("/api/chat/threads").json()
     assert threads[0]["thread_id"] == tid and threads[0]["n"] == 4
     assert client.post("/api/chat", json={}).status_code == 422

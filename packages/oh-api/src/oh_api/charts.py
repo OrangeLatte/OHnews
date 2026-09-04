@@ -82,8 +82,14 @@ def build_ndi_rank(
 
 
 EMOTION_KEYS = (
-    "fear", "anger", "optimism", "uncertainty",
-    "confidence", "urgency", "concern", "relief",
+    "fear",
+    "anger",
+    "optimism",
+    "uncertainty",
+    "confidence",
+    "urgency",
+    "concern",
+    "relief",
 )
 
 
