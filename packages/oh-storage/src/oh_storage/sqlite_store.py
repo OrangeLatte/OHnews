@@ -550,20 +550,32 @@ class SqliteStore:
             out.append(d)
         return out
 
-    def upsert_translation(self, item_key: str, payload: dict, *, engine: str,
-                           source_language: str, target_language: str,
-                           translated_at: str) -> None:
+    def upsert_translation(
+        self,
+        item_key: str,
+        payload: dict,
+        *,
+        engine: str,
+        source_language: str,
+        target_language: str,
+        translated_at: str,
+    ) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO translations"
             " (item_key, payload, engine, source_language, target_language, translated_at)"
             " VALUES (?, ?, ?, ?, ?, ?)",
-            (item_key, json.dumps(payload, ensure_ascii=False), engine,
-             source_language, target_language, translated_at),
+            (
+                item_key,
+                json.dumps(payload, ensure_ascii=False),
+                engine,
+                source_language,
+                target_language,
+                translated_at,
+            ),
         )
         self._conn.commit()
 
-    def get_translation(self, item_key: str,
-                        target_language: str = "en") -> dict | None:
+    def get_translation(self, item_key: str, target_language: str = "en") -> dict | None:
         cur = self._conn.execute(
             "SELECT payload, engine, translated_at FROM translations"
             " WHERE item_key = ? AND target_language = ?",

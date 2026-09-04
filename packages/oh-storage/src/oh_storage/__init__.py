@@ -8,12 +8,14 @@
 from oh_storage.bronze_parquet import ParquetBronzeWriter
 from oh_storage.connection import connect
 from oh_storage.protocols import BronzeWriter, GoldReader, SilverStore
+from oh_storage.research_store import ResearchStore
 from oh_storage.sqlite_store import SqliteStore
 
 __all__ = [
     "BronzeWriter",
     "GoldReader",
     "ParquetBronzeWriter",
+    "ResearchStore",
     "SilverStore",
     "SqliteStore",
     "connect",
