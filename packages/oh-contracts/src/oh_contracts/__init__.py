@@ -79,6 +79,7 @@ from oh_contracts.case import (
     SpanPolarity,
 )
 from oh_contracts.change_landscape import (
+    ChangeEvidenceArticle,
     ChangeFieldPayload,
     ChangeFieldPoint,
     ChangeLandscape,
@@ -283,6 +284,7 @@ __all__ = [
     "AgentReport",
     "ReportKind",
     "ReportSection",
+    "ChangeEvidenceArticle",
     "ChangeFieldPayload",
     "DissectionElement",
     "DissectionSpan",

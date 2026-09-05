@@ -31,7 +31,12 @@ class TimeWindow(_StrictBase):
 
 
 class SourceStream(_StrictBase):
-    """来源流带：宽度=覆盖量（两窗文章数），Hover 显示来源群体。"""
+    """来源流带：宽度=覆盖量（两窗文章数），Hover 显示来源群体。
+
+    growth 为覆盖变化率（百分点，+87.5 = +87.5%）；T2 低基数诚实弃权：
+    n_baseline < 5 时样本不足以支撑比率读数，growth=None 且 low_baseline=True
+    （前端已有低样本警示，但比率数字本身误导，故源头不产出）。
+    """
 
     source_id: str
     label: str
@@ -39,6 +44,8 @@ class SourceStream(_StrictBase):
     cluster: StreamCluster = "market"
     n_baseline: int = 0
     n_current: int = 0
+    growth: float | None = None
+    low_baseline: bool = False
 
 
 class NarrativeStream(_StrictBase):
@@ -61,6 +68,22 @@ class NarrativeStream(_StrictBase):
     adjusted_share_baseline: float | None = Field(default=None, ge=0, le=1)
     adjusted_share_current: float | None = Field(default=None, ge=0, le=1)
     n_cohort_sources: int = 0
+    # T2 同法标注：基线窗该框架标注行 < 5 时份额迁移读数不可信（诚实标记）。
+    low_baseline: bool = False
+
+
+class ChangeEvidenceArticle(_StrictBase):
+    """变化 Drawer 的逐条证据文章引用（T1）。
+
+    来源 = bronze 主题词检索（复用 /api/search 的分词 AND 基建，非 LLM 生成）；
+    当前窗口内优先。诚实纪律：检索无命中时列表为空（前端空态），不编造引用。
+    """
+
+    item_key: str
+    source_id: str
+    title: str = ""
+    published_at: str | None = None
+    language: str = ""
 
 
 class QualifiedChange(_StrictBase):
@@ -75,6 +98,7 @@ class QualifiedChange(_StrictBase):
     urgency: str = ""
     subjects: list[str] = Field(default_factory=list)
     at: str | None = None
+    evidence_articles: list[ChangeEvidenceArticle] = Field(default_factory=list)
 
 
 class QualityWarning(_StrictBase):
