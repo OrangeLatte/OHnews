@@ -58,8 +58,8 @@ def _revision(store: ResearchStore, revision_id: str = "rev-1") -> None:
 
 
 def test_schema_ensure_idempotent(store: ResearchStore) -> None:
-    assert store.ensure_schema() == 6
-    assert store.ensure_schema() == 6
+    assert store.ensure_schema() == 7
+    assert store.ensure_schema() == 7
 
 
 def test_case_lifecycle(store: ResearchStore) -> None:
@@ -327,7 +327,7 @@ def test_collection_plans_and_runs(tmp_path) -> None:
 def test_schema_v3_and_decision_audit(tmp_path: Path) -> None:
     """v3 迁移：MonitorUpdate 审计列存在；复核决策与关联 Case 留痕。"""
     store = ResearchStore.open(tmp_path / "research.sqlite")
-    assert store.ensure_schema() == 6
+    assert store.ensure_schema() == 7
     cols = {r["name"] for r in store._conn.execute("PRAGMA table_info(monitor_updates)")}
     assert {"decision", "decision_case_id"} <= cols
     store.create_monitor(
@@ -358,3 +358,36 @@ def test_schema_v3_and_decision_audit(tmp_path: Path) -> None:
         "SELECT decision, decision_case_id FROM monitor_updates WHERE update_id = 'mupd-a'"
     ).fetchone()
     assert row["decision"] == "new_case" and row["decision_case_id"] == "case-9"
+
+
+def test_schema_v7_monitor_status_cleanup(tmp_path: Path) -> None:
+    """v7 迁移：needs_review 是 Update 审核概念；monitors.status 脏值修复为 active。
+
+    通过 user_version 回拨模拟 v6 旧库，验证 UPDATE 只作用于 Monitor 配置状态，
+    不触碰 monitor_updates 的审核语义。
+    """
+    store = ResearchStore.open(tmp_path / "research.sqlite")
+    store._conn.execute(
+        "INSERT INTO monitors (monitor_id, target_type, target_ref, question, status,"
+        " created_at) VALUES ('mon-dirty', 'topic', 'tariff', '关税跟踪', 'needs_review', ?)",
+        (T0,),
+    )
+    store._conn.execute(
+        "INSERT INTO monitor_runs (run_id, monitor_id, status, started_at)"
+        " VALUES ('mrun-dirty', 'mon-dirty', 'succeeded', ?)",
+        (T0,),
+    )
+    store._conn.execute(
+        "INSERT INTO monitor_updates (update_id, run_id, monitor_id, summary, reviewed,"
+        " created_at) VALUES ('mupd-dirty', 'mrun-dirty', 'mon-dirty', 'NDI 上升', 0, ?)",
+        (T0,),
+    )
+    store._conn.commit()
+    store._conn.execute("PRAGMA user_version = 6")
+
+    assert store.ensure_schema() == 7
+    assert store.get_monitor("mon-dirty") is not None
+    assert store.get_monitor("mon-dirty").status == "active"  # type: ignore[union-attr]
+    # Update 审核状态不受影响：仍待复核
+    assert len(store.pending_updates("mon-dirty")) == 1
+    store.close()

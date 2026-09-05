@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
 from oh_storage.connection import connect
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _DDL_V1 = """
 CREATE TABLE IF NOT EXISTS cases (
@@ -333,6 +333,14 @@ ALTER TABLE document_revisions ADD COLUMN external_key TEXT NOT NULL DEFAULT '';
         # Case 标题（列表展示主键；question 保留为研究问题正文）。
         """
 ALTER TABLE cases ADD COLUMN title TEXT NOT NULL DEFAULT '';
+""",
+    ),
+    (
+        7,
+        # 三概念分离：needs_review 是 Update 审核状态，不是 Monitor 配置状态
+        # （active/paused/error）。旧迁移/旧脚本把脏值写进 monitors.status，统一修复为 active。
+        """
+UPDATE monitors SET status = 'active' WHERE status = 'needs_review';
 """,
     ),
 )
