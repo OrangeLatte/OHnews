@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { HelpIcon } from "@/components/help/help-icon";
 import { Skeleton, toast } from "@/components/ui/toast";
-import { objectApi, type RevisionRow, type WorkflowOut } from "@/lib/object-api";
+import { objectApi, type ReportInputs, type RevisionRow, type WorkflowOut } from "@/lib/object-api";
 import { useT } from "@/lib/i18n/use-t";
 import { ModeHeader, StatusPill, stampId } from "@/components/case/case-shared";
 
@@ -21,13 +21,22 @@ const REPORT_TYPES = [
   "structured_summary",
   "econ_financial",
 ] as const;
-
 type ReportType = (typeof REPORT_TYPES)[number];
-type Section = { title?: string; body?: string };
 
-/** 后端 revisions 端点在 RevisionRow 之外还返回 content（lib 类型未含，本地补全）。 */
+type Section = {
+  title?: string;
+  body?: string;
+  evidence_refs?: string[];
+};
+
+/** 后端 revisions content（lib 类型未含本地扩展字段）。 */
 type RevisionWithContent = RevisionRow & {
-  content?: { sections?: Section[]; engine?: string; model_hint?: string };
+  content?: {
+    sections?: Section[];
+    engine?: string;
+    model_hint?: string;
+    inputs?: ReportInputs;
+  };
 };
 
 type Props = {
@@ -175,6 +184,8 @@ export default function ReportView({
   const sections: Section[] = Array.isArray(selectedRev?.content?.sections)
     ? (selectedRev!.content!.sections as Section[])
     : [];
+  const inputs: ReportInputs | null =
+    selectedRev?.content?.inputs ?? effectiveOut?.inputs ?? null;
 
   return (
     <div className="space-y-3">
@@ -244,6 +255,17 @@ export default function ReportView({
         <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
           <section className="rounded-xl border p-3">
             <p className="mb-2 text-[13px] font-semibold">{t("case.reportDraft")}</p>
+            {inputs ? (
+              <p className="mb-2 rounded-lg border bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground">
+                <span className="font-medium text-foreground/80">{t("case.reportInputs")}</span>
+                {" · "}
+                {t("case.inDocs")} {inputs.n_documents} · {t("case.inExtractions")}{" "}
+                {inputs.n_extractions} · {t("case.inClaims")} {inputs.n_claims} ·{" "}
+                {t("case.inChallenges")} {inputs.n_challenge_runs} · {t("case.inCompares")}{" "}
+                {inputs.n_compare_runs}
+                {inputs.truncated ? ` · ${t("case.inputsTruncated")}` : null}
+              </p>
+            ) : null}
             {revLoading ? (
               <div className="space-y-2">
                 <Skeleton className="h-5 w-2/3" />
@@ -262,6 +284,21 @@ export default function ReportView({
                         {s.title ? <h3 className="text-[13px] font-semibold">{s.title}</h3> : null}
                         {s.body ? (
                           <p className="mt-1 whitespace-pre-wrap text-[13px] leading-6 text-foreground/90">{s.body}</p>
+                        ) : null}
+                        {s.evidence_refs?.length ? (
+                          <p className="mt-1 flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] text-muted-foreground">
+                              {t("case.evidenceRefs")}
+                            </span>
+                            {s.evidence_refs.map((ref) => (
+                              <span
+                                key={ref}
+                                className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground"
+                              >
+                                {ref}
+                              </span>
+                            ))}
+                          </p>
                         ) : null}
                       </div>
                     ))}

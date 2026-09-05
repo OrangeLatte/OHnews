@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useOt } from "@/components/observe/i18n-bridge";
 import { relParts } from "@/components/observe/rel-time";
 import { StatusDot } from "@/components/observe/status-dots";
@@ -121,6 +122,7 @@ export function InboxPanel({
 }) {
   const t = useT();
   const ot = useOt();
+  const router = useRouter();
 
   const { q, qInput, lang, element, value, valueInput, includeCased, selSources } = filters;
   const filterKey = useMemo(
@@ -201,7 +203,12 @@ export function InboxPanel({
     }
     const items = checkedRows.filter((r) => !r.cased);
     if (items.length === 0) {
-      toast.info(ot("observe.inbox.allCased", "Selected articles are already in a case."));
+      toast.error(
+        ot(
+          "observe.inbox.allCased",
+          "Selected articles are already in a case. Toggle \"show cased\" to review them.",
+        ),
+      );
       return;
     }
     setCreating(true);
@@ -227,6 +234,7 @@ export function InboxPanel({
 
       let failed = 0;
       let previewUsed = 0;
+      let firstFail = "";
       for (const row of items) {
         try {
           const full = await loadFullBody(row);
@@ -247,8 +255,9 @@ export function InboxPanel({
             }),
           });
           if (!ar.ok) throw new Error(await errText(ar));
-        } catch {
+        } catch (e: unknown) {
           failed += 1;
+          if (!firstFail) firstFail = e instanceof Error ? e.message : String(e);
         }
         setProgress((p) => ({ ...p, done: p.done + 1 }));
       }
@@ -260,11 +269,18 @@ export function InboxPanel({
             n: items.length,
           }),
         );
-      } else {
-        toast.error(
-          ot("observe.inbox.casePartialToast", "Case created, but {failed} attach failed", { failed }),
-        );
+        setLastCreated({ caseId, n: items.length });
+        setChecked(new Set());
+        setCaseTitle("");
+        setCaseQuestion("");
+        setTick((x) => x + 1);
+        // 验收标准：建案成功必须可感知且可继续——直接跳转（后退可回 Inbox，来源不丢）
+        router.push(`/cases/${caseId}`);
+        return;
       }
+      toast.error(
+        `${ot("observe.inbox.casePartialToast", "Case created, but {failed} attach failed", { failed })}${firstFail ? ` — ${firstFail}` : ""}`,
+      );
       if (previewUsed > 0) {
         toast.info(
           ot("observe.inbox.previewFallback", "{n} article(s) attached with preview body (full text unavailable)", {

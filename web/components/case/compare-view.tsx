@@ -19,7 +19,7 @@ import {
   type DocRow,
 } from "@/components/case/case-shared";
 
-type RowStatus = "agree" | "conflict" | "gap";
+type RowStatus = "agree" | "conflict" | "missing";
 
 const domValue = (rows: ExtractionRow[] | undefined): string | null => {
   const list = rows ?? [];
@@ -52,6 +52,7 @@ export default function CompareView({
   const [picked, setPicked] = useState<string[]>([]);
   const [baseline, setBaseline] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [blockedOut, setBlockedOut] = useState<WorkflowOut | null>(null);
 
   // 选中文档的 extractions 惰性并行加载（值列展示用）
   useEffect(() => {
@@ -76,15 +77,17 @@ export default function CompareView({
   }, [docs, picked, baseline]);
 
   const diffRows = useMemo(() => {
-    if (!cmpOut) return [] as { element: string; status: RowStatus }[];
+    if (!cmpOut) return [] as { element: string; status: RowStatus; classification?: string }[];
     const conflicts = cmpOut.conflicts ?? {};
     const agree = new Set(cmpOut.agreement ?? []);
-    const gaps = new Set(cmpOut.gaps ?? []);
-    const keys = new Set<string>([...agree, ...Object.keys(conflicts), ...gaps]);
+    const missing = new Set([...(cmpOut.missing ?? []), ...(cmpOut.gaps ?? [])]);
+    const keys = new Set<string>([...agree, ...Object.keys(conflicts), ...missing]);
     return [...keys]
       .map((element) => ({
         element,
-        status: (conflicts[element] ? "conflict" : agree.has(element) ? "agree" : "gap") as RowStatus,
+        status: (conflicts[element] ? "conflict" : agree.has(element) ? "agree" : "missing") as RowStatus,
+        classification:
+          typeof conflicts[element]?.classification === "string" ? conflicts[element].classification : undefined,
       }))
       .sort((a, b) => elementOrderIndex(a.element) - elementOrderIndex(b.element));
   }, [cmpOut]);
@@ -93,7 +96,7 @@ export default function CompareView({
     () => ({
       agree: diffRows.filter((r) => r.status === "agree").length,
       conflict: diffRows.filter((r) => r.status === "conflict").length,
-      gap: diffRows.filter((r) => r.status === "gap").length,
+      gap: diffRows.filter((r) => r.status === "missing").length,
     }),
     [diffRows],
   );
@@ -101,12 +104,18 @@ export default function CompareView({
   const runCompare = () => {
     setBusy(true);
     setRunError(null);
+    setBlockedOut(null);
     objectApi
       .compare(caseId, picked)
       .then((r) => {
         if (r.status === "failed") {
           setRunError(r.error || r.status);
           toast.error(r.error || t("case.loadFailed"));
+        } else if (r.output?.blocked) {
+          // 相关性门槛拦截：不渲染 diff 表，诚实呈现拦截原因（P0-2）
+          setBlockedOut(r.output);
+          setCmpOut(null);
+          toast.info(r.output.summary || t("case.compareBlocked"));
         } else if (!r.output) {
           setRunError(r.status);
           toast.info(`${t("case.status")}: ${r.status}`);
@@ -189,6 +198,17 @@ export default function CompareView({
         </p>
       ) : null}
 
+      {blockedOut && !busy ? (
+        <section className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4" aria-live="polite">
+          <span className="rounded bg-[#fef3c7] px-1.5 py-0.5 text-[11px] font-medium text-[#b45309] dark:bg-amber-500/15 dark:text-amber-300">
+            {blockedOut.eligibility?.comparison_mode === "cross_event_analogy"
+              ? t("case.crossEventMode")
+              : t("case.compareBlocked")}
+          </span>
+          <p className="mt-2 text-sm">{blockedOut.summary}</p>
+        </section>
+      ) : null}
+
       {cmpOut && !busy ? (
         <>
           {/* 统计条：+一致 −冲突 缺缺口 + 比例条 */}
@@ -227,7 +247,7 @@ export default function CompareView({
                 </tr>
               </thead>
               <tbody>
-                {diffRows.map(({ element, status }) => (
+                {diffRows.map(({ element, status, classification }) => (
                   <tr key={element} className="border-b last:border-b-0">
                     <td className="p-2">
                       <ElementChip elementKey={element} />
@@ -239,7 +259,7 @@ export default function CompareView({
                         </span>
                       ) : status === "conflict" ? (
                         <span className="rounded bg-[#fee2e2] px-1.5 py-0.5 font-medium text-[#b91c1c] dark:bg-red-500/15 dark:text-red-300">
-                          ▲ {t("case.diffConflict")}
+                          ▲ {classification === "narrative_difference" ? t("case.diffNarrative") : t("case.diffFact")}
                         </span>
                       ) : (
                         <span className="rounded bg-zinc-500/10 px-1.5 py-0.5 text-zinc-500">{t("case.missingShort")}</span>

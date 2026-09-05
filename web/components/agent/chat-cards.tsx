@@ -293,7 +293,68 @@ function UnknownCardView({ card, t }: { card: CardData; t: TFn }) {
   );
 }
 
-export function ChatCardView({ card }: { card: CardData }) {
+/** 写操作预览卡：确认后由 AgentDock 回发 confirmed_action 执行；取消仅本地消失。 */
+function ConfirmActionCardView({
+  card,
+  t,
+  onConfirm,
+}: {
+  card: CardData;
+  t: TFn;
+  onConfirm?: (message: string) => void;
+}) {
+  const [dismissed, setDismissed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const changes = Array.isArray(card.changes) ? (card.changes as string[]) : [];
+  if (dismissed) return null;
+  if (card.needs_confirmation === false) {
+    return (
+      <div className="ag-card border-amber-500/40 bg-amber-500/10">
+        <CardTitle label={t("chat.readOnlyBadge")} />
+      </div>
+    );
+  }
+  return (
+    <div className="ag-card border-amber-500/40 bg-amber-500/5">
+      <CardTitle label={t("chat.card.confirmAction")} extra={typeof card.intent === "string" ? card.intent : undefined} />
+      <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+        {changes.map((c) => (
+          <li key={c}>· {c}</li>
+        ))}
+      </ul>
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            const msg = typeof card.message === "string" ? card.message : "";
+            if (!msg || !onConfirm) return;
+            setBusy(true);
+            onConfirm(msg);
+          }}
+          className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-60"
+        >
+          {busy ? "…" : t("chat.confirmExec")}
+        </button>
+        <button
+          type="button"
+          onClick={() => setDismissed(true)}
+          className="rounded-md border px-2.5 py-1 text-xs"
+        >
+          {t("chat.confirmCancel")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function ChatCardView({
+  card,
+  onConfirm,
+}: {
+  card: CardData;
+  onConfirm?: (message: string) => void;
+}) {
   const t = useT();
   switch (card.type) {
     case "tool_call":
@@ -310,18 +371,26 @@ export function ChatCardView({ card }: { card: CardData }) {
       return <ObserveSummaryCardView card={card} t={t} />;
     case "case":
       return <CaseCardView card={card} t={t} />;
+    case "confirm_action":
+      return <ConfirmActionCardView card={card} t={t} onConfirm={onConfirm} />;
     default:
       return <UnknownCardView card={card} t={t} />;
   }
 }
 
 /** 卡片流：cards 缺省/空时渲染 null（消息正文照常显示）。 */
-export function CardList({ cards }: { cards?: CardData[] }) {
+export function CardList({
+  cards,
+  onConfirm,
+}: {
+  cards?: CardData[];
+  onConfirm?: (message: string) => void;
+}) {
   if (!cards || cards.length === 0) return null;
   return (
     <div className="mt-1 space-y-1">
       {cards.map((c, i) => (
-        <ChatCardView key={`${c.type}-${i}`} card={c} />
+        <ChatCardView key={`${c.type}-${i}`} card={c} onConfirm={onConfirm} />
       ))}
     </div>
   );

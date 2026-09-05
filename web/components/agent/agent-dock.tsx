@@ -142,7 +142,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-function EntryCard({ entry, youLabel, agentLabel }: { entry: ChatEntry; youLabel: string; agentLabel: string }) {
+function EntryCard({ entry, youLabel, agentLabel, onConfirm }: { entry: ChatEntry; youLabel: string; agentLabel: string; onConfirm?: (msg: string) => void }) {
   const mt: MessageType = entry.message_type ?? "answer";
   return (
     <div className={`ag-card ${entry.role === "user" ? "ag-echo" : ""}`}>
@@ -153,7 +153,7 @@ function EntryCard({ entry, youLabel, agentLabel }: { entry: ChatEntry; youLabel
         </span>
       </p>
       {entry.text ? <p className="whitespace-pre-wrap break-words">{entry.text}</p> : null}
-      <CardList cards={entry.cards} />
+      <CardList cards={entry.cards} onConfirm={onConfirm} />
     </div>
   );
 }
@@ -337,6 +337,52 @@ function ChatTab({
       .finally(() => setSending(false));
   };
 
+  /** P0-1 确认执行：confirm_action 卡上用户显式确认后回发（服务端 confirmed 通道 bypass 预览门）。 */
+  const confirmSend = (msg: string): void => {
+    if (sending || !msg) return;
+    setSending(true);
+    const ensureThread = threadId
+      ? Promise.resolve(threadId)
+      : createThread(msg.slice(0, 48)).then((tid) => {
+          onThreadChange(tid);
+          return tid;
+        });
+    ensureThread
+      .then((tid) => {
+        setEntries((prev) => [...prev, { role: "user", text: msg }]);
+        return postJson<ChatReply>("/api/chat", {
+          message: msg,
+          thread_id: tid,
+          confirmed_action: { message: msg, params: {} },
+          ...(caseId ? { case_id: caseId } : {}),
+        }).then((res) => {
+          const cards = Array.isArray(res.cards) ? (res.cards as CardData[]) : undefined;
+          setEntries((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              text: textOf(res.reply),
+              message_type: res.offline ? "abstention" : "answer",
+              cards,
+            },
+          ]);
+          const runId = findProgressRunId(cards);
+          if (runId) setActiveRun(runId);
+        });
+      })
+      .catch((e: unknown) => {
+        setEntries((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            text: `${t("chat.sendFailed")}: ${e instanceof Error ? e.message : String(e)}`,
+            message_type: "error",
+          },
+        ]);
+      })
+      .finally(() => setSending(false));
+  };
+
   return (
     <>
       {/* 会话管理条 */}
@@ -398,6 +444,7 @@ function ChatTab({
             entry={e}
             youLabel={t("chat.you")}
             agentLabel={t("chat.agent")}
+            onConfirm={confirmSend}
           />
         ))}
         <div ref={bottomRef} />

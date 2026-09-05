@@ -147,6 +147,16 @@ export type ArchiveRow = {
   committed_at?: string | null;
 };
 
+/** 报告输入清单（run output.inputs / revision content.inputs）：核对报告输入与页面状态一致 */
+export type ReportInputs = {
+  n_documents: number;
+  n_extractions: number;
+  n_claims: number;
+  n_challenge_runs: number;
+  n_compare_runs: number;
+  truncated: boolean;
+};
+
 export type WorkflowOut = {
   run_id: string;
   status: string;
@@ -161,11 +171,15 @@ export type WorkflowOut = {
   counter_evidence?: { span_id: string; quote: string }[];
   conflicts?: Record<string, Record<string, string>>;
   agreement?: string[];
+  missing?: string[];
+  blocked?: boolean;
+  eligibility?: { probability?: string; comparison_mode?: string; avg_overlap?: number };
   gaps?: string[];
   summary?: string;
   n_sections?: number;
   n_elements?: number;
   skipped?: { artifact_id: string; reason: string }[];
+  inputs?: ReportInputs;
 };
 
 export type LaunchOut = {
