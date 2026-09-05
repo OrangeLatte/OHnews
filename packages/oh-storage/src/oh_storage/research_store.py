@@ -759,6 +759,23 @@ class ResearchStore:
         row = self._conn.execute(sql + " LIMIT 1", params).fetchone()
         return row is not None
 
+    def run_outputs_for_case(
+        self, case_id: str, kind: str, *, status: str = "succeeded", limit: int = 3
+    ) -> list[dict]:
+        """Case 内指定 kind 运行的富结果 output（新→旧；报告证据包引用挑战/比较产物）。"""
+        rows = self._conn.execute(
+            "SELECT output_json FROM analysis_runs"
+            " WHERE case_id = ? AND kind = ? AND status = ? AND output_json != ''"
+            " ORDER BY started_at DESC LIMIT ?",
+            (case_id, kind, status, limit),
+        ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            data = _loads(r["output_json"], None)
+            if isinstance(data, dict):
+                out.append(data)
+        return out
+
     def decisions_for_case(self, case_id: str) -> list[dict]:
         """A4：MonitorUpdate 的 HITL 决策（已关联本 case 的审计记录）。"""
         rows = self._conn.execute(
