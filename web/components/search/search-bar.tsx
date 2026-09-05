@@ -91,11 +91,11 @@ export function SearchBar() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [active]);
 
-  /** 文章点击 = 研究此文：全文入案建 Case，事件跳 OBSERVE。 */
+  /** 文章点击 = 研究此文；事件跳 OBSERVE 实体时间线（事件主体实体驱动，30d 窗口）。 */
   async function research(item: SearchResult) {
     if (item.kind === "event" && item.id) {
       track("change_opened", { objectId: item.id, fromPage: "/search-bar" });
-      router.push("/observe");
+      router.push("/observe?mode=entities&days=30");
       return;
     }
     if (!item.source_id || !item.item_key || busyId) return;
@@ -120,6 +120,7 @@ export function SearchBar() {
         body: detail.body,
         language: detail.language,
         canonical_url: detail.url || item.url,
+        title: detail.title || item.title || "",
       });
       track("case_created", { objectId: caseId, fromPage: "/search-bar" });
       toast.success(t("search.researchOk"));

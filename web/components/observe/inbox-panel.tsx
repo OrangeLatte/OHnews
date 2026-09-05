@@ -252,6 +252,7 @@ export function InboxPanel({
               language: row.language,
               published_at: row.published_at,
               external_key: row.item_key,
+              title: row.title || "",
             }),
           });
           if (!ar.ok) throw new Error(await errText(ar));

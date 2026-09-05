@@ -13,10 +13,12 @@ import { objectApi, type ExtractionRow, type WorkflowOut } from "@/lib/object-ap
 import { useT } from "@/lib/i18n/use-t";
 import {
   ElementChip,
+  FriendlyErrorBox,
   MISSING_CELL_BG,
   ModeHeader,
   elementOrderIndex,
   type DocRow,
+  docLabel,
 } from "@/components/case/case-shared";
 
 type RowStatus = "agree" | "conflict" | "missing";
@@ -159,7 +161,7 @@ export default function CompareView({
             aria-pressed={picked.includes(d.document_revision_id)}
             className={`rounded-md border px-2 py-1 text-xs ${picked.includes(d.document_revision_id) ? "border-sky-500 bg-sky-500/5 font-medium" : "text-muted-foreground hover:text-foreground"}`}
           >
-            {d.source_id}
+            {docLabel(d)}
             <span className="ml-1 opacity-60">{d.language}</span>
           </button>
         ))}
@@ -192,11 +194,7 @@ export default function CompareView({
 
       {busy ? <Skeleton className="h-10 w-full" /> : null}
 
-      {runError ? (
-        <p className="rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300">
-          {t("case.runError")}: {runError}
-        </p>
-      ) : null}
+      {runError ? <FriendlyErrorBox raw={runError} className="rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300" /> : null}
 
       {blockedOut && !busy ? (
         <section className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4" aria-live="polite">
@@ -238,7 +236,7 @@ export default function CompareView({
                   <th className="p-2 text-left font-medium">{t("case.diffStatus")}</th>
                   {cols.map((d, i) => (
                     <th key={d.document_revision_id} className="p-2 text-left font-medium">
-                      {d.source_id}
+                      {docLabel(d)}
                       {i === 0 && baseline ? (
                         <span className="ml-1 rounded bg-foreground/10 px-1 py-0.5 text-[10px]">{t("case.baselineTag")}</span>
                       ) : null}

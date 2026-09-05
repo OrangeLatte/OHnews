@@ -7,6 +7,8 @@
 
 import { useState } from "react";
 import type { SourceRow } from "@/lib/landscape-api";
+import { useT } from "@/lib/i18n/use-t";
+import { TIER_HINT_KEYS, kindLabel } from "@/lib/sources-meta";
 import { HEALTH_BADGE, HEALTH_DOT, healthOf, type Health, type Tr } from "./sources-ui";
 
 export type SortKey =
@@ -147,6 +149,8 @@ function SourceRowFragment({
   tr: Tr;
   onRefresh: (s: SourceRow) => void;
 }) {
+  const t = useT();
+  const tierHintKey = TIER_HINT_KEYS[s.tier];
   return (
     <>
       <tr
@@ -160,9 +164,14 @@ function SourceRowFragment({
         </td>
         <td className="px-2 py-2.5 font-mono text-xs font-medium">{s.source_id}</td>
         <td className="px-2 py-2.5">
-          <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium">{s.tier}</span>
+          <span
+            className="cursor-help rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium"
+            title={tierHintKey ? t(tierHintKey) : undefined}
+          >
+            {s.tier}
+          </span>
         </td>
-        <td className="px-2 py-2.5 text-xs">{s.kind}</td>
+        <td className="px-2 py-2.5 text-xs">{kindLabel(s.kind, t)}</td>
         <td className="px-2 py-2.5 text-xs uppercase">{s.language}</td>
         <td className="px-2 py-2.5 tabular-nums">{s.n_7d}</td>
         <td className="px-2 py-2.5 tabular-nums text-muted-foreground">{s.n_30d}</td>

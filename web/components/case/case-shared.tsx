@@ -9,16 +9,27 @@ import Link from "next/link";
 import { ELEMENT_COLORS } from "@/components/case/annotated-text";
 import { HelpIcon } from "@/components/help/help-icon";
 import { ELEMENT_HELP_KEYS } from "@/lib/help/registry";
+import { friendlyError } from "@/lib/error-friendly";
+import { useT } from "@/lib/i18n/use-t";
 
 export type DocRow = {
   document_revision_id: string;
   document_id: string;
   source_id: string;
+  title: string;
   language: string;
   published_at: string;
   fetched_at: string;
   added_at: string;
 };
+
+/** 文档唯一可读标识：优先原题，缺题回退「信源·时间」（诚实不编造）。 */
+export function docLabel(doc: DocRow): string {
+  if (doc.title) return doc.title;
+  const stamp = (doc.published_at || doc.fetched_at || doc.added_at).slice(0, 16)
+    .replace("T", " ");
+  return stamp ? `${doc.source_id} · ${stamp}` : doc.source_id;
+}
 
 export type SourceOption = { source_id: string; language: string; tier: string };
 
@@ -115,6 +126,31 @@ export function StatusPill({ status, label }: { status: string; label: string })
     <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${runMeta(status).pill}`} data-status={status}>
       {label}
     </span>
+  );
+}
+
+/** 运行错误展示：友好标题 + details/summary 折叠完整原文（根因不丢）。 */
+export function FriendlyErrorBox({ raw, className }: { raw: string; className?: string }) {
+  const t = useT();
+  const fe = friendlyError(raw);
+  const title = fe.titleKey ? t(fe.titleKey) : fe.fallbackTitle || raw;
+  return (
+    <div
+      className={
+        className ??
+        "rounded-md border border-red-500/40 bg-red-500/5 p-1.5 text-red-700 dark:text-red-300"
+      }
+    >
+      <p>{title}</p>
+      {fe.detail ? (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-[11px] opacity-80">{t("case.errDetail")}</summary>
+          <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-[11px] leading-4 opacity-80">
+            {fe.detail}
+          </pre>
+        </details>
+      ) : null}
+    </div>
   );
 }
 

@@ -14,11 +14,13 @@ import { objectApi, type CaseDetail, type WorkflowOut } from "@/lib/object-api";
 import { useT } from "@/lib/i18n/use-t";
 import { runKindLabel, runStatusLabel } from "@/lib/i18n/labels";
 import {
+  FriendlyErrorBox,
   ModeHeader,
   StatusPill,
   runMeta,
   secondsSince,
 } from "@/components/case/case-shared";
+import { friendlyErrorTitle } from "@/lib/error-friendly";
 
 type RunDetail = {
   run_id: string;
@@ -257,8 +259,11 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
                   <StatusPill status={r.status} label={runStatusLabel(t, r.status)} />
                   {r.engine ? <span className="text-muted-foreground">{r.engine}</span> : null}
                   {r.error ? (
-                    <span className="min-w-0 flex-1 truncate text-red-700 dark:text-red-300" title={r.error}>
-                      {r.error}
+                    <span
+                      className="min-w-0 flex-1 truncate text-red-700 dark:text-red-300"
+                      title={r.error}
+                    >
+                      {friendlyErrorTitle(r.error, t)}
                     </span>
                   ) : null}
                 </button>
@@ -311,11 +316,7 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
                       {d.output_artifact_id ? (
                         <p className="text-muted-foreground">artifact: {d.output_artifact_id}</p>
                       ) : null}
-                      {d.error ? (
-                        <p className="rounded-md border border-red-500/40 bg-red-500/5 p-1.5 text-red-700 dark:text-red-300">
-                          {t("case.errorRoot")}: {d.error}
-                        </p>
-                      ) : null}
+                      {d.error ? <FriendlyErrorBox raw={d.error} /> : null}
                       <p className="text-[11px] text-muted-foreground">
                         {d.started_at?.slice(0, 19).replace("T", " ") ?? "—"} →{" "}
                         {d.finished_at?.slice(0, 19).replace("T", " ") ?? "—"}

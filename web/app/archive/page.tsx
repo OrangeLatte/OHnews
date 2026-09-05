@@ -201,7 +201,7 @@ export default function ArchivePage() {
                       <span className="min-w-0 truncate text-[13px] font-semibold">{a.title}</span>
                       {revisions && (
                         <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                          v1→v{revisions.length}
+                          {revisions.length >= 2 ? `v1→v${revisions.length}` : `v${revisions.length}`}
                         </span>
                       )}
                     </span>

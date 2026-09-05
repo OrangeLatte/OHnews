@@ -12,7 +12,7 @@ import { objectApi, type ReportInputs, type RevisionRow, type WorkflowOut } from
 import { readAnalysisLocale } from "@/lib/analysis-locale";
 import { useT } from "@/lib/i18n/use-t";
 import { revStatusLabel, runStatusLabel } from "@/lib/i18n/labels";
-import { ModeHeader, StatusPill, stampId } from "@/components/case/case-shared";
+import { ModeHeader, StatusPill, FriendlyErrorBox, stampId } from "@/components/case/case-shared";
 
 const REPORT_TYPES = [
   "veracity",
@@ -78,6 +78,8 @@ export default function ReportView({
   const [selectedRevId, setSelectedRevId] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [needChallenge, setNeedChallenge] = useState(false);
+  // REPORT 运行中提示：busy 为工作台级共享态（commit 等也置位），run 本身用独立标记
+  const [reportRunning, setReportRunning] = useState(false);
 
   // 会话内结果优先；无则从 HISTORY runs 恢复最近成功的 report 产物（刷新后不丢草稿）
   const effectiveOut = useMemo<WorkflowOut | null>(() => {
@@ -127,6 +129,7 @@ export default function ReportView({
     setBusy(true);
     setRunError(null);
     setNeedChallenge(false);
+    setReportRunning(true);
     const analysisLocale = readAnalysisLocale();
     objectApi
       .report(caseId, {
@@ -151,7 +154,10 @@ export default function ReportView({
         setRunError(msg);
         toast.error(msg);
       })
-      .finally(() => setBusy(false));
+      .finally(() => {
+        setBusy(false);
+        setReportRunning(false);
+      });
   };
 
   const selectedRev = revisions?.find((r) => r.revision_id === selectedRevId) ?? null;
@@ -236,11 +242,21 @@ export default function ReportView({
         <HelpIcon helpKey="state.needsConfirm" />
       </div>
 
-      {runError ? (
-        <p className="rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300">
-          {t("case.runError")}: {runError}
+      {reportRunning ? (
+        <p
+          className="flex items-center gap-2 rounded-xl border border-sky-500/40 bg-sky-500/5 p-3 text-xs text-sky-700 dark:text-sky-300"
+          aria-live="polite"
+        >
+          <span aria-hidden className="inline-flex items-center gap-0.5">
+            <span className="size-1 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
+            <span className="size-1 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
+            <span className="size-1 animate-bounce rounded-full bg-current" />
+          </span>
+          {t("case.reportRunning")}
         </p>
       ) : null}
+
+      {runError ? <FriendlyErrorBox raw={runError} className="rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300" /> : null}
       {!runError && reportOut && (reportOut.status === "abstained" || reportOut.status === "failed") ? (
         <p className="flex items-center gap-1 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
           {t("case.abstainedHint")}

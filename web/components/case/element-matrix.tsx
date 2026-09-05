@@ -21,6 +21,7 @@ import {
   elementOrderIndex,
   reviewPillClass,
   type DocRow,
+  docLabel,
 } from "@/components/case/case-shared";
 
 type CellSelection = { element: string; rid: string } | null;
@@ -198,7 +199,7 @@ export default function ElementMatrix({ docs, busy, dissecting, onDissect }: Pro
                       className="rounded-md px-1 py-0.5 font-medium hover:bg-muted"
                       title={t("case.sortCols")}
                     >
-                      {d.source_id}
+                      {docLabel(d)}
                       <span className="ml-1 opacity-60">{d.language}</span>
                       {docSort === "az" ? " ▲" : ""}
                     </button>

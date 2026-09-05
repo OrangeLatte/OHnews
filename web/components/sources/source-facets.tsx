@@ -7,6 +7,8 @@
 
 import type { ReactNode } from "react";
 import type { SourceRow } from "@/lib/landscape-api";
+import { useT } from "@/lib/i18n/use-t";
+import { kindLabel } from "@/lib/sources-meta";
 import { healthOf, type Health, type Tr } from "./sources-ui";
 
 export type Facets = {
@@ -113,6 +115,7 @@ export function SourceFacets({
   onFacet: (group: FacetGroup, value: string) => void;
   onClear: () => void;
 }) {
+  const t = useT();
   const tiers = [
     ...["L1", "L2", "L3", "L4"].filter((t) => rows.some((r) => r.tier === t)),
     ...uniqueValues(rows, (r) => r.tier).filter((t) => !["L1", "L2", "L3", "L4"].includes(t)),
@@ -168,7 +171,7 @@ export function SourceFacets({
         {kinds.map((kind) => (
           <ValueRow
             key={kind}
-            label={kind}
+            label={kindLabel(kind, t)}
             count={countFor("kind", kind)}
             active={facets.kind === kind}
             onClick={() => onFacet("kind", kind)}

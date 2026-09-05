@@ -23,6 +23,7 @@ import {
   stampId,
   type DocRow,
   type SourceOption,
+  docLabel,
 } from "@/components/case/case-shared";
 
 const MAX_KEYWORD_MARKS = 400;
@@ -287,7 +288,7 @@ export default function ReadMode({
                 onClick={() => activateDoc(d.document_revision_id)}
                 className={`rounded-md border px-2 py-1 text-xs ${activeDoc === d.document_revision_id ? "border-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`}
               >
-                {d.source_id}
+                {docLabel(d)}
                 <span className="ml-1 opacity-60">{d.language}</span>
               </button>
             ))}

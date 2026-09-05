@@ -20,6 +20,7 @@ import { SourceTable, type SortDir, type SortKey } from "@/components/sources/so
 import { RunCenter } from "@/components/sources/run-center";
 import { ExtendWizard } from "@/components/sources/extend-wizard";
 import { healthOf, useTr } from "@/components/sources/sources-ui";
+import { TIER_HINT_KEYS, TIER_LEGEND } from "@/lib/sources-meta";
 
 async function triggerRefresh(sourceId: string): Promise<void> {
   const r = await fetch(`/api/sources/${encodeURIComponent(sourceId)}/refresh`, {
@@ -204,6 +205,19 @@ export default function SourcesPage() {
               onClear={clearAll}
             />
             <div className="space-y-3">
+              {/* tier 图例：L1-L4 语义说明（四色点 + 文案） */}
+              <div
+                className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground"
+                aria-label={t("sources.tierLegend")}
+              >
+                {TIER_LEGEND.map(({ tier, dot }) => (
+                  <span key={tier} className="inline-flex items-center gap-1.5">
+                    <span aria-hidden className={`size-2 shrink-0 rounded-full ${dot}`} />
+                    <span className="font-medium text-foreground/80">{tier}</span>
+                    <span>{t(TIER_HINT_KEYS[tier])}</span>
+                  </span>
+                ))}
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   value={q}
