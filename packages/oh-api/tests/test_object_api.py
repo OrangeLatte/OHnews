@@ -155,6 +155,56 @@ def test_monitor_flow(client: TestClient) -> None:
     assert r.status_code == 200 and r.json()["confirmed_at"]
 
 
+def test_update_review_status_derived(client: TestClient) -> None:
+    """review_status 派生键：unreviewed / ignored / accepted（API 层 dict，契约模型不变）。"""
+    assert (
+        client.post(
+            "/api/monitors",
+            json={
+                "monitor_id": "mon-rs",
+                "target_type": "topic",
+                "target_ref": "tariff",
+                "question": "关税叙事是否升级",
+                "trigger_conditions": [],
+                "notification": "email",
+            },
+        ).status_code
+        == 200
+    )
+    run_id = client.post("/api/monitors/mon-rs/runs").json()["run_id"]
+    created = client.post(
+        "/api/monitors/mon-rs/updates",
+        json={
+            "update_id": "u-rs-1",
+            "run_id": run_id,
+            "monitor_id": "mon-rs",
+            "summary": "增量 A",
+            "created_at": "2026-09-03T12:30:00+00:00",
+        },
+    ).json()
+    assert created["review_status"] == "unreviewed"
+
+    pending = client.get("/api/monitors/mon-rs/updates").json()
+    assert [u["review_status"] for u in pending] == ["unreviewed"]
+
+    # ignore → ignored
+    r = client.post("/api/monitors/updates/u-rs-1/review", json={"decision": "ignore"})
+    assert r.json()["review_status"] == "ignored"
+
+    # 第二条：new_case → accepted（并建候选 Case）
+    update2 = {
+        "update_id": "u-rs-2",
+        "run_id": run_id,
+        "monitor_id": "mon-rs",
+        "summary": "增量 B",
+        "created_at": "2026-09-03T12:40:00+00:00",
+    }
+    client.post("/api/monitors/mon-rs/updates", json=update2)
+    r = client.post("/api/monitors/updates/u-rs-2/review", json={"decision": "new_case"})
+    body = r.json()
+    assert body["review_status"] == "accepted" and body["case_id"].startswith("case-")
+
+
 def test_hitl_flow(client: TestClient) -> None:
     client.post(
         "/api/agent/threads",

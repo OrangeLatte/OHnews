@@ -109,7 +109,21 @@ class MonitorIn(BaseModel):
     trigger_conditions: list[str] = []
     window: str = "7d"
     schedule: str = "6h"
+    notification: str = "in_app"
     case_id: str | None = None
+
+
+def _review_status(reviewed: bool, decision: str) -> str:
+    """Update 审核状态（派生键，独立于 Monitor 配置状态）：
+
+    reviewed=0 → unreviewed；decision=ignore → ignored；
+    decision∈{new_case, join_case} → accepted（decision_case_id 作关联 Case 审计）。
+    """
+    if decision in ("new_case", "join_case"):
+        return "accepted"
+    if decision == "ignore":
+        return "ignored"
+    return "accepted" if reviewed else "unreviewed"
 
 
 class MonitorPatchIn(BaseModel):
@@ -397,6 +411,7 @@ def build_object_router(
                 trigger_conditions=monitor.trigger_conditions,
                 window=monitor.window,
                 schedule=monitor.schedule,
+                notification=monitor.notification,
                 case_id=monitor.case_id,
                 created_at=_now(),
             )
@@ -448,11 +463,19 @@ def build_object_router(
         if update.monitor_id != monitor_id:
             raise HTTPException(409, "monitor_id mismatch")
         _store().add_monitor_update(update)
-        return {"update_id": update.update_id, "reviewed": False}
+        return {
+            "update_id": update.update_id,
+            "reviewed": False,
+            "review_status": _review_status(False, ""),
+        }
 
     @router.get("/api/monitors/{monitor_id}/updates")
     def pending_updates(monitor_id: str) -> list[dict]:
-        return [u.model_dump() for u in _store().pending_updates(monitor_id)]
+        """待复核队列（reviewed=0 行）；review_status 为 API 层派生键（契约模型不变）。"""
+        return [
+            {**u.model_dump(), "review_status": _review_status(u.reviewed, "")}
+            for u in _store().pending_updates(monitor_id)
+        ]
 
     @router.post("/api/monitors/updates/{update_id}/review")
     def review_update(update_id: str, body: ReviewIn | None = None) -> dict:
@@ -495,6 +518,7 @@ def build_object_router(
             "reviewed": True,
             "decision": decision,
             "case_id": case_id,
+            "review_status": _review_status(True, decision),
         }
 
     @router.post("/api/monitors/{monitor_id}/confirm-snapshot")
@@ -609,6 +633,8 @@ def build_object_router(
 
 class DissectIn(BaseModel):
     document_revision_id: str
+    # 分析输出语言（zh/en，P1-8 三独立字段之 analysis_locale）；空 = 后端默认行为
+    analysis_locale: str = ""
 
 
 class TranslateIn(BaseModel):
@@ -625,6 +651,8 @@ class ReportIn(BaseModel):
     title: str
     text: str = ""
     item_key: str = ""
+    # 分析输出语言（zh/en）；build_report(**model_dump()) 透传
+    analysis_locale: str = ""
 
 
 class ChallengeIn(BaseModel):
@@ -726,7 +754,12 @@ def build_workflow_router(
             case_id=case_id,
             refs=[body.document_revision_id],
             call=lambda run_id: asyncio.run(
-                _wf().dissect_document(case_id, body.document_revision_id, run_id=run_id)
+                _wf().dissect_document(
+                    case_id,
+                    body.document_revision_id,
+                    analysis_locale=body.analysis_locale,
+                    run_id=run_id,
+                )
             ),
         )
 
