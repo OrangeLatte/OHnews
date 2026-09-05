@@ -23,10 +23,15 @@ REPORT_ENGINES = Literal["llm", "offline"]
 
 
 class ReportSection(_StrictBase):
-    """报告分节：title 非空 + body 非空。"""
+    """报告分节：title 非空 + body 非空。
+
+    evidence_refs 引用真实证据 id（extraction_id/claim_id/document_revision_id）；
+    模型给不出可引用证据时留空并在 body 写明「证据不足」——诚实优先于硬凑。
+    """
 
     title: HeadlineStr
     body: str = Field(min_length=1)
+    evidence_refs: list[str] = Field(default_factory=list)
 
 
 class AgentReport(_StrictBase):

@@ -71,11 +71,17 @@ class DissectionSpan(_StrictBase):
 
 
 class DissectionElement(_StrictBase):
-    """单个拆解元素：闭集 key + 内容 + 可选原文定位。"""
+    """单个拆解元素：闭集 key + 内容 + 可选原文定位。
+
+    confidence 为模型自报置信度（校准规则由拆解 prompt 约束：1.0 仅限
+    原文逐字可引的显式事实；0.6-0.85 推断类；≤0.5 证据不足）；
+    None 表示模型未自报（offline 词典兜底等），由持久层按 engine 定值。
+    """
 
     element: ElementKey
     content: str = Field(min_length=1)
     spans: list[DissectionSpan] = Field(default_factory=list)
+    confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class ArticleDissection(_StrictBase):
