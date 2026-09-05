@@ -2079,11 +2079,19 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         无 keys/config 降级离线聚合；工作流触发不依赖 chat LLM。
         """
         message = str(body.get("message", "")).strip()
-        if not message:
+        if not message and not body.get("confirmed_action"):
             raise HTTPException(422, "message required")
         thread_id = str(body.get("thread_id") or uuid4().hex[:12])
         case_id = str(body.get("case_id") or "")
         params = {k: body[k] for k in _CHAT_PARAM_KEYS if body.get(k) is not None}
+        # P0-1 确认通道：前端 confirm_action 卡「确认执行」后重发原始消息+
+        # confirmed_action（服务端凭 confirmed=True 放行写操作门）。
+        confirmed_action = body.get("confirmed_action") or None
+        if confirmed_action:
+            message = str(confirmed_action.get("message") or message or "").strip()
+            params.update(
+                {k: v for k, v in (confirmed_action.get("params") or {}).items() if v is not None}
+            )
         cs = _chat_store()
         now = _now()
         ts = now.isoformat()
@@ -2106,6 +2114,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                 now=now,
                 case_id=case_id,
                 params=params,
+                confirmed=bool(confirmed_action),
             )
         except Exception as exc:  # LLM 全候选失败→离线聚合降级回复，绝不裸 500
             try:

@@ -227,14 +227,15 @@ def test_workflow_endpoints_offline_honest(client: TestClient) -> None:
     failed = _await_run(client, r.json()["run_id"])
     assert failed["status"] == "failed" and "2 个" in failed["error"]
 
-    # 报告 offline → abstained 但仍产出 draft revision（output_artifact_id 非空）
+    # 报告空证据包（有文档但无拆解元素）→ 诚实 failed，不产 draft（不假 succeeded）
     r = client.post(
         "/api/cases/case-t1/report",
         json={"report_type": "veracity", "title": "核实报告"},
     )
     assert r.status_code == 202
     body = _await_run(client, r.json()["run_id"])
-    assert body["status"] == "abstained" and body["output_artifact_id"]
+    assert body["status"] == "failed" and "报告证据包为空" in body["error"]
+    assert not body["output_artifact_id"]
 
     # challenge 不存在的 claim → 异步 failed（KeyError 根因）
     r = client.post("/api/cases/case-t1/challenge", json={"claim_id": "claim-x"})
