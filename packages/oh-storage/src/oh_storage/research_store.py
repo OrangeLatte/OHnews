@@ -388,15 +388,10 @@ class ResearchStore:
                 continue
             statements = [s.strip() for s in ddl.split(";") if s.strip()]
             for stmt in statements:
-                m = re.search(
-                    r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)", stmt, re.IGNORECASE
-                )
+                m = re.search(r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)", stmt, re.IGNORECASE)
                 if m:
                     table, column = m.group(1), m.group(2)
-                    cols = {
-                        r[1]
-                        for r in self._conn.execute(f"PRAGMA table_info({table})")
-                    }
+                    cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
                     if column in cols:
                         continue
                 self._conn.execute(stmt)
@@ -916,6 +911,15 @@ class ResearchStore:
             (revision_id,),
         ).fetchone()
         return Artifact(**dict(row)) if row else None
+
+    def get_artifact_revision(self, revision_id: str) -> dict | None:
+        """按 revision_id 取版本行（含 run_id，归档门校验报告源运行状态用）。"""
+        row = self._conn.execute(
+            "SELECT * FROM artifact_revisions WHERE revision_id = ?", (revision_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return {**dict(row), "content": _loads(row["content"], {}), "legacy": bool(row["legacy"])}
 
     def artifact_revisions(self, artifact_id: str) -> list[dict]:
         rows = self._conn.execute(

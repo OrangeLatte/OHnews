@@ -111,7 +111,10 @@ class ScriptRouter:
 
 
 def test_classify_intent_rules() -> None:
-    """规则兜底：中文/英文领域词 → 九意图；未命中一律 question。"""
+    """规则兜底：中文/英文领域词 → 十意图；未命中一律 question。
+
+    T3：疑问句 + Case 上下文指代词 → answer_case_question（优先于 status）。
+    """
     assert classify_intent("帮我拆解这篇文章") == "dissect"
     assert classify_intent("比较两个版本的口径差异") == "compare"
     assert classify_intent("生成一份研究报告") == "report"
@@ -123,6 +126,9 @@ def test_classify_intent_rules() -> None:
     assert classify_intent("美联储最近怎么样？") == "question"
     assert classify_intent("what's new in the inbox") == "observe"
     assert classify_intent("run status please") == "status"
+    assert classify_intent("当前 Case 只有几篇文章？") == "answer_case_question"
+    assert classify_intent("这个 Case 有哪些主张？") == "answer_case_question"
+    assert classify_intent("how many documents in this case?") == "answer_case_question"
 
 
 # ---------------------------------------------------------------- abstention
@@ -502,6 +508,7 @@ def test_command_question_injects_case_context(tmp_path: Path) -> None:
     """question 路径：context_injector 把 Case 摘要注入 prompt；router 在 → answer。
 
     prompts[0] 是意图分类调用（未命中规则词时 LLM 兜底），对话 prompt 是最后一条。
+    消息不含 Case 指代词（否则 T3 会路由到 answer_case_question）。
     """
     research = _research(tmp_path)
     _case(research)
@@ -509,7 +516,7 @@ def test_command_question_injects_case_context(tmp_path: Path) -> None:
     router = ScriptRouter()
     result = asyncio.run(
         run_chat_command(
-            "这个 Case 现状如何？",
+            "美联储最近有什么新表态？",
             [],
             bronze=None,
             store=None,
@@ -525,6 +532,51 @@ def test_command_question_injects_case_context(tmp_path: Path) -> None:
     assert result["reply"] == "基于上下文的回答。"
     assert "case-1" in router.prompts[-1] and "研究问题" in router.prompts[-1]
     assert any(c["type"] == "case" and c["case_id"] == "case-1" for c in result["cards"])
+
+
+def test_command_answer_case_question_read_only(tmp_path: Path) -> None:
+    """T3 answer_case_question：只读直答（文档数/标题）+ optional_actions 建议卡；零业务记录。"""
+    research = _research(tmp_path)
+    _case(research)
+    _doc(research, "case-1", "drev-a", "doc-a", seq=1)
+    _doc(research, "case-1", "drev-b", "doc-b", seq=2)
+    wf = FakeWorkflows(research)
+    result = asyncio.run(
+        run_chat_command(
+            "当前 Case 只有几篇文章？",
+            [],
+            bronze=None,
+            store=None,
+            gold=None,
+            registry=None,
+            research=research,
+            workflows=wf,
+            case_id="case-1",
+        )
+    )
+    assert result["intent"] == "answer_case_question"
+    assert result["message_type"] == "answer"
+    assert "2" in result["reply"]
+    # 只读：不触发工作流、不创建 analysis_run（chat 消息持久化在 API 层）
+    assert wf.calls == []
+    assert research.analysis_runs() == []
+    actions = next(c for c in result["cards"] if c["type"] == "optional_actions")
+    assert actions["needs_confirmation"] is False
+    assert actions["actions"]
+    # 无 case 上下文 → abstention + 根因
+    result2 = asyncio.run(
+        run_chat_command(
+            "当前 Case 只有几篇文章？",
+            [],
+            bronze=None,
+            store=None,
+            gold=None,
+            registry=None,
+            research=research,
+        )
+    )
+    assert result2["message_type"] == "abstention"
+    assert "未提供 case_id" in result2["reply"]
 
 
 # ---------------------------------------------------------------- ChatStore 持久化

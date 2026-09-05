@@ -444,9 +444,11 @@ class CaseWorkflows:
                 f"同事件概率低（实体/主题重叠 {avg:.2f}），已跳过默认交叉验证；"
                 "如需跨事件类比分析请明确要求。"
             )
+            # 诚实语义：被相关性门槛拦截 = 弃权不执行（abstained），不冒充成功
             self._finish_run(
                 run,
-                "succeeded",
+                "abstained",
+                error=summary,
                 output={
                     "eligibility": eligibility,
                     "blocked": True,
@@ -594,6 +596,8 @@ class CaseWorkflows:
             "claims": claims,
             "challenge_runs": challenge_runs,
             "compare_runs": compare_runs,
+            # 内部一致性锚点：随 evidence_json 序列化，供 build_report 三重校验
+            "_counts": {"n_documents": len(documents), "n_extractions": n_extractions},
         }
         inputs = {
             "n_documents": len(documents),
@@ -637,6 +641,28 @@ class CaseWorkflows:
             error = "报告证据包为空：无已拆解文档"
             self._finish_run(run, "failed", error=error)
             raise RuntimeError(error)
+        # 三重校验（declared / serialized / loaded 同一对象三处来源必须相等）：
+        # declared = inputs 清单计数；serialized = 实际放入 evidence_json 的条目数；
+        # loaded = json.loads(evidence_json) 后 len 计数。不一致即上下文完整性破坏，
+        # run failed 不产 draft（绝不把缺料报告冒充成功）。
+        evidence_json = _dumps(pack)
+        declared = (int(inputs["n_documents"]), int(inputs["n_extractions"]))
+        serialized = (
+            len(pack["documents"]),
+            sum(len(d["extraction_elements"]) for d in pack["documents"]),
+        )
+        loaded_pack = json.loads(evidence_json)
+        loaded = (
+            len(loaded_pack["documents"]),
+            sum(len(d["extraction_elements"]) for d in loaded_pack["documents"]),
+        )
+        if declared != serialized or declared != loaded:
+            error = (
+                "context_integrity_failed: "
+                f"declared={declared}, serialized={serialized}, loaded={loaded}"
+            )
+            self._finish_run(run, "failed", error=error)
+            raise RuntimeError(error)
         if self._report_graph is None:
             self._report_graph = build_report_graph(
                 router=self._router, store=self._silver, now_fn=self._graph_now
@@ -647,7 +673,7 @@ class CaseWorkflows:
             "title": title,
             "text": text,
             "dissection_json": "",
-            "evidence_json": _dumps(pack),
+            "evidence_json": evidence_json,
         }
         if analysis_locale:
             state_in["analysis_locale"] = analysis_locale

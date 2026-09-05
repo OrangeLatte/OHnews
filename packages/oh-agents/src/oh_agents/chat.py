@@ -388,6 +388,7 @@ ChatIntent = Literal[
     "observe",
     "question",
     "hitl",
+    "answer_case_question",
 ]
 CHAT_INTENTS: tuple[ChatIntent, ...] = (
     "plan",
@@ -399,6 +400,7 @@ CHAT_INTENTS: tuple[ChatIntent, ...] = (
     "observe",
     "question",
     "hitl",
+    "answer_case_question",
 )
 
 # 规则兜底（高置信领域词，顺序即优先级：status/hitl 元意图先于执行意图，
@@ -414,6 +416,26 @@ _INTENT_RULES: tuple[tuple[ChatIntent, tuple[str, ...]], ...] = (
     ("observe", ("收件箱", "观察", "变化", "信号", "最新动态", "observe", "inbox", "what's new")),
 )
 
+# Case 上下文指代词（T3）：疑问句 + 指代当前 Case 内部情况 → answer_case_question。
+# 规格含裸字 "本"，为避免「成本/基本/日本」等词误命中，替换为其上下文变体。
+_CASE_REF_MARKS: tuple[str, ...] = (
+    "当前",
+    "这个",
+    "这些",
+    "本案",
+    "本 case",
+    "本case",
+    "本文",
+    "本篇",
+    "几篇",
+    "多少",
+    "哪些",
+    "这篇",
+    "current",
+    "this case",
+    "how many",
+)
+
 INTENT_SYSTEM = """\
 你是 OH!News 对话路由器。把用户消息分类为以下意图之一：
 - plan: 请求规划研究步骤
@@ -425,6 +447,8 @@ INTENT_SYSTEM = """\
 - observe: 请求观察最新变化/收件箱/信号概览
 - hitl: 查询待人工确认（HITL）事项
 - question: 其他问答（基于已有数据回答问题）
+- answer_case_question: 询问当前 Case 内部情况（几篇文档/哪些标题/多少主张/
+  最近运行），基于 Case 上下文直接回答
 """
 
 
@@ -432,7 +456,10 @@ class IntentOut(BaseModel):
     """LLM 意图分类输出契约（pattern 闭集校验，非法输出按分类失败处理）。"""
 
     intent: str = Field(
-        pattern=r"^(plan|dissect|compare|report|challenge|status|observe|question|hitl)$"
+        pattern=(
+            r"^(plan|dissect|compare|report|challenge|status|observe|question"
+            r"|hitl|answer_case_question)$"
+        )
     )
 
 
@@ -529,11 +556,17 @@ def detect_read_only_forced(message: str) -> bool:
 
 
 def classify_intent(message: str) -> ChatIntent:
-    """规则兜底：领域词命中即返回对应意图，未命中一律 question（不猜）。"""
+    """规则兜底：领域词命中即返回对应意图，未命中一律 question（不猜）。
+
+    T3：疑问句且含 Case 上下文指代词（当前/这个/几篇/多少…）→
+    answer_case_question，优先于 question/status（直接回答 Case 内部情况）。
+    """
     text = message.strip().lower()
     # 多轮追问优先：疑问语境下即使出现执行类工作流关键词（"为什么要拆解…"），
     # 也应回答而非再次执行；元意图（status/observe/hitl）本身是查询，保留。
     if _is_interrogative(text):
+        if any(m in text for m in _CASE_REF_MARKS):
+            return "answer_case_question"
         for intent, keywords in _INTENT_RULES:
             if intent in ("status", "observe", "hitl") and any(k in text for k in keywords):
                 return intent
@@ -652,6 +685,54 @@ def _runs_summary_card(runs: list[Any]) -> dict[str, Any]:
             }
             for r in runs[:10]
         ],
+    }
+
+
+_ANSWER_CASE_SYSTEM = """\
+你是 OH!News 研究助理。用户在询问当前研究 Case 的内部情况。规则：
+- 只依据下方给出的 Case 上下文回答，直接回答问题本身；
+- 引用上下文中的证据（文档标题/信源/数量/运行记录），不虚构任何数据；
+- 不创建、不修改、不保存任何数据（纯只读问答）；
+- 上下文不足以回答时如实说明缺什么。
+"""
+
+
+def _case_question_context(research: Any, case: Any) -> str:
+    """answer_case_question 只读路径：组装 Case 内部情况上下文（文档/主张/运行）。"""
+    case_id = str(case.case_id)
+    docs = research.case_documents(case_id)
+    claims = research.claims_for_case(case_id)
+    runs = [r for r in research.analysis_runs(50) if r.case_id == case_id]
+    doc_lines = "\n".join(
+        f"  - {str(d.get('title') or d.get('source_id') or d['document_revision_id'])}"
+        f"（信源 {d.get('source_id') or '未知'}·{d.get('language') or '未知语言'}）"
+        for d in docs[:20]
+    )
+    run_lines = "\n".join(f"  - {r.kind} {r.status}（{r.started_at}）" for r in runs[:10])
+    return "\n".join(
+        [
+            f"Case {case_id}：{case.title or case.question}",
+            f"研究问题：{case.question}",
+            f"文档共 {len(docs)} 篇：",
+            doc_lines or "  （无）",
+            f"claims 共 {len(claims)} 条",
+            f"最近分析运行共 {len(runs)} 次：",
+            run_lines or "  （无）",
+        ]
+    )
+
+
+def _optional_actions_card(actions: list[dict[str, str]]) -> dict[str, Any]:
+    """只读建议卡（T3）：建议下一步可选操作，needs_confirmation=False 恒不触发执行。
+
+    响应 schema：{"type": "optional_actions", "title": str, "needs_confirmation": False,
+    "actions": [{"label": str, "message": str}]}——message 为用户可原样重发的指令。
+    """
+    return {
+        "type": "optional_actions",
+        "title": "下一步可选操作",
+        "needs_confirmation": False,
+        "actions": actions,
     }
 
 
@@ -835,8 +916,9 @@ async def run_chat_command(
     路径注入 ResearchState 摘要）→ hitl_gate（pending HITL 卡前置注入）。
     执行类意图（plan/dissect/compare/report/challenge）触发工作流后立即返回
     run_id（异步 202 协议，chat 不等待）；status/observe/hitl 只读汇总；
-    question 走既有 run_chat LLM 循环。返回 {reply, message_type, intent,
-    intent_by, cards, citations, tools_used, rounds}。
+    answer_case_question 基于 Case 上下文只读直答（不建 run，响应附
+    optional_actions 只读建议卡）；question 走既有 run_chat LLM 循环。返回
+    {reply, message_type, intent, intent_by, cards, citations, tools_used, rounds}。
 
     P0-1 权限纪律：执行类意图一律 state_mutation——未经 ``confirmed=True``
     （用户在卡片上显式确认）不触发任何工作流，返回 confirm_action 预览卡；
@@ -1071,6 +1153,52 @@ async def run_chat_command(
             "reply": f"当前有 {len(cards)} 条待人工确认：{listing}。请在 HITL 队列裁决。",
             "message_type": "hitl_request",
         }
+
+    if intent == "answer_case_question":
+        # T3 只读路径：组装 Case 上下文直接回答，不创建 analysis_run/不写业务库
+        # （chat 消息本身由 API 层持久化，与本分支无关）。
+        if case is None:
+            reason = f"case not found: {case_id}" if case_id else "未提供 case_id"
+            return _abstain(reason)
+        context = _case_question_context(research, case)
+        reply = ""
+        if router is not None:
+            try:
+                if tier is None:
+                    from oh_contracts.enums import Tier
+
+                    tier = Tier.IO
+                out, _ref, _usage = await router.invoke(
+                    tier,
+                    _ANSWER_CASE_SYSTEM,
+                    f"Case 上下文：\n{context}\n\n问题：{message}",
+                    ChatOutput,
+                )
+                reply = str(out.reply or "")
+            except Exception:  # noqa: BLE001 LLM 失败→规则回答兜底
+                reply = ""
+        if not reply:
+            docs = research.case_documents(case_id)
+            claims = research.claims_for_case(case_id)
+            titles = "、".join(
+                str(d.get("title") or d.get("source_id") or d["document_revision_id"])
+                for d in docs[:20]
+            )
+            reply = (
+                f"当前 Case 共 {len(docs)} 篇文档：{titles or '（无）'}；claims {len(claims)} 条。"
+            )
+        cards.append(_card_case(case))
+        cards.append(
+            _optional_actions_card(
+                [
+                    {"label": "拆解文档", "message": "拆解这篇文档"},
+                    {"label": "跨源比较", "message": "比较这些版本"},
+                    {"label": "生成报告", "message": "生成一份报告"},
+                    {"label": "查看运行状态", "message": "看看运行状态"},
+                ]
+            )
+        )
+        return {**base, "cards": cards, "reply": reply, "message_type": "answer"}
 
     # question（默认）：既有 LLM⇄tools 循环 + 上下文注入
     ctx = context_injector(research, case_id)

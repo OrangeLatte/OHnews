@@ -229,11 +229,58 @@ def test_compare_blocks_unrelated_events(store, case_id) -> None:
     assert out["blocked"] is True
     assert out["eligibility"]["same_event_probability"] == "low"
     assert out["comparison_id"] is None
+    # 诚实语义：被门槛拦截 = 弃权不执行（abstained，非 succeeded）
+    run = store.get_analysis_run(out["run_id"])
+    assert run is not None and run["status"] == "abstained"
     # 不落 ComparisonSet：不编造跨事件比较
     row = store._conn.execute(
         "SELECT COUNT(*) FROM comparison_sets WHERE case_id = ?", (case_id,)
     ).fetchone()
     assert row[0] == 0
+
+
+def test_compare_missing_never_agree(store, case_id) -> None:
+    """T5：单侧缺失元素绝不进 agreement/conflicts（missing ≠ agree）。
+
+    种数模式与 test_compare_sources_matrix 一致：actor（相异）+ hard_fact（共享）
+    保证通过 eligibility 门槛，implicit_bias 仅文档 A 有 → 必须落在 missing。
+    """
+    r1 = _add_revision(store, rev_id="drev-m1")
+    r2 = _add_revision(store, rev_id="drev-m2", body="另一版本正文", language="zh")
+    shared = "利率决议维持不变"
+    for rev_id, actor in (("drev-m1", "美联储"), ("drev-m2", "欧洲央行")):
+        store.add_extraction(
+            ElementExtraction(
+                extraction_id=f"ext-actor-{rev_id}",
+                case_id=case_id,
+                document_revision_id=rev_id,
+                element_key="actor",
+                normalized_value=actor,
+            )
+        )
+        store.add_extraction(
+            ElementExtraction(
+                extraction_id=f"ext-fact-{rev_id}",
+                case_id=case_id,
+                document_revision_id=rev_id,
+                element_key="hard_fact",
+                normalized_value=shared,
+            )
+        )
+    store.add_extraction(
+        ElementExtraction(
+            extraction_id="ext-bias-m1",
+            case_id=case_id,
+            document_revision_id=r1,
+            element_key="implicit_bias",
+            normalized_value="暗示市场恐慌",
+        )
+    )
+    wf = CaseWorkflows(research=store, now_fn=_NOW)
+    out = wf.compare_sources(case_id, [r1, r2])
+    assert "implicit_bias" in out["missing"]
+    assert "implicit_bias" not in out["agreement"]
+    assert "implicit_bias" not in out["conflicts"]
 
 
 def test_report_then_commit_via_archive(store, case_id) -> None:
@@ -351,6 +398,40 @@ def test_report_evidence_pack_covers_runs_and_truncation(store, case_id) -> None
     big = next(d for d in pack["documents"] if d["document_revision_id"] == r3)
     assert len(big["body"]) == 6000
     assert "截断" in big["body_note"]
+
+
+def test_report_context_integrity_triple_check(store, case_id) -> None:
+    """T2 三重校验：declared/serialized/loaded 一致时 succeeded；篡改 declared → failed。"""
+    _seed_report_evidence(store, case_id)
+    wf = CaseWorkflows(research=store, router=MultiRouter(), now_fn=_NOW)
+    out = asyncio.run(wf.build_report(case_id, report_type="veracity", title="一致报告"))
+    assert out["status"] == "succeeded"
+    run = store.get_analysis_run(out["run_id"])
+    assert run is not None
+    assert run["output"]["inputs"]["n_documents"] == 1
+    assert run["output"]["inputs"]["n_extractions"] == 1
+
+    # 人为篡改 declared（模拟计数漂移）→ context_integrity_failed，run failed 不产 draft
+    wf_tampered = CaseWorkflows(research=store, router=MultiRouter(), now_fn=_NOW)
+    orig = wf_tampered._collect_report_evidence
+
+    def _tamper(cid: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        pack, inputs = orig(cid)
+        return pack, {**inputs, "n_extractions": int(inputs["n_extractions"]) + 3}
+
+    wf_tampered._collect_report_evidence = _tamper  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="context_integrity_failed"):
+        asyncio.run(wf_tampered.build_report(case_id, report_type="veracity", title="篡改报告"))
+    failed = [
+        r
+        for r in store.analysis_runs()
+        if r.status == "failed" and "context_integrity_failed" in r.error
+    ]
+    assert len(failed) == 1
+    assert "declared=" in failed[0].error and "serialized=" in failed[0].error
+    # 篡改路径不产新 artifact（不冒充成功）
+    row = store._conn.execute("SELECT COUNT(*) FROM artifacts").fetchone()
+    assert row[0] == 1
 
 
 def test_challenge_claim_requires_existing_claim(store, case_id) -> None:
