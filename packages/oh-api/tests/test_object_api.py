@@ -567,6 +567,241 @@ def test_challenge_gate_and_history_enrichment(client: TestClient) -> None:
     )
 
 
+def test_commit_blocks_non_succeeded_report_run(app_env: tuple[TestClient, Path]) -> None:
+    """T1 归档门：报告源 run 弃权/失败/运行中 → 422 不可归档；legacy 无 run_id 放行。"""
+    from oh_contracts.case import AnalysisRun
+    from oh_storage.research_store import ResearchStore
+
+    client, tmp = app_env
+    assert client.post("/api/cases", json={**CASE, "case_id": "case-ab"}).status_code == 200
+    store = ResearchStore.open(tmp / "research.sqlite")
+    store.add_analysis_run(
+        AnalysisRun(
+            run_id="run-ab",
+            case_id="case-ab",
+            kind="report",
+            engine="llm",
+            status="abstained",
+            input_refs=["t"],
+            started_at="2026-09-03T12:00:00+00:00",
+        )
+    )
+    store.close()
+    assert (
+        client.post(
+            "/api/artifacts",
+            json={
+                "artifact_id": "art-ab",
+                "case_id": "case-ab",
+                "klass": "research_report",
+                "title": "离线降级稿",
+                "report_type": "veracity",
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/artifacts/art-ab/revisions",
+            json={"revision_id": "r-ab", "run_id": "run-ab", "content": {"engine": "offline"}},
+        ).status_code
+        == 200
+    )
+    blocked = client.post(
+        "/api/artifacts/art-ab/commit", json={"commit_id": "c-ab", "revision_id": "r-ab"}
+    )
+    assert blocked.status_code == 422
+    detail = blocked.json()["detail"]
+    assert "弃权" in detail or "abstained" in detail
+    # artifact 保留为草稿（门只拦归档，不删数据）
+    assert client.get("/api/artifacts").json() == []
+
+    # legacy：revision 无 run_id → 不拦（历史数据兼容）
+    assert (
+        client.post(
+            "/api/artifacts/art-ab/revisions",
+            json={"revision_id": "r-legacy", "content": {"text": "legacy"}},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/artifacts/art-ab/commit",
+            json={"commit_id": "c-legacy", "revision_id": "r-legacy"},
+        ).status_code
+        == 200
+    )
+
+
+def test_monitor_scheduler_health(client: TestClient) -> None:
+    """T3：有 run 历史 → scheduled 且 next_run_estimate=last+schedule；cron 诚实 unscheduled。"""
+    for mid, schedule in (("mon-sch", "6h"), ("mon-cron", "0 */6 * * *")):
+        assert (
+            client.post(
+                "/api/monitors",
+                json={
+                    "monitor_id": mid,
+                    "target_type": "case",
+                    "target_ref": "case-t1",
+                    "question": "分歧是否扩大",
+                    "schedule": schedule,
+                },
+            ).status_code
+            == 200
+        )
+    run_id = client.post("/api/monitors/mon-sch/runs").json()["run_id"]
+    r = client.get("/api/monitors/mon-sch/scheduler").json()
+    assert r["monitor_id"] == "mon-sch" and r["schedule"] == "6h"
+    assert r["scheduler_health"] == "scheduled"
+    assert r["last_run"] == {
+        "run_id": run_id,
+        "status": "queued",
+        "started_at": "2026-09-03T12:00:00+00:00",
+    }
+    assert r["next_run_estimate"] == "2026-09-03T18:00:00+00:00"
+    assert r["note"] == "estimate from last run + schedule; no live scheduler process"
+
+    # cron 文本解析不了 → 诚实 unscheduled + estimate=None（不猜 cron 语义；
+    # 配置问题优先于历史状态暴露）
+    cron = client.get("/api/monitors/mon-cron/scheduler").json()
+    assert cron["scheduler_health"] == "unscheduled" and cron["next_run_estimate"] is None
+    assert cron["last_run"] is None
+    assert client.get("/api/monitors/mon-none/scheduler").status_code == 404
+
+
+def test_monitor_scheduler_no_history(client: TestClient) -> None:
+    """T3：无 run 历史 → no_history，last_run/estimate 均为 None（诚实缺失）。"""
+    assert (
+        client.post(
+            "/api/monitors",
+            json={
+                "monitor_id": "mon-fresh",
+                "target_type": "topic",
+                "target_ref": "tariff",
+                "question": "关税叙事是否升级",
+                "schedule": "1d",
+            },
+        ).status_code
+        == 200
+    )
+    r = client.get("/api/monitors/mon-fresh/scheduler").json()
+    assert r["scheduler_health"] == "no_history"
+    assert r["last_run"] is None and r["next_run_estimate"] is None
+    assert r["schedule"] == "1d" and r["note"]
+
+
+def test_artifact_diff_identical_content(client: TestClient) -> None:
+    """T4：同 content 两版本 → changes 全 False；evidence_refs 集合差为空。"""
+    client.post("/api/cases", json=CASE)
+    assert (
+        client.post(
+            "/api/artifacts",
+            json={
+                "artifact_id": "art-d0",
+                "case_id": "case-t1",
+                "klass": "press_edition",
+                "title": "晨报",
+            },
+        ).status_code
+        == 200
+    )
+    content = {
+        "title": "头版",
+        "sections": [
+            {"title": "宏观", "body": "正文一"},
+            {"title": "市场", "body": "正文二"},
+        ],
+        "evidence_refs": ["a", "b"],
+    }
+    for rid in ("d0-r1", "d0-r2"):
+        assert (
+            client.post(
+                "/api/artifacts/art-d0/revisions", json={"revision_id": rid, "content": content}
+            ).status_code
+            == 200
+        )
+    r = client.get("/api/artifacts/art-d0/diff", params={"from": "d0-r1", "to": "d0-r2"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["artifact_id"] == "art-d0"
+    assert body["from"]["revision_id"] == "d0-r1" and body["from"]["status"] == "draft"
+    assert body["to"]["revision_id"] == "d0-r2" and body["to"]["created_at"]
+    assert {c["field"] for c in body["changes"]} == {
+        "title",
+        "sections[0]",
+        "sections[1]",
+        "evidence_refs",
+    }
+    assert all(c["changed"] is False for c in body["changes"])
+    ev = next(c for c in body["changes"] if c["field"] == "evidence_refs")
+    assert ev["from_value"] == [] and ev["to_value"] == []
+
+
+def test_artifact_diff_field_changes_and_ownership(client: TestClient) -> None:
+    """T4：字段级差异（sections 只含 title 不输出正文全文；evidence_refs 集合差）+ 归属 404。"""
+    client.post("/api/cases", json=CASE)
+    for aid in ("art-d1", "art-d2"):
+        assert (
+            client.post(
+                "/api/artifacts",
+                json={
+                    "artifact_id": aid,
+                    "case_id": "case-t1",
+                    "klass": "research_report",
+                    "title": aid,
+                },
+            ).status_code
+            == 200
+        )
+    c1 = {
+        "title": "v1",
+        "sections": [{"title": "同题", "body": "旧正文"}],
+        "evidence_refs": ["a", "b"],
+        "note": None,
+    }
+    c2 = {
+        "title": "v2",
+        "sections": [{"title": "同题", "body": "新正文"}],
+        "evidence_refs": ["b", "c"],
+    }
+    assert (
+        client.post(
+            "/api/artifacts/art-d1/revisions", json={"revision_id": "d1-r1", "content": c1}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/artifacts/art-d1/revisions", json={"revision_id": "d1-r2", "content": c2}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/artifacts/art-d2/revisions", json={"revision_id": "d2-r1", "content": {}}
+        ).status_code
+        == 200
+    )
+
+    body = client.get("/api/artifacts/art-d1/diff", params={"from": "d1-r1", "to": "d1-r2"}).json()
+    changes = {c["field"]: c for c in body["changes"]}
+    assert changes["title"]["changed"] is True and changes["title"]["to_value"] == "v2"
+    sec = changes["sections[0]"]
+    assert sec["changed"] is True  # body 变化 → changed，但正文不出现在载荷
+    assert sec["from_value"] == {"title": "同题"} and sec["to_value"] == {"title": "同题"}
+    assert "body" not in (sec["from_value"] or {}) and "body" not in (sec["to_value"] or {})
+    ev = changes["evidence_refs"]
+    assert ev["changed"] is True and ev["from_value"] == ["a"] and ev["to_value"] == ["c"]
+    # 键并集：c1 独有键缺失侧诚实以 None 对比
+    assert changes["note"]["from_value"] is None and changes["note"]["changed"] is False
+
+    # 归属校验：revision 属于其他 artifact / 不存在 → 404
+    cross = client.get("/api/artifacts/art-d1/diff", params={"from": "d1-r1", "to": "d2-r1"})
+    assert cross.status_code == 404
+    missing = client.get("/api/artifacts/art-d1/diff", params={"from": "d1-r1", "to": "nope"})
+    assert missing.status_code == 404
+
+
 def test_close_case_and_list_filter(app_env: tuple[TestClient, Path]) -> None:
     """关闭案例：默认列表排除 closed；include_closed=1 可见；404 负例。"""
     client, _ = app_env

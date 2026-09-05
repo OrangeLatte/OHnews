@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from conftest import TIER_MAP, make_now, seed_event
+from conftest import GAIN_BODY, LOSS_BODY, TIER_MAP, make_now, seed_event
 from fastapi.testclient import TestClient
 from oh_api.app import AppPaths, create_app
 from oh_contracts.briefing import EvidenceCitation, EvidenceSet
+from oh_contracts.ids import make_item_key
+from oh_contracts.schemas import BronzeRecord
 from oh_contracts.signals import Signal, SignalKind
 from oh_pipeline.run import run_pipeline
 from oh_storage.bronze_parquet import ParquetBronzeWriter
@@ -751,6 +754,78 @@ def test_change_landscape_endpoint(client: TestClient) -> None:
     b2 = client.get("/api/change-landscape").json()
     assert b2["scene_id"] == a["scene_id"]
     assert b2["current_window"]["n_articles"] == a["current_window"]["n_articles"]
+
+
+@pytest.fixture()
+def client_lowbase(tmp_path: Path) -> TestClient:
+    """低基线种子：当前窗 12/12（E01）+ 基线窗 gov 仅 2 篇 / wscn 6 篇。"""
+    bronze = ParquetBronzeWriter(tmp_path / "bronze")
+    store = SqliteStore(connect(tmp_path / "silver.sqlite"))
+    now = make_now()
+    ev = seed_event(bronze, store, "E01", now)
+    base_ts = now - timedelta(days=10)  # 落在 days=7 口径的 baseline 窗（now-14d → now-7d）
+    recs = [
+        BronzeRecord(
+            source_id=src,
+            item_key=make_item_key(src, f"E01-base-{src}-{i}", base_ts),
+            external_id=f"E01-base-{src}-{i}",
+            url_hash="u",
+            content_hash="c",
+            fetched_at=base_ts,
+            published_at=base_ts,
+            raw={},
+            normalized={"body": LOSS_BODY if src == "gov" else GAIN_BODY, "language": "zh"},
+        )
+        for src, n in (("gov", 2), ("wscn", 6))
+        for i in range(n)
+    ]
+    bronze.write(recs)
+    run_pipeline(
+        bronze, store, store, [ev], TIER_MAP, as_of=now, lookback_days=1, min_per_source=10
+    )
+    sources_yaml = tmp_path / "sources.yaml"
+    sources_yaml.write_text(
+        "sources:\n"
+        + "".join(
+            f"  - source_id: {sid}\n    tier: {tier.value}\n" for sid, tier in TIER_MAP.items()
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(AppPaths(root=tmp_path, sources_yaml=sources_yaml, now_fn=make_now))
+    return TestClient(app)
+
+
+def test_change_landscape_low_baseline_growth(client_lowbase: TestClient) -> None:
+    """T2 低基数诚实弃权：n_baseline<5 → growth=None + low_baseline；≥5 正常产出比率。"""
+    a = client_lowbase.get("/api/change-landscape").json()
+    by_src = {s["source_id"]: s for s in a["source_streams"]}
+    assert by_src["gov"]["n_baseline"] == 2 and by_src["gov"]["n_current"] == 12
+    assert by_src["gov"]["growth"] is None and by_src["gov"]["low_baseline"] is True
+    assert by_src["wscn"]["n_baseline"] == 6 and by_src["wscn"]["n_current"] == 12
+    assert by_src["wscn"]["growth"] == 100.0 and by_src["wscn"]["low_baseline"] is False
+    # None 序列化兼容：JSON 里必须是 null（前端 SourceStream.growth?: number | null）
+    raw = client_lowbase.get("/api/change-landscape").text
+    assert '"growth":null' in raw.replace(" ", "")
+
+
+def test_change_landscape_evidence_articles(client: TestClient) -> None:
+    """T1：qualified_changes 附 evidence_articles（主题词 bronze 检索，top≤3，无命中为空）。"""
+    a = client.get("/api/change-landscape").json()
+    chs = a["qualified_changes"]
+    assert chs, "极化种子应产出合格变化"
+    n_cited = 0
+    for c in chs:
+        eas = c["evidence_articles"]
+        assert isinstance(eas, list) and len(eas) <= 3
+        for e in eas:
+            assert set(e) == {"item_key", "source_id", "title", "published_at", "language"}
+            assert e["source_id"] in {"gov", "wscn"}
+            assert e["item_key"] and e["published_at"]
+            # 种子 normalized 无 language → 诚实空串（不编造语言）
+            assert e["language"] == ""
+            n_cited += 1
+    # 主题词 = 变化主体标签「美联储」（两个种子正文均含）→ 至少一个变化命中证据
+    assert n_cited > 0
 
 
 def _sig(entity_id: str = "fed") -> Signal:

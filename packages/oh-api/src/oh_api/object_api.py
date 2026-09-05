@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import unquote
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from oh_contracts.agent_runtime import (
     AgentRun,
@@ -156,6 +157,84 @@ class AgentRunIn(BaseModel):
 class HITLDecideIn(BaseModel):
     status: str
     note: str = ""
+
+
+_SCHEDULE_RE = re.compile(r"^(\d+)\s*([mhdw])$", re.IGNORECASE)
+_SCHEDULE_UNITS: dict[str, int] = {"m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def parse_schedule_seconds(schedule: str) -> int | None:
+    """简单后缀调度解析（"6h"/"1d"/"12h"/"30m"/"2w"）→ 秒；cron 等不可解析 → None。
+
+    诚实纪律：解析不了就返回 None（诚实弃权），不猜测 cron 语义。
+    """
+    m = _SCHEDULE_RE.match(str(schedule or "").strip())
+    if m is None:
+        return None
+    return int(m.group(1)) * _SCHEDULE_UNITS[m.group(2).lower()]
+
+
+def parse_iso_dt(ts: str) -> datetime | None:
+    """ISO 时间串解析（容忍 Z 后缀）；非法输入返回 None，不抛异常。"""
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def diff_artifact_content(content_a: dict, content_b: dict) -> list[dict]:
+    """Artifact 两版本 content 的字段级对比（T4，纯函数）。
+
+    规则：
+    - 普通键：值直接 == 对比（含 None=键缺失），输出 from_value/to_value；
+    - ``sections`` 列表（报告/报纸）：按 index 对比 title+body 是否变化，
+      changed 布尔；载荷只含 title 元数据，不输出正文全文 diff；
+    - ``evidence_refs`` 列表：集合差——from_value=被移除 id，to_value=新增 id。
+    """
+    changes: list[dict] = []
+    for key in sorted(set(content_a) | set(content_b)):
+        va = content_a.get(key)
+        vb = content_b.get(key)
+        if key == "sections" and (isinstance(va, list) or isinstance(vb, list)):
+            ls_a = va if isinstance(va, list) else []
+            ls_b = vb if isinstance(vb, list) else []
+            changes.extend(_diff_sections(ls_a, ls_b))
+        elif key == "evidence_refs" and (isinstance(va, list) or isinstance(vb, list)):
+            ids_a = {str(x) for x in (va or [])}
+            ids_b = {str(x) for x in (vb or [])}
+            removed = sorted(ids_a - ids_b)
+            added = sorted(ids_b - ids_a)
+            changes.append(
+                {
+                    "field": key,
+                    "from_value": removed,
+                    "to_value": added,
+                    "changed": bool(removed or added),
+                }
+            )
+        else:
+            changes.append({"field": key, "from_value": va, "to_value": vb, "changed": va != vb})
+    return changes
+
+
+def _diff_sections(secs_a: list, secs_b: list) -> list[dict]:
+    """sections 逐 index 对比：title/body 任一变化即 changed；正文不进载荷。"""
+    out: list[dict] = []
+    for i in range(max(len(secs_a), len(secs_b))):
+        sa = secs_a[i] if i < len(secs_a) else None
+        sb = secs_b[i] if i < len(secs_b) else None
+        ta = str((sa or {}).get("title") or "")
+        tb = str((sb or {}).get("title") or "")
+        body_changed = str((sa or {}).get("body") or "") != str((sb or {}).get("body") or "")
+        out.append(
+            {
+                "field": f"sections[{i}]",
+                "from_value": {"title": ta} if sa is not None else None,
+                "to_value": {"title": tb} if sb is not None else None,
+                "changed": (ta != tb) or body_changed,
+            }
+        )
+    return out
 
 
 def build_object_router(
@@ -360,13 +439,58 @@ def build_object_router(
     def list_revisions(artifact_id: str) -> list[dict]:
         return _store().artifact_revisions(artifact_id)
 
+    @router.get("/api/artifacts/{artifact_id}/diff")
+    def artifact_diff(
+        artifact_id: str,
+        from_rev: str = Query(alias="from"),
+        to_rev: str = Query(alias="to"),
+    ) -> dict:
+        """Archive 版本差异（T4）：字段级对比两 revision 的 content。
+
+        404 诚实语义：任一 revision 不存在、或不属于该 artifact。
+        """
+        store = _store()
+        ra = store.get_artifact_revision(from_rev)
+        rb = store.get_artifact_revision(to_rev)
+        for r in (ra, rb):
+            if r is None or r.get("artifact_id") != artifact_id:
+                raise HTTPException(404, f"revision not found in artifact {artifact_id}")
+        return {
+            "artifact_id": artifact_id,
+            "from": {
+                "revision_id": from_rev,
+                "status": ra["status"],
+                "created_at": ra["created_at"],
+            },
+            "to": {
+                "revision_id": to_rev,
+                "status": rb["status"],
+                "created_at": rb["created_at"],
+            },
+            "changes": diff_artifact_content(ra.get("content") or {}, rb.get("content") or {}),
+        }
+
     @router.post("/api/artifacts/{artifact_id}/commit")
     def commit_artifact(artifact_id: str, commit_in: CommitIn) -> dict:
         """归档唯一入口（HITL 终点）：UserCommit + current 指针事务置换。"""
         store = _store()
+        # 归档门（T1）：研究报告的源 run 弃权/失败/运行中 → 不可归档。
+        # abstained 报告（engine=offline 降级稿）允许存在为草稿，但归档被拦；
+        # 无 run_id 的 legacy 版本不拦（历史数据兼容）。
+        art = store.get_artifact_by_revision(commit_in.revision_id)
+        if art is not None and art.klass == "research_report":
+            rev_row = store.get_artifact_revision(commit_in.revision_id)
+            src_run_id = str((rev_row or {}).get("run_id") or "")
+            if src_run_id:
+                src_status = str((store.get_analysis_run(src_run_id) or {}).get("status") or "")
+                if src_status != "succeeded":
+                    raise HTTPException(
+                        422,
+                        f"报告源运行状态为 {src_status}（弃权/失败/运行中），"
+                        "不可归档；请重新生成报告后再确认",
+                    )
         # B6 Challenge 必经门：研究报告提交前，若案内存在 Claim 则必须至少
         # 跑过一次 ChallengeClaim（无 Claim 的案不设此门，避免死锁）。
-        art = store.get_artifact_by_revision(commit_in.revision_id)
         if (
             art is not None
             and art.klass == "research_report"
@@ -459,6 +583,48 @@ def build_object_router(
             MonitorRun(run_id=run_id, monitor_id=monitor_id, status="queued", started_at=_now())
         )
         return {"run_id": run_id}
+
+    @router.get("/api/monitors/{monitor_id}/scheduler")
+    def monitor_scheduler(monitor_id: str) -> dict:
+        """调度健康视图（T3）：last_run + schedule → 下次运行估算。
+
+        诚实边界：系统当前无真实后台 scheduler 进程；next_run_estimate 仅由
+        last_run.started_at + 解析后的 schedule 推算（note 字段显式声明）。
+        health 优先级：schedule 不可解析（cron 等）→ unscheduled（配置问题优先
+        暴露）；可解析但无 run 历史 → no_history；可解析且有历史 → scheduled。
+        """
+        store = _store()
+        monitor = store.get_monitor(monitor_id)
+        if monitor is None:
+            raise HTTPException(404, monitor_id)
+        runs = store.monitor_runs_for(monitor_id)
+        last = runs[0] if runs else None
+        delta = parse_schedule_seconds(monitor.schedule)
+        last_run: dict | None = None
+        next_run: str | None = None
+        if last is not None:
+            last_run = {
+                "run_id": last["run_id"],
+                "status": last["status"],
+                "started_at": last["started_at"],
+            }
+            started = parse_iso_dt(last["started_at"])
+            if delta is not None and started is not None:
+                next_run = (started + timedelta(seconds=delta)).isoformat()
+        if delta is None:
+            health: str = "unscheduled"
+        elif last is None:
+            health = "no_history"
+        else:
+            health = "scheduled"
+        return {
+            "monitor_id": monitor_id,
+            "schedule": monitor.schedule,
+            "last_run": last_run,
+            "next_run_estimate": next_run,
+            "scheduler_health": health,
+            "note": "estimate from last run + schedule; no live scheduler process",
+        }
 
     @router.post("/api/monitors/{monitor_id}/updates")
     def add_monitor_update(monitor_id: str, update: MonitorUpdate) -> dict:

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
@@ -15,8 +16,10 @@ from oh_api.briefing import (
     build_briefing_with_signals,
     data_freshness,
 )
+from oh_api.search import search_bronze
 from oh_contracts.briefing import BriefingResponse, EvidenceCitation, EvidenceSet
 from oh_contracts.change_landscape import (
+    ChangeEvidenceArticle,
     ChangeFieldPayload,
     ChangeFieldPoint,
     ChangeLandscape,
@@ -45,6 +48,51 @@ _MAX_SOURCE_STREAMS = 12
 _MAX_QUALIFIED = 5
 _MAX_EVIDENCE_REFS = 20
 _LOW_COVERAGE_FLOOR = 5
+# T2：基线窗计数低于该阈值时比率/份额迁移读数不可信（与前端 isLowSample 口径一致）
+_MIN_BASELINE_FOR_GROWTH = 5
+# T1：每变化最多附 3 条证据文章；主题词上限（控线性扫描成本）
+_MAX_EVIDENCE_ARTICLES = 3
+_MAX_TOPIC_TERMS = 5
+
+_LATIN_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{1,}")
+_TOPIC_STOPWORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "that",
+        "this",
+        "are",
+        "was",
+        "were",
+        "has",
+        "have",
+        "had",
+        "not",
+        "but",
+        "its",
+        "their",
+        "will",
+        "would",
+        "could",
+        "new",
+        "says",
+        "said",
+        "after",
+        "over",
+        "amid",
+        "into",
+        "more",
+        "than",
+        "about",
+        "percent",
+        "per",
+        "cent",
+        "vs",
+    }
+)
 
 
 def _iso_window(now: datetime, days: int) -> tuple[datetime, datetime, datetime]:
@@ -76,6 +124,17 @@ def _tier_cluster(tier: SourceTier | None) -> str:
     return "official" if tier is SourceTier.OFFICIAL else "market"
 
 
+def _growth(base_n: int, cur_n: int) -> tuple[float | None, bool]:
+    """T2 低基数诚实弃权：n_baseline < 5 时比率读数不可信 → (None, True)。
+
+    Returns:
+        (growth 百分点数或 None, low_baseline 标记)；如 2→87 的 4250% 不再产出。
+    """
+    low = base_n < _MIN_BASELINE_FOR_GROWTH
+    growth = None if low else round((cur_n - base_n) / base_n * 100, 1)
+    return growth, low
+
+
 def _source_streams(
     base: list[BronzeRecord],
     cur: list[BronzeRecord],
@@ -87,17 +146,22 @@ def _source_streams(
         set(base_n) | set(cur_n),
         key=lambda s: (-(cur_n.get(s, 0) + base_n.get(s, 0)), s),
     )[:_MAX_SOURCE_STREAMS]
-    return [
-        SourceStream(
-            source_id=s,
-            label=s,
-            tier=tier_map.get(s).value if s in tier_map else "",
-            cluster=_tier_cluster(tier_map.get(s)),
-            n_baseline=base_n.get(s, 0),
-            n_current=cur_n.get(s, 0),
+    out = []
+    for s in ranked:
+        growth, low = _growth(base_n.get(s, 0), cur_n.get(s, 0))
+        out.append(
+            SourceStream(
+                source_id=s,
+                label=s,
+                tier=tier_map.get(s).value if s in tier_map else "",
+                cluster=_tier_cluster(tier_map.get(s)),
+                n_baseline=base_n.get(s, 0),
+                n_current=cur_n.get(s, 0),
+                growth=growth,
+                low_baseline=low,
+            )
         )
-        for s in ranked
-    ]
+    return out
 
 
 def _share(counts: Counter[str]) -> dict[str, float]:
@@ -181,6 +245,7 @@ def _narrative_streams(
             adjusted_share_baseline=(round(base_share_c.get(f, 0.0), 4) if cohort_ok else None),
             adjusted_share_current=(round(cur_share_c.get(f, 0.0), 4) if cohort_ok else None),
             n_cohort_sources=len(cohort),
+            low_baseline=base_frames.get(f, 0) < _MIN_BASELINE_FOR_GROWTH,
         )
         for f in frames
     ]
@@ -218,11 +283,73 @@ def _hero_gate(
     return reasons
 
 
+def _topic_terms(subjects: list[str], headline: str, what: str) -> list[str]:
+    """变化 → 主题词表（T1，无 LLM）：subjects 优先，headline/what 补拉丁词。
+
+    subjects 为实体人话标签（如「美联储」），CJK 走子串匹配、拉丁串走
+    search_bronze 的空白分词 AND；headline/what 为中文模板句，仅提取其中
+    可能出现的拉丁 token（名词性词组，如 "Fed"/"CPI"），停用词剔除。
+    """
+    terms: list[str] = []
+    for s in subjects:
+        s = s.strip()
+        if len(s) >= 2:
+            terms.append(s)
+    for text in (headline, what):
+        for tok in _LATIN_TOKEN_RE.findall(text or ""):
+            low = tok.strip(".-").casefold()
+            if len(low) >= 3 and low not in _TOPIC_STOPWORDS:
+                terms.append(low)
+    seen: set[str] = set()
+    return [t for t in terms if not (t in seen or seen.add(t))][:_MAX_TOPIC_TERMS]
+
+
+def _evidence_articles(
+    subjects: list[str],
+    headline: str,
+    what: str,
+    *,
+    cur_records: list[BronzeRecord],
+    base_records: list[BronzeRecord],
+    bronze_by_key: dict[str, BronzeRecord],
+    limit: int = _MAX_EVIDENCE_ARTICLES,
+) -> list[ChangeEvidenceArticle]:
+    """逐变化证据文章（T1）：主题词 bronze 检索，当前窗口内优先。
+
+    诚实纪律：无主题词或检索无命中 → 空列表（前端已处理空态），不编造。
+    """
+    out: list[ChangeEvidenceArticle] = []
+    seen: set[str] = set()
+    terms = _topic_terms(subjects, headline, what)
+    for scope in (cur_records, base_records):
+        for term in terms:
+            if len(out) >= limit:
+                return out
+            for hit in search_bronze(scope, term, limit=limit):
+                key = str(hit["item_key"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                rec = bronze_by_key.get(key)
+                out.append(
+                    ChangeEvidenceArticle(
+                        item_key=key,
+                        source_id=str(hit["source_id"]),
+                        title=str(hit["title"] or ""),
+                        published_at=hit["published_at"],
+                        language=str((rec.normalized.get("language") if rec else "") or ""),
+                    )
+                )
+    return out
+
+
 def _qualified_changes(
     briefing: BriefingResponse,
     signals: list[Signal],
     *,
     bronze_by_key: dict[str, BronzeRecord],
+    cur_records: list[BronzeRecord],
+    base_records: list[BronzeRecord],
     store: SilverStore,
     tier_map: dict[str, SourceTier],
     registry: EntityRegistry,
@@ -232,6 +359,8 @@ def _qualified_changes(
 
     changes 与 signals 同序（同一次 detect_signals 产出），zip 配对回查证据链。
     每个 change 先组装证据再过 Hero Gate（1.5-d），未过门不进入腰部。
+    T1：每个合格变化附 evidence_articles（主题词 bronze 检索 top-3，
+    当前窗口内优先；无命中为空列表，不编造）。
     """
     changes: list[QualifiedChange] = []
     refs: dict[str, EvidenceCitation] = {}
@@ -252,6 +381,7 @@ def _qualified_changes(
         if _hero_gate(ev, sig, registry):
             gated_out += 1
             continue
+        subject_labels = [s.label for s in (b.subjects or [])]
         changes.append(
             QualifiedChange(
                 change_id=b.change_id,
@@ -261,7 +391,15 @@ def _qualified_changes(
                 why_now=b.why_now,
                 strength_word=b.strength_word,
                 urgency=b.urgency,
-                subjects=[s.label for s in (b.subjects or [])],
+                subjects=subject_labels,
+                evidence_articles=_evidence_articles(
+                    subject_labels,
+                    b.headline,
+                    b.what,
+                    cur_records=cur_records,
+                    base_records=base_records,
+                    bronze_by_key=bronze_by_key,
+                ),
             )
         )
         for c in (ev.supporting or ev.context or [])[:2]:
@@ -421,6 +559,8 @@ def build_change_landscape(
         briefing,
         signals,
         bronze_by_key=bronze_by_key,
+        cur_records=cur,
+        base_records=base,
         store=store,
         tier_map=tier_map,
         registry=registry,
