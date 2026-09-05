@@ -58,8 +58,8 @@ def _revision(store: ResearchStore, revision_id: str = "rev-1") -> None:
 
 
 def test_schema_ensure_idempotent(store: ResearchStore) -> None:
-    assert store.ensure_schema() == 7
-    assert store.ensure_schema() == 7
+    assert store.ensure_schema() == 8
+    assert store.ensure_schema() == 8
 
 
 def test_case_lifecycle(store: ResearchStore) -> None:
@@ -327,7 +327,7 @@ def test_collection_plans_and_runs(tmp_path) -> None:
 def test_schema_v3_and_decision_audit(tmp_path: Path) -> None:
     """v3 迁移：MonitorUpdate 审计列存在；复核决策与关联 Case 留痕。"""
     store = ResearchStore.open(tmp_path / "research.sqlite")
-    assert store.ensure_schema() == 7
+    assert store.ensure_schema() == 8
     cols = {r["name"] for r in store._conn.execute("PRAGMA table_info(monitor_updates)")}
     assert {"decision", "decision_case_id"} <= cols
     store.create_monitor(
@@ -385,7 +385,7 @@ def test_schema_v7_monitor_status_cleanup(tmp_path: Path) -> None:
     store._conn.commit()
     store._conn.execute("PRAGMA user_version = 6")
 
-    assert store.ensure_schema() == 7
+    assert store.ensure_schema() == 8
     assert store.get_monitor("mon-dirty") is not None
     assert store.get_monitor("mon-dirty").status == "active"  # type: ignore[union-attr]
     # Update 审核状态不受影响：仍待复核

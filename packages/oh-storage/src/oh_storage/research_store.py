@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
 
 from oh_storage.connection import connect
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _DDL_V1 = """
 CREATE TABLE IF NOT EXISTS cases (
@@ -343,6 +344,13 @@ ALTER TABLE cases ADD COLUMN title TEXT NOT NULL DEFAULT '';
 UPDATE monitors SET status = 'active' WHERE status = 'needs_review';
 """,
     ),
+    (
+        8,
+        # 文档唯一标识：入案文章保留原题（同源多文可区分，用户要求）。
+        """
+ALTER TABLE document_revisions ADD COLUMN title TEXT NOT NULL DEFAULT '';
+""",
+    ),
 )
 
 # v3 新增的审计列不属于 MonitorUpdate 契约模型，行转换时剔除。
@@ -368,12 +376,30 @@ class ResearchStore:
     # ---------- schema ----------
 
     def ensure_schema(self) -> int:
-        """幂等执行 MIGRATIONS；返回最终 schema 版本。"""
+        """幂等执行 MIGRATIONS；返回最终 schema 版本。
+
+        ALTER TABLE ADD COLUMN 在 SQLite 中不可重放（无 IF NOT EXISTS）。
+        user_version 异常回拨后重放会报 duplicate column——此类语句先查
+        table_info，列已存在则跳过该句（其余语句照常执行）。
+        """
         current = self._conn.execute("PRAGMA user_version").fetchone()[0]
         for version, ddl in MIGRATIONS:
             if version <= current:
                 continue
-            self._conn.executescript(ddl)
+            statements = [s.strip() for s in ddl.split(";") if s.strip()]
+            for stmt in statements:
+                m = re.search(
+                    r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)", stmt, re.IGNORECASE
+                )
+                if m:
+                    table, column = m.group(1), m.group(2)
+                    cols = {
+                        r[1]
+                        for r in self._conn.execute(f"PRAGMA table_info({table})")
+                    }
+                    if column in cols:
+                        continue
+                self._conn.execute(stmt)
             self._conn.execute(f"PRAGMA user_version = {version}")
             self._conn.commit()
         return self._conn.execute("PRAGMA user_version").fetchone()[0]
@@ -450,13 +476,14 @@ class ResearchStore:
         language: str = "",
         published_at: str = "",
         external_key: str = "",
+        title: str = "",
     ) -> None:
         """不可变正文版本；同 (document_id, content_hash) 重复写入幂等跳过。"""
         cur = self._conn.execute(
             "INSERT OR IGNORE INTO document_revisions"
             " (document_revision_id, document_id, source_id, canonical_url,"
-            "  content_hash, language, published_at, body, fetched_at, external_key)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "  content_hash, language, published_at, body, fetched_at, external_key, title)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 document_revision_id,
                 document_id,
@@ -468,6 +495,7 @@ class ResearchStore:
                 body,
                 fetched_at,
                 external_key,
+                title,
             ),
         )
         self._conn.commit()
@@ -510,7 +538,7 @@ class ResearchStore:
         """某 Case 挂载的全部不可变版本（按挂载时间倒序，不含正文）。"""
         rows = self._conn.execute(
             "SELECT r.document_revision_id, r.document_id, r.source_id, r.canonical_url,"
-            " r.language, r.published_at, r.fetched_at, r.content_hash, c.added_at"
+            " r.language, r.published_at, r.fetched_at, r.content_hash, r.title, c.added_at"
             " FROM case_documents c JOIN document_revisions r"
             " ON c.document_revision_id = r.document_revision_id"
             " WHERE c.case_id = ? ORDER BY c.added_at DESC",
