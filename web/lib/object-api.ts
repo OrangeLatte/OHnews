@@ -274,6 +274,7 @@ export const objectApi = {
       language?: string;
       canonical_url?: string;
       external_key?: string;
+      title?: string;
     },
   ) => post<{ document_revision_id: string }>(`/cases/${encodeURIComponent(caseId)}/documents`, body),
   inboxRows: (params: {
