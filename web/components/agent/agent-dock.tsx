@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { AgentPanel } from "@/components/agent/agent-panel";
+import { AgentSystemExtra } from "@/components/agent/agent-system-extra";
 import { AgentPlan } from "@/components/agent/agent-plan";
 import { AgentRuns } from "@/components/agent/agent-runs";
 import { AgentArtifacts } from "@/components/agent/agent-artifacts";
@@ -162,7 +163,7 @@ function EntryCard({ entry, youLabel, agentLabel, onConfirm }: { entry: ChatEntr
   );
 }
 
-/** System 标签 = ResearchState 错误条 + AgentPanel 六区（模型状态/用量/HITL/runs/工具/Threads）。 */
+/** System 标签 = ResearchState 错误条 + 系统配置区块（AgentSystemExtra）+ AgentPanel 六区。 */
 function SystemTab() {
   const t = useT();
   const { errors } = useResearchState();
@@ -185,6 +186,7 @@ function SystemTab() {
           </button>
         </div>
       ) : null}
+      <AgentSystemExtra />
       <AgentPanel />
     </div>
   );

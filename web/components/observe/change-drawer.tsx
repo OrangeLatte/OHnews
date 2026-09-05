@@ -11,12 +11,14 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useOt } from "@/components/observe/i18n-bridge";
 import type {
+  EvidenceArticle,
   Landscape,
   NarrativeStream,
   QualifiedChange,
   SourceStream,
 } from "@/lib/landscape-api";
-import { useT } from "@/lib/i18n/use-t";
+import { useLocale, useT } from "@/lib/i18n/use-t";
+import { relTime } from "@/components/monitors/format";
 
 /** Drawer 可选中的数据点（discriminated union，全部来自 change-landscape 载荷）。 */
 export type ChangeSelection =
@@ -42,6 +44,30 @@ export function isLowShare(shareBaseline: number): boolean {
   return shareBaseline < 0.05;
 }
 
+/** 增长率口径：后端 growth 优先；旧载荷无字段回退本地计算（基线 0 → null）。 */
+function streamDelta(s: SourceStream): number | null {
+  if (s.growth !== undefined) return s.growth;
+  return s.n_baseline > 0 ? Math.round(((s.n_current - s.n_baseline) / s.n_baseline) * 100) : null;
+}
+
+/** 后端扣发增长（growth=null）或低样本无字段回退 → true：显示低样本警示而非爆炸百分比。 */
+function growthWithheld(s: SourceStream): boolean {
+  if (s.growth !== undefined) return s.growth === null;
+  return s.low_baseline ?? isLowSample(s.n_baseline, s.n_current);
+}
+
+/** 低样本扣发增长徽标（title = 完整口径说明）。 */
+function GrowthChip({ label }: { label: string }) {
+  return (
+    <span
+      title={label}
+      className="rounded-[6px] bg-amber-100 px-1 text-[10px] text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+    >
+      n&lt;5
+    </span>
+  );
+}
+
 /** Case 预选主词（Inbox 搜索预填）；取不到时返回空串。 */
 export function drawerSubject(sel: ChangeSelection): string {
   switch (sel.kind) {
@@ -55,6 +81,21 @@ export function drawerSubject(sel: ChangeSelection): string {
       return sel.label ?? sel.entity;
     case "emotion":
       return sel.emotionKey;
+  }
+}
+
+/**
+ * Case 预选实体（Inbox facet chip 用）：变化卡取主词 subjects[0]，实体卡取实体 id；
+ * 信源流/叙事/情绪不携带实体，返回空串（诚实：不臆造实体）。
+ */
+export function drawerEntity(sel: ChangeSelection): string {
+  switch (sel.kind) {
+    case "change":
+      return sel.change.subjects[0] ?? "";
+    case "entity":
+      return sel.entity;
+    default:
+      return "";
   }
 }
 
@@ -109,9 +150,17 @@ function WindowLine({ label, w }: { label: string; w: { start: string; end: stri
   );
 }
 
-function SourceDeltaRow({ s, lowLabel }: { s: SourceStream; lowLabel: string }) {
-  const low = isLowSample(s.n_baseline, s.n_current);
-  const delta = s.n_baseline > 0 ? Math.round(((s.n_current - s.n_baseline) / s.n_baseline) * 100) : null;
+function SourceDeltaRow({
+  s,
+  lowLabel,
+  withheldLabel,
+}: {
+  s: SourceStream;
+  lowLabel: string;
+  withheldLabel: string;
+}) {
+  // 低样本口径对齐后端：仅 baseline<5（low_baseline 字段）；旧载荷缺省回退本地口径。
+  const low = s.low_baseline ?? isLowSample(s.n_baseline, s.n_current);
   return (
     <li
       className={`flex items-center justify-between gap-2 rounded-[6px] px-1.5 py-0.5 text-xs ${
@@ -122,8 +171,36 @@ function SourceDeltaRow({ s, lowLabel }: { s: SourceStream; lowLabel: string }) 
       <span className="min-w-0 truncate">{s.label}</span>
       <span className="flex shrink-0 items-center gap-1 tabular-nums text-muted-foreground">
         {fmtInt(s.n_baseline)} → {fmtInt(s.n_current)}
-        <DeltaTag delta={delta} />
+        {growthWithheld(s) && low ? (
+          <GrowthChip label={withheldLabel} />
+        ) : (
+          <DeltaTag delta={streamDelta(s)} />
+        )}
       </span>
+    </li>
+  );
+}
+
+/** 支持证据引用卡：标题 + 信源 + 相对时间 + 原文外链（诚实纪律：不编造标题）。 */
+function EvidenceCard({ a, openLabel, lang }: { a: EvidenceArticle; openLabel: string; lang: "en" | "zh" }) {
+  return (
+    <li className="rounded-[6px] border p-1.5">
+      <a
+        href={a.url}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={openLabel}
+        className="block space-y-0.5"
+      >
+        <span className="line-clamp-2 block text-[13px] font-medium hover:underline">
+          {a.title || a.item_key}
+        </span>
+        <span className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="font-mono">{a.source_id}</span>
+          <span>· {relTime(a.published_at, lang)}</span>
+          <span aria-hidden="true">↗</span>
+        </span>
+      </a>
     </li>
   );
 }
@@ -148,6 +225,8 @@ export function ChangeDrawer({
   const t = useT();
   const ot = useOt();
   const router = useRouter();
+  const { locale } = useLocale();
+  const lang: "en" | "zh" = locale.startsWith("zh") ? "zh" : "en";
 
   useEffect(() => {
     if (!selection) return;
@@ -165,6 +244,12 @@ export function ChangeDrawer({
   const cur = landscape?.current_window ?? null;
   const freshness = landscape?.freshness ?? null;
   const warnings = landscape?.quality_warnings ?? [];
+  // 支持证据：仅 change 型携带；undefined=旧载荷未含键（诚实降级），[] =检索无命中。
+  const evidence = selection.kind === "change" ? (selection.change.evidence_articles ?? null) : null;
+  const withheldLabel = ot(
+    "observe.drawer.lowBaseGrowth",
+    "Low baseline (n<5) — growth withheld",
+  );
 
   const title =
     selection.kind === "change"
@@ -278,11 +363,18 @@ export function ChangeDrawer({
               {selection.kind === "source_stream" ? (
                 <p className="tabular-nums">
                   {fmtInt(selection.stream.n_baseline)} → {fmtInt(selection.stream.n_current)}
-                  {selection.stream.n_baseline > 0
-                    ? ` (${selection.stream.n_current >= selection.stream.n_baseline ? "+" : ""}${Math.round(
-                        ((selection.stream.n_current - selection.stream.n_baseline) / selection.stream.n_baseline) * 100,
-                      )}%)`
-                    : ""}
+                  {growthWithheld(selection.stream) &&
+                  (selection.stream.low_baseline ?? isLowSample(selection.stream.n_baseline, selection.stream.n_current)) ? (
+                    <span className="ml-1 align-middle">
+                      <GrowthChip label={withheldLabel} />
+                    </span>
+                  ) : streamDelta(selection.stream) !== null ? (
+                    <span className="text-muted-foreground">
+                      {" "}
+                      ({streamDelta(selection.stream)! > 0 ? "+" : ""}
+                      {streamDelta(selection.stream)}%)
+                    </span>
+                  ) : null}
                 </p>
               ) : null}
               {selection.kind === "narrative" ? (
@@ -290,6 +382,15 @@ export function ChangeDrawer({
                   {(selection.stream.share_baseline * 100).toFixed(1)}% →{" "}
                   {(selection.stream.share_current * 100).toFixed(1)}% ·{" "}
                   {selection.stream.n_baseline} → {selection.stream.n_current}
+                  {selection.stream.low_baseline ? (
+                    <span className="ml-1 align-middle">
+                      <GrowthChip
+                        label={ot("observe.lowSample", "Low sample (n={n}); growth may be distorted", {
+                          n: 5,
+                        })}
+                      />
+                    </span>
+                  ) : null}
                 </p>
               ) : null}
               {selection.kind === "entity" ? (
@@ -322,6 +423,7 @@ export function ChangeDrawer({
                   lowLabel={ot("observe.lowSample", "Low sample (n={n}); growth may be distorted", {
                     n: Math.min(s.n_baseline, s.n_current),
                   })}
+                  withheldLabel={withheldLabel}
                 />
               ))}
             </ul>
@@ -332,11 +434,23 @@ export function ChangeDrawer({
 
         {/* ④ 支持 / 反对 / 缺失上下文 */}
         <DrawerSection label={t("observe.drawer.context")}>
-          <div className="space-y-0.5 text-[13px]">
+          <div className="space-y-1 text-[13px]">
             <p>
               <span className="text-muted-foreground">{t("observe.drawer.supporting")}: </span>
-              {none}
+              {!evidence || evidence.length === 0 ? <span>{none}</span> : null}
             </p>
+            {evidence && evidence.length > 0 ? (
+              <ul className="space-y-1">
+                {evidence.map((a) => (
+                  <EvidenceCard
+                    key={`${a.source_id}-${a.item_key}`}
+                    a={a}
+                    openLabel={ot("observe.drawer.evidenceOpen", "Open source article")}
+                    lang={lang}
+                  />
+                ))}
+              </ul>
+            ) : null}
             <p>
               <span className="text-muted-foreground">{t("observe.drawer.opposing")}: </span>
               {none}
@@ -354,7 +468,7 @@ export function ChangeDrawer({
               )}
             </div>
           </div>
-          {selection.kind === "change" ? (
+          {selection.kind === "change" && evidence === null ? (
             <p className="rounded-[6px] border border-dashed p-1.5 text-[11px] text-muted-foreground">
               {t("observe.drawer.noPerChangeEvidence")}
             </p>

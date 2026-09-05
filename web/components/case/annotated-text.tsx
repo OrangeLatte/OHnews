@@ -63,7 +63,8 @@ export function AnnotatedText({ text, spans, onSpanClick }: Props) {
   if (!text) return null;
   const annotated = spans.length > 0;
   return (
-    <div className="text-sm leading-7 whitespace-pre-wrap break-words">
+    // min-w-0 + overflow-wrap:anywhere：390px 下长行/长 token 允许任意断行（继承至 mark 子元素）
+    <div className="min-w-0 whitespace-pre-wrap text-sm leading-7 [overflow-wrap:anywhere]">
       {segments.map((seg, i) => {
         if (!seg.span) return <span key={i}>{seg.text}</span>;
         const color = ELEMENT_COLORS[seg.span.element_key] ?? "#fef9c3";

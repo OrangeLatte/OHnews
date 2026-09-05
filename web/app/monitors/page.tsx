@@ -11,7 +11,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { objectApi, type CaseRow, type MonitorRow, type MonitorUpdateRow } from "@/lib/object-api";
+import {
+  objectApi,
+  type CaseRow,
+  type MonitorRow,
+  type MonitorSchedulerRow,
+  type MonitorUpdateRow,
+} from "@/lib/object-api";
 import { useLocale } from "@/lib/i18n/use-t";
 import { Button } from "@/components/ui/button";
 import { Skeleton, toast } from "@/components/ui/toast";
@@ -20,14 +26,21 @@ import { MonitorCard, statusTone } from "@/components/monitors/monitor-card";
 import { RunsTimeline, type MonitorRunRow } from "@/components/monitors/runs-timeline";
 import { UpdateCard } from "@/components/monitors/update-card";
 import { CreateForm } from "@/components/monitors/create-form";
-import { EmptyGuide, StatCard, TONE_DOT, type TFunc } from "@/components/monitors/bits";
-import { nowIso, relTime } from "@/components/monitors/format";
+import { EmptyGuide, StatCard, TONE_DOT, ToneChip, type TFunc, type Tone } from "@/components/monitors/bits";
+import { absTime, nowIso, relTime } from "@/components/monitors/format";
 import { useExtraT } from "@/components/monitors/i18n-extra";
 
 type RunsState = { list: MonitorRunRow[]; unavailable: boolean };
 
 /** Monitor 配置状态闭集（三概念分离：needs_review 是 Update 审核概念，永不入此列）。 */
 const CONFIG_STATUSES = ["active", "paused", "error"] as const;
+
+/** 调度健康三色：scheduled=绿 / no_history=琥珀 / unscheduled=红（后端口径）。 */
+function schedulerTone(h: MonitorSchedulerRow["scheduler_health"]): Tone {
+  if (h === "scheduled") return "ok";
+  if (h === "no_history") return "warn";
+  return "bad";
+}
 
 /** 待复核 = review_status 为 unreviewed 的 updates（旧后端缺省键视为 unreviewed）。 */
 function unreviewedCount(list: MonitorUpdateRow[]): number {
@@ -64,6 +77,11 @@ export default function MonitorsPage() {
   const [joinPick, setJoinPick] = useState<Record<string, string>>({});
   const [busyUpdate, setBusyUpdate] = useState("");
   const [snapBusy, setSnapBusy] = useState(false);
+  // 调度健康小卡：sched[id] 有值=ok / schedErr[id]=加载失败 / 两者皆空=加载中。
+  // 懒加载（打开详情时 fetch），失败诚实显示，不编造。
+  const [sched, setSched] = useState<Record<string, MonitorSchedulerRow>>({});
+  const [schedErr, setSchedErr] = useState<Record<string, boolean>>({});
+  const [runBusy, setRunBusy] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [loadErr, setLoadErr] = useState("");
@@ -142,6 +160,23 @@ export default function MonitorsPage() {
       alive = false;
     };
   }, [openId, runs]);
+
+  // 调度健康懒加载：打开详情时 fetch 一次；无实时 scheduler 进程由 note 诚实标注。
+  useEffect(() => {
+    if (!openId || sched[openId] || schedErr[openId]) return;
+    let alive = true;
+    objectApi
+      .monitorScheduler(openId)
+      .then((row) => {
+        if (alive) setSched((s) => ({ ...s, [openId]: row }));
+      })
+      .catch(() => {
+        if (alive) setSchedErr((s) => ({ ...s, [openId]: true }));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [openId, sched, schedErr]);
 
   const configStatuses = useMemo(
     () => CONFIG_STATUSES.filter((s) => rows.some((r) => r.status === s)),
@@ -317,8 +352,46 @@ export default function MonitorsPage() {
       });
   };
 
+  /** 登记一次监测运行（HITL confirm）：成功 toast + 刷新 runs 时间线与调度小卡；失败 toast 带根因。 */
+  const runNow = (m: MonitorRow) => {
+    if (runBusy) return;
+    if (!window.confirm(t("monitors.runNowConfirm"))) return;
+    setRunBusy(true);
+    objectApi
+      .runMonitorNow(m.monitor_id)
+      .then((r) => {
+        setRunBusy(false);
+        toast.success(`${t("monitors.runNowOk")}: ${r.run_id}`);
+        fetch(`/api/monitors/${encodeURIComponent(m.monitor_id)}/runs`, { cache: "no-store" })
+          .then(async (res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return (await res.json()) as MonitorRunRow[];
+          })
+          .then((list) => setRuns((s) => ({ ...s, [m.monitor_id]: { list, unavailable: false } })))
+          .catch(() => setRuns((s) => ({ ...s, [m.monitor_id]: { list: [], unavailable: true } })));
+        // last_run 变化 → 丢弃调度小卡缓存，触发懒加载 effect 重取。
+        setSched((s) => {
+          const next = { ...s };
+          delete next[m.monitor_id];
+          return next;
+        });
+        setSchedErr((s) => {
+          const next = { ...s };
+          delete next[m.monitor_id];
+          return next;
+        });
+      })
+      .catch((e: unknown) => {
+        setRunBusy(false);
+        const reason = e instanceof Error ? e.message : String(e);
+        toast.error(reason ? `${t("monitors.runNowFailed")}: ${reason}` : t("monitors.runNowFailed"));
+      });
+  };
+
   const open = rows.find((m) => m.monitor_id === openId) ?? null;
   const openUpdates = open ? (pending[open.monitor_id] ?? []) : [];
+  const schedRow = open ? (sched[open.monitor_id] ?? null) : null;
+  const schedFailed = open ? (schedErr[open.monitor_id] ?? false) : false;
 
   return (
     <div className="space-y-6">
@@ -546,20 +619,67 @@ export default function MonitorsPage() {
                       {t("monitors.triggers")}: {open.trigger_conditions.join(" · ")}
                     </p>
                   )}
+                  {/* 调度健康小卡（懒加载；失败诚实显示，不编造） */}
+                  <div className="mt-3 rounded-lg border bg-muted/30 p-2.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="text-xs font-semibold">{t("monitors.scheduler.title")}</h4>
+                      {schedFailed ? (
+                        <span className="text-xs text-amber-700 dark:text-amber-400">
+                          {t("monitors.scheduler.loadFailed")}
+                        </span>
+                      ) : schedRow ? (
+                        <ToneChip tone={schedulerTone(schedRow.scheduler_health)}>
+                          {t(`monitors.scheduler.${schedRow.scheduler_health}`)}
+                        </ToneChip>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">{t("common.loading")}</span>
+                      )}
+                      {schedRow && (
+                        <span className="ml-auto font-mono text-xs text-muted-foreground">
+                          ⏱ {schedRow.schedule}
+                        </span>
+                      )}
+                    </div>
+                    {schedRow && (
+                      <>
+                        <p className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                          <span>
+                            {t("monitors.started")}: {relTime(schedRow.last_run?.started_at ?? null, lang)}
+                          </span>
+                          <span>
+                            {t("monitors.scheduler.nextRun")}:{" "}
+                            {schedRow.next_run_estimate ? absTime(schedRow.next_run_estimate, lang) : "—"}
+                          </span>
+                        </p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">{schedRow.note}</p>
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 <div>
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold">{t("monitors.runs")}</h3>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={snapBusy}
-                      onClick={() => confirmSnapshot(open)}
-                      title={t("monitors.confirmSnapshot")}
-                    >
-                      {t("monitors.confirmSnapshot")}
-                    </Button>
+                    <span className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={runBusy}
+                        onClick={() => runNow(open)}
+                        title={t("monitors.runNowConfirm")}
+                      >
+                        {t("monitors.runNow")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={snapBusy}
+                        onClick={() => confirmSnapshot(open)}
+                        title={t("monitors.confirmSnapshot")}
+                      >
+                        {t("monitors.confirmSnapshot")}
+                      </Button>
+                    </span>
                   </div>
                   <div className="mt-2">
                     <RunsTimeline

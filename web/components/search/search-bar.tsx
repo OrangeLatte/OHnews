@@ -22,6 +22,8 @@ type SearchResult = {
   item_key?: string;
   id?: string;
   source_id?: string;
+  /** 事件主实体（可选；当前 /api/search 未回传该字段，回传后跳转自动选中实体时间线）。 */
+  entity?: string;
   title: string;
   url: string;
   published_at: string | null;
@@ -91,11 +93,15 @@ export function SearchBar() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [active]);
 
-  /** 文章点击 = 研究此文；事件跳 OBSERVE 实体时间线（事件主体实体驱动，30d 窗口）。 */
+  /** 文章点击 = 研究此文；事件跳 OBSERVE 实体时间线（事件主体实体驱动，30d 窗口）。
+   *  有 entity 时 URL 带上 &entity= 供 observe 页自动选中；无论哪条路径先关浮层。 */
   async function research(item: SearchResult) {
     if (item.kind === "event" && item.id) {
       track("change_opened", { objectId: item.id, fromPage: "/search-bar" });
-      router.push("/observe?mode=entities&days=30");
+      setOpen(false);
+      router.push(
+        `/observe?mode=entities&days=30${item.entity ? `&entity=${encodeURIComponent(item.entity)}` : ""}`,
+      );
       return;
     }
     if (!item.source_id || !item.item_key || busyId) return;

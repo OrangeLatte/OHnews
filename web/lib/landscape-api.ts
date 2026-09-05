@@ -14,6 +14,16 @@ export type TimeWindow = {
   n_sources: number;
 };
 
+/** 变化支持证据（bronze 检索 top≤3；空列表=诚实无命中）。 */
+export type EvidenceArticle = {
+  item_key: string;
+  source_id: string;
+  title: string;
+  url: string;
+  published_at: string | null;
+  language?: string;
+};
+
 export type QualifiedChange = {
   change_id: string;
   kind: string;
@@ -24,6 +34,8 @@ export type QualifiedChange = {
   urgency: string;
   subjects: string[];
   at: string | null;
+  /** 旧载荷缺省 → undefined（诚实降级为既有"暂无"文案）。 */
+  evidence_articles?: EvidenceArticle[];
 };
 
 export type QualityWarning = {
@@ -38,6 +50,10 @@ export type SourceStream = {
   cluster: string;
   n_baseline: number;
   n_current: number;
+  /** 增长百分点（后端口径：n_baseline<5 → null）；旧载荷缺省 → undefined。 */
+  growth?: number | null;
+  /** 后端低样本标记（仅 baseline<5）；旧载荷缺省 → undefined（回退本地口径）。 */
+  low_baseline?: boolean;
 };
 
 export type NarrativeStream = {
@@ -47,6 +63,8 @@ export type NarrativeStream = {
   share_current: number;
   n_baseline: number;
   n_current: number;
+  /** 后端低样本标记（仅 baseline<5）；旧载荷缺省 → undefined。 */
+  low_baseline?: boolean;
 };
 
 export type Freshness = {

@@ -296,7 +296,7 @@ export default function ReadMode({
 
           {activeRow ? (
             <div className="grid gap-4 lg:grid-cols-2">
-              <section className="rounded-xl border p-3">
+              <section className="min-w-0 rounded-xl border p-3">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs text-muted-foreground">
                     {activeRow.source_id} · {activeRow.language} · {(activeRow.published_at || activeRow.fetched_at).slice(0, 10)}
@@ -335,7 +335,7 @@ export default function ReadMode({
                 )}
               </section>
 
-              <section className="space-y-2">
+              <section className="min-w-0 space-y-2">
                 <div className="flex flex-wrap items-center gap-1.5">
                   {elementCounts.map(([k, n]) => (
                     <button

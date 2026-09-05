@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { HelpIcon } from "@/components/help/help-icon";
-import { ChangeDrawer, drawerSubject, type ChangeSelection } from "@/components/observe/change-drawer";
+import { ChangeDrawer, drawerEntity, drawerSubject, type ChangeSelection } from "@/components/observe/change-drawer";
 import { DivergencePanel } from "@/components/observe/divergence-panel";
 import { EmotionPanel } from "@/components/observe/emotion-panel";
 import { EntitiesPanel } from "@/components/observe/entities-panel";
@@ -25,7 +25,7 @@ import {
   subscribeUrl,
   type ObserveMode,
 } from "@/components/observe/url-state";
-import { Skeleton } from "@/components/ui/toast";
+import { Skeleton, toast } from "@/components/ui/toast";
 import {
   fetchEmotion,
   fetchEntities,
@@ -84,7 +84,7 @@ export default function ObservePage() {
   const t = useT();
   const ot = useOt();
 
-  const { mode, days } = useSyncExternalStore(subscribeUrl, getUrlSnapshot, getUrlServerSnapshot);
+  const { mode, days, entity: urlEntity } = useSyncExternalStore(subscribeUrl, getUrlSnapshot, getUrlServerSnapshot);
   const fetchDays = days === 0 ? ALL_DAYS_FETCH : days;
   const setMode = useCallback((m: ObserveMode) => setUrlState({ mode: m }), []);
   const setDays = useCallback((d: number) => setUrlState({ days: d }), []);
@@ -118,21 +118,50 @@ export default function ObservePage() {
 
   // 统一 Change Drawer：任意数据点点击后打开（P1 图表联动）
   const [drawer, setDrawer] = useState<ChangeSelection | null>(null);
+  // Drawer → Inbox 传实体通道（{q, entity?, days}；days 即当前窗口，Inbox 结果行已随窗口）
+  const [inboxEntity, setInboxEntity] = useState("");
   const openDrawer = useCallback((sel: ChangeSelection) => setDrawer(sel), []);
   const closeDrawer = useCallback(() => setDrawer(null), []);
-  const createCaseFromDrawer = useCallback((sel: ChangeSelection) => {
-    if (qTimer.current !== null) {
-      window.clearTimeout(qTimer.current);
-      qTimer.current = null;
-    }
-    const subject = drawerSubject(sel);
-    if (subject) {
-      setQ(subject);
-      setQInput(subject);
-    }
-    setUrlState({ mode: "inbox" });
-    setDrawer(null);
-  }, []);
+  const createCaseFromDrawer = useCallback(
+    (sel: ChangeSelection) => {
+      if (qTimer.current !== null) {
+        window.clearTimeout(qTimer.current);
+        qTimer.current = null;
+      }
+      const subject = drawerSubject(sel);
+      if (subject) {
+        setQ(subject);
+        setQInput(subject);
+      }
+      setInboxEntity(drawerEntity(sel));
+      // 诚实降级：变化卡未提取到实体（subjects 空）→ 明示仅用标题关键词检索
+      if (sel.kind === "change" && sel.change.subjects.length === 0) {
+        toast.info(
+          ot(
+            "observe.drawer.noEntityFallback",
+            "No entity extracted for this change; searched with the headline keyword instead.",
+          ),
+        );
+      }
+      setUrlState({ mode: "inbox" });
+      setDrawer(null);
+    },
+    [ot],
+  );
+
+  // 搜索跳转 ?entity=：URL 参数自动选中实体（setTimeout(0) 异步初始化，
+  // 规避 effect 内同步 setState 与 hydration mismatch；ref 防同值重复触发）
+  const urlEntityApplied = useRef("");
+  useEffect(() => {
+    if (!urlEntity || urlEntity === urlEntityApplied.current) return;
+    const timer = setTimeout(() => {
+      urlEntityApplied.current = urlEntity;
+      setSelEntity(urlEntity);
+      setTimeline(null);
+      setEntityErr("");
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [urlEntity]);
 
   // 主舞台只读数据（change-landscape + ndi/rank + emotion），窗口变化整体重拉
   useEffect(() => {
@@ -294,7 +323,10 @@ export default function ObservePage() {
     setElement("");
     setValue("");
     setValueInput("");
+    setInboxEntity("");
   }, []);
+
+  const onClearEntity = useCallback(() => setInboxEntity(""), []);
 
   const inboxFilters: InboxFilters = {
     q,
@@ -305,6 +337,7 @@ export default function ObservePage() {
     valueInput,
     includeCased,
     selSources,
+    entity: inboxEntity,
   };
   const inboxHandlers: InboxFilterHandlers = {
     onQInput,
@@ -315,6 +348,7 @@ export default function ObservePage() {
     onToggleSource,
     onToggleIncludeCased: useCallback(() => setIncludeCased((v) => !v), []),
     onClearFilters,
+    onClearEntity,
   };
 
   const openEntity = useCallback((entityId: string, jump = false) => {

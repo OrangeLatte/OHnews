@@ -34,6 +34,8 @@ export type InboxFilters = {
   valueInput: string;
   includeCased: boolean;
   selSources: string[];
+  /** Change Drawer → Inbox 传实体：置顶 facet chip + 并入 API q（entity token + q）。 */
+  entity: string;
 };
 
 export type InboxFilterHandlers = {
@@ -45,6 +47,7 @@ export type InboxFilterHandlers = {
   onToggleSource: (sourceId: string) => void;
   onToggleIncludeCased: () => void;
   onClearFilters: () => void;
+  onClearEntity: () => void;
 };
 
 type InboxRow = {
@@ -124,12 +127,12 @@ export function InboxPanel({
   const ot = useOt();
   const router = useRouter();
 
-  const { q, qInput, lang, element, value, valueInput, includeCased, selSources } = filters;
+  const { q, qInput, lang, element, value, valueInput, includeCased, selSources, entity } = filters;
   const filterKey = useMemo(
-    () => JSON.stringify([q, lang, element, value, days, selSources]),
-    [q, lang, element, value, days, selSources],
+    () => JSON.stringify([q, lang, element, value, days, selSources, entity]),
+    [q, lang, element, value, days, selSources, entity],
   );
-  const hasFilter = q !== "" || lang !== "" || element !== "" || selSources.length > 0;
+  const hasFilter = q !== "" || lang !== "" || element !== "" || entity !== "" || selSources.length > 0;
 
   const [wrap, setWrap] = useState<{ key: string; n: number; rows: InboxRow[] } | null>(null);
   const [err, setErr] = useState("");
@@ -144,9 +147,12 @@ export function InboxPanel({
 
   useEffect(() => {
     let alive = true;
+    // 实体 token 并入 q（entity token + q）；q 已含该词时去重不重复拼接
+    const mergedQ =
+      entity && !q.toLowerCase().includes(entity.toLowerCase()) ? (q ? `${entity} ${q}` : entity) : q;
     const p = new URLSearchParams();
     for (const s of selSources) p.append("source_id", s);
-    if (q) p.set("q", q);
+    if (mergedQ) p.set("q", mergedQ);
     if (lang) p.set("language", lang);
     if (days > 0) p.set("days", String(days));
     if (element) {
@@ -174,7 +180,7 @@ export function InboxPanel({
     return () => {
       alive = false;
     };
-  }, [filterKey, q, lang, element, value, days, selSources, tick]);
+  }, [filterKey, q, lang, element, value, days, selSources, entity, tick]);
 
   const stale = wrap === null || wrap.key !== filterKey;
   const visibleRows = useMemo(
@@ -308,6 +314,23 @@ export function InboxPanel({
 
   return (
     <div className="space-y-4 pb-24">
+      {/* Drawer 传实体：置顶 facet chip（可 × 移除，移除后仅余 q 检索） */}
+      {entity ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex items-center gap-1 rounded-[6px] border bg-muted/50 px-2 py-0.5 text-xs">
+            {ot("observe.inbox.entityChip", "Entity: {e}", { e: entity })}
+            <button
+              type="button"
+              aria-label="×"
+              onClick={() => handlers.onClearEntity()}
+              className="opacity-60 hover:opacity-100"
+            >
+              ×
+            </button>
+          </span>
+        </div>
+      ) : null}
+
       {lastCreated ? (
         <div className="flex flex-wrap items-center gap-2 rounded-[12px] border border-green-600/30 bg-green-100 px-3 py-2 text-[13px] text-green-800 dark:bg-green-500/10 dark:text-green-300">
           ✓ {ot("observe.inbox.caseCreatedBanner", "Research Case created ({n} docs attached)", { n: lastCreated.n })}

@@ -362,6 +362,11 @@ export const objectApi = {
     get<ArchiveRow[]>(`/artifacts${klass ? `?klass=${encodeURIComponent(klass)}` : ""}`),
   artifactRevisions: (artifactId: string) =>
     get<RevisionRow[]>(`/artifacts/${encodeURIComponent(artifactId)}/revisions`),
+  /** 版本差异；404=归属校验失败（诚实显示，不编造）。 */
+  artifactDiff: (artifactId: string, fromRev: string, toRev: string) =>
+    get<DiffRow>(
+      `/artifacts/${encodeURIComponent(artifactId)}/diff?from=${encodeURIComponent(fromRev)}&to=${encodeURIComponent(toRev)}`,
+    ),
   commitRevision: (
     artifactId: string,
     body: { revision_id: string; commit_id: string; user_note?: string },
@@ -373,6 +378,11 @@ export const objectApi = {
   composePressEdition: (body: { artifact_ids: string[]; title: string; note?: string }) =>
     post<WorkflowOut>("/press-editions", body),
   monitors: () => get<MonitorRow[]>("/monitors"),
+  monitorScheduler: (monitorId: string) =>
+    get<MonitorSchedulerRow>(`/monitors/${encodeURIComponent(monitorId)}/scheduler`),
+  /** 登记一次监测运行（写入 queued run；诚实纪律：无实时 scheduler 进程）。 */
+  runMonitorNow: (monitorId: string) =>
+    post<{ run_id: string }>(`/monitors/${encodeURIComponent(monitorId)}/runs`, {}),
   createMonitor: (body: {
     monitor_id: string;
     target_type: string;
@@ -408,6 +418,37 @@ export type MonitorRunRow = {
   started_at: string;
   finished_at: string | null;
   error: string | null;
+};
+
+/** GET /monitors/{id}/scheduler：调度健康视图（估算无真实 scheduler 进程，note 显式声明）。 */
+export type MonitorSchedulerRow = {
+  monitor_id: string;
+  schedule: string;
+  last_run: { run_id: string; status: string; started_at: string } | null;
+  next_run_estimate: string | null;
+  scheduler_health: "scheduled" | "no_history" | "unscheduled";
+  note: string;
+};
+
+/** GET /artifacts/{id}/diff：字段级 changes 列表（sections 扁平为 sections[i]，evidence_refs 差集编码为 from_value=removed / to_value=added）。 */
+export type DiffSideMeta = {
+  revision_id: string;
+  status: string;
+  created_at: string;
+};
+
+export type DiffFieldChange = {
+  field: string;
+  from_value: unknown;
+  to_value: unknown;
+  changed: boolean;
+};
+
+export type DiffRow = {
+  artifact_id: string;
+  from: DiffSideMeta;
+  to: DiffSideMeta;
+  changes: DiffFieldChange[];
 };
 
 export type MonitorRow = {
