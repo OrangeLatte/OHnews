@@ -1593,7 +1593,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             rows.append(
                 {
                     "source_id": sid,
-                    "kind": spec.get("kind", "?"),
+                    "kind": spec.get("kind") or spec.get("adapter") or "?",
                     "tier": spec.get("tier", "?"),
                     "language": spec.get("language", "?"),
                     "enabled": bool(spec.get("enabled", True)),

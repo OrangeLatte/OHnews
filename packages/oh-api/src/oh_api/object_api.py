@@ -48,6 +48,7 @@ class DocumentIn(BaseModel):
     language: str = ""
     published_at: str = ""
     external_key: str = ""  # bronze item_key（收件箱 cased/dissected 标记）
+    title: str = ""  # 原文标题（同源多文可区分）
 
 
 class RunIn(BaseModel):
@@ -276,6 +277,7 @@ def build_object_router(
                 language=doc.language,
                 published_at=doc.published_at,
                 external_key=doc.external_key,
+                title=doc.title,
             )
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
