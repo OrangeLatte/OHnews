@@ -18,7 +18,7 @@ from oh_contracts.dissection import ELEMENT_KEYS, ArticleDissection, DissectionE
 from oh_contracts.enums import Tier
 from pydantic import BaseModel, field_validator, model_validator
 
-from .agent_base import AgentSessions, make_checkpointer
+from .agent_base import AgentSessions, make_checkpointer, output_language_line
 
 _DISSECT_SYSTEM = (
     "你是新闻拆解专家。对给定文章做结构化拆解，仅输出 JSON。"
@@ -81,6 +81,7 @@ class DissectionState(TypedDict, total=False):
     text: str
     language: str
     publisher: str
+    analysis_locale: str
     hints: str
     elements: list[DissectionElement]
     dissection: ArticleDissection
@@ -115,6 +116,10 @@ def build_dissection_graph(
             f"{state.get('publisher') or '（未注册，按 unknown 处理，禁止臆测）'}\n"
             f"词典标注锚：{state.get('hints', '')}\n正文：\n{state.get('text', '')}"
         )
+        # analysis_locale 显式指定时约束输出语言；空则维持默认（不追加）
+        lang_line = output_language_line(state.get("analysis_locale", ""))
+        if lang_line:
+            user = f"{user}\n{lang_line}"
         try:
             async with asyncio.timeout(llm_timeout):
                 parsed, ref, usage = await router.invoke(

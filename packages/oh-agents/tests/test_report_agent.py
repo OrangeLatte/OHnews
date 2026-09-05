@@ -116,6 +116,28 @@ def test_evidence_pack_prompt_injected() -> None:
     assert out["report"].sections[0].evidence_refs == []
 
 
+def test_analysis_locale_appends_output_language_line() -> None:
+    """P1-8 analysis_locale：显式指定时 user prompt 末尾追加输出语言约束行。"""
+    store = FakeStore()
+    router = FakeRouter()
+    g = build_report_graph(router=router, store=store, now_fn=lambda: _NOW)
+    state = dict(_state())
+    state["analysis_locale"] = "en"
+    asyncio.run(g.ainvoke(state))
+    assert "分析输出语言" in router.last_user
+    assert "使用 English 书写" in router.last_user
+    assert "元素键名(element)保持英文枚举不变" in router.last_user
+
+
+def test_no_analysis_locale_no_output_language_line() -> None:
+    """analysis_locale 缺省（空）→ 不追加输出语言行。"""
+    store = FakeStore()
+    router = FakeRouter()
+    g = build_report_graph(router=router, store=store, now_fn=lambda: _NOW)
+    asyncio.run(g.ainvoke(dict(_state())))
+    assert "分析输出语言" not in router.last_user
+
+
 class FakeTransRouter:
     async def invoke(self, tier: Any, system: str, user: str, schema: type) -> tuple:
         from oh_agents.translation_agent import TranslationOutputP

@@ -161,9 +161,17 @@ class CaseWorkflows:
     # ---------- W1 拆解 DissectDocument ----------
 
     async def dissect_document(
-        self, case_id: str, document_revision_id: str, *, run_id: str | None = None
+        self,
+        case_id: str,
+        document_revision_id: str,
+        *,
+        analysis_locale: str = "",
+        run_id: str | None = None,
     ) -> dict:
-        """单篇文档 → 十八元素拆解；元素与 span 落库（human_status=unreviewed）。"""
+        """单篇文档 → 十八元素拆解；元素与 span 落库（human_status=unreviewed）。
+
+        analysis_locale 非空时注入 user prompt 约束分析输出语言（P1-8）。
+        """
         rev = self._require_revision(document_revision_id)
         run = self._begin_run(
             case_id,
@@ -179,15 +187,16 @@ class CaseWorkflows:
                 now_fn=self._graph_now,
                 llm_timeout=self._llm_timeout,
             )
-        state = await self._dissect_graph.ainvoke(
-            {
-                "item_key": document_revision_id,
-                "title": str(rev.get("canonical_url") or rev.get("document_id") or ""),
-                "text": str(rev.get("body") or ""),
-                "language": str(rev.get("language") or ""),
-                "publisher": str(rev.get("source_id") or ""),
-            }
-        )
+        state_in: dict[str, Any] = {
+            "item_key": document_revision_id,
+            "title": str(rev.get("canonical_url") or rev.get("document_id") or ""),
+            "text": str(rev.get("body") or ""),
+            "language": str(rev.get("language") or ""),
+            "publisher": str(rev.get("source_id") or ""),
+        }
+        if analysis_locale:
+            state_in["analysis_locale"] = analysis_locale
+        state = await self._dissect_graph.ainvoke(state_in)
         d = state.get("dissection")
         _usage = state.get("usage")
         if d is None:
@@ -604,6 +613,7 @@ class CaseWorkflows:
         title: str,
         text: str = "",
         item_key: str = "",
+        analysis_locale: str = "",
         run_id: str | None = None,
     ) -> dict:
         """报告 → Artifact(draft revision)；入库需经 commit_artifact（HITL 后）。
@@ -611,6 +621,7 @@ class CaseWorkflows:
         prompt 只注入 Case 库内真实材料（原文/拆解元素/主张/挑战/比较），
         杜绝「报告只看到字段名」的空转；材料为空（无文档或无拆解）→
         run failed 不产 draft（诚实失败，不假 succeeded）。
+        analysis_locale 非空时注入 user prompt 约束分析输出语言（P1-8）。
         """
         if report_type not in _REPORT_TYPE_TO_KIND:
             raise ValueError(f"未知 report_type: {report_type}")
@@ -630,16 +641,17 @@ class CaseWorkflows:
             self._report_graph = build_report_graph(
                 router=self._router, store=self._silver, now_fn=self._graph_now
             )
-        state = await self._report_graph.ainvoke(
-            {
-                "item_key": item_key or title,
-                "kind": _REPORT_TYPE_TO_KIND[report_type],
-                "title": title,
-                "text": text,
-                "dissection_json": "",
-                "evidence_json": _dumps(pack),
-            }
-        )
+        state_in: dict[str, Any] = {
+            "item_key": item_key or title,
+            "kind": _REPORT_TYPE_TO_KIND[report_type],
+            "title": title,
+            "text": text,
+            "dissection_json": "",
+            "evidence_json": _dumps(pack),
+        }
+        if analysis_locale:
+            state_in["analysis_locale"] = analysis_locale
+        state = await self._report_graph.ainvoke(state_in)
         report = state.get("report")
         _usage = state.get("usage")
         if report is None:

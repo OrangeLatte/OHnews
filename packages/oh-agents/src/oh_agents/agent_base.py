@@ -175,6 +175,24 @@ def make_checkpointer(sessions: AgentSessions) -> SqliteSaver:
     return SqliteSaver(sessions._connect())  # noqa: SLF001 — 同包基座共享连接
 
 
+# ---- analysis_locale 输出语言约束（P1-8 多语言审计）----
+
+_LOCALE_NAMES: dict[str, str] = {"zh": "中文", "en": "English"}
+
+_OUTPUT_LANGUAGE_LINE = (
+    "分析输出语言：所有 normalized_value/summary/section 正文使用 {locale} 书写；"
+    "元素键名(element)保持英文枚举不变"
+)
+
+
+def output_language_line(locale: str) -> str:
+    """analysis_locale 非空时返回追加到 user prompt 末尾的输出语言约束行；空则空串。"""
+    if not locale:
+        return ""
+    name = _LOCALE_NAMES.get(locale, locale)
+    return _OUTPUT_LANGUAGE_LINE.format(locale=name)
+
+
 # ---- user_gate 横切机制 ----
 
 

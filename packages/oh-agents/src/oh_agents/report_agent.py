@@ -20,7 +20,7 @@ from oh_contracts.enums import Tier
 from oh_contracts.reports import AgentReport, ReportSection
 from pydantic import BaseModel, model_validator
 
-from .agent_base import AgentSessions, make_checkpointer
+from .agent_base import AgentSessions, make_checkpointer, output_language_line
 
 REPORT_KIND_ZH: dict[str, str] = {
     "truth": "真实性与可信度核查",
@@ -62,6 +62,7 @@ class ReportState(TypedDict, total=False):
     text: str
     dissection_json: str
     evidence_json: str
+    analysis_locale: str
     sections: list[ReportSection]
     report: AgentReport
     llm_failed: str
@@ -108,6 +109,10 @@ def build_report_graph(
                 f"{state.get('dissection_json', '{}')}\n"
                 f"原文摘录：\n{(state.get('text') or '')[:_MAX_SOURCE_CHARS]}"
             )
+        # analysis_locale 显式指定时约束输出语言；空则维持默认（不追加）
+        lang_line = output_language_line(state.get("analysis_locale", ""))
+        if lang_line:
+            user = f"{user}\n{lang_line}"
         try:
             async with asyncio.timeout(90.0):
                 parsed, ref, usage = await router.invoke(

@@ -137,6 +137,32 @@ def test_dissect_llm_persists_extractions_and_spans(store, case_id) -> None:
     assert spans[0].quote == "美联储"
 
 
+def test_dissect_and_report_pass_analysis_locale_to_prompt(store, case_id) -> None:
+    """P1-8 analysis_locale：workflow 层透传 → user prompt 含输出语言约束行。"""
+    rev = _add_revision(store, rev_id="drev-9")
+    store.link_case_document(case_id, rev, _NOW())
+    router = MultiRouter()
+    wf = CaseWorkflows(research=store, router=router, now_fn=_NOW)
+    asyncio.run(wf.dissect_document(case_id, rev, analysis_locale="zh"))
+    assert any("分析输出语言" in p and "使用 中文 书写" in p for p in router.prompts)
+    # 报告路径：最小证据包之上，analysis_locale="en" → English 约束行
+    store.add_extraction(
+        ElementExtraction(
+            extraction_id="ext-al",
+            case_id=case_id,
+            document_revision_id=rev,
+            element_key="actor",
+            normalized_value="美联储",
+        )
+    )
+    n_prompts = len(router.prompts)
+    asyncio.run(
+        wf.build_report(case_id, report_type="veracity", title="AL 报告", analysis_locale="en")
+    )
+    report_prompts = router.prompts[n_prompts:]
+    assert any("分析输出语言" in p and "使用 English 书写" in p for p in report_prompts)
+
+
 def test_translate_creates_new_revision_and_is_idempotent(store) -> None:
     rev = _add_revision(store, rev_id="drev-3")
     wf = CaseWorkflows(research=store, router=MultiRouter(), now_fn=_NOW)
