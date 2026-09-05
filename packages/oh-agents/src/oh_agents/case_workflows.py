@@ -48,6 +48,9 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+_MAX_REPORT_BODY_CHARS = 6000
+
+
 class CaseWorkflows:
     """案例分析线工作流编排：拆解 → 副本 → 比较 → 报告 → 挑战 → 提交。"""
 
@@ -182,6 +185,7 @@ class CaseWorkflows:
                 "title": str(rev.get("canonical_url") or rev.get("document_id") or ""),
                 "text": str(rev.get("body") or ""),
                 "language": str(rev.get("language") or ""),
+                "publisher": str(rev.get("source_id") or ""),
             }
         )
         d = state.get("dissection")
@@ -233,7 +237,11 @@ class CaseWorkflows:
         dissection: Any,
         analysis_run_id: str,
     ) -> list[str]:
-        """拆解元素 → EvidenceSpan + ElementExtraction（引用具体版本与 run）。"""
+        """拆解元素 → EvidenceSpan + ElementExtraction（引用具体版本与 run）。
+
+        confidence 优先取模型自报校准值（prompt 约束推断类不得 1.0）；
+        模型未自报时维持旧语义：llm=1.0 / offline=0.0。
+        """
         ids: list[str] = []
         for el in dissection.elements:
             span_ids: list[str] = []
@@ -250,6 +258,11 @@ class CaseWorkflows:
                 )
                 self._research.add_span(span)
                 span_ids.append(span.span_id)
+            if el.confidence is not None:
+                confidence, uncertainty = float(el.confidence), ""
+            else:
+                confidence = 1.0 if dissection.engine == "llm" else 0.0
+                uncertainty = "" if dissection.engine == "llm" else "offline 兜底拆解"
             extraction = ElementExtraction(
                 extraction_id=self._rid("ext"),
                 case_id=case_id,
@@ -257,8 +270,8 @@ class CaseWorkflows:
                 element_key=el.element,
                 normalized_value=el.content,
                 span_ids=span_ids,
-                confidence=1.0 if dissection.engine == "llm" else 0.0,
-                uncertainty_reason="" if dissection.engine == "llm" else "offline 兜底拆解",
+                confidence=confidence,
+                uncertainty_reason=uncertainty,
                 analysis_run_id=analysis_run_id,
             )
             self._research.add_extraction(extraction)
@@ -357,7 +370,15 @@ class CaseWorkflows:
         note: str = "",
         run_id: str | None = None,
     ) -> dict:
-        """确定性比较（rule 引擎，无 LLM）：逐元素一致/分歧/缺口矩阵。"""
+        """确定性比较（rule 引擎，无 LLM）。
+
+        先做事件相关性门槛（eligibility）：实体/主题重叠率过低时拒绝默认
+        同事件交叉验证（blocked=True，不落 ComparisonSet——不编造跨事件
+        比较），建议用户明确要求跨事件类比后再执行。通过后逐元素四分：
+        agreement（全部有值且一致）/ conflicts（事实冲突 vs 叙事差异）/
+        missing（任一版本缺值——绝不计入一致或冲突）；summary 由同一份
+        分类结果计算，保证与前端统计同源。
+        """
         if len(document_revision_ids) < 2:
             raise ValueError("compare_sources 需要至少 2 个 document_revision")
         run = self._begin_run(
@@ -368,24 +389,100 @@ class CaseWorkflows:
             run_id=run_id,
         )
         matrix: dict[str, dict[str, str]] = {}
+        entity_tokens: list[set[str]] = []
+        topic_tokens: list[set[str]] = []
         for rev_id in document_revision_ids:
             for row in self._research.extractions_for_revision(rev_id):
                 key = str(row["element_key"])
                 matrix.setdefault(key, {})[rev_id] = str(row.get("normalized_value") or "")
+                val = str(row.get("normalized_value") or "")
+                if key in ("actor", "target") and val:
+                    entity_tokens.append({t for t in val.casefold().split() if len(t) > 1})
+                if key in ("hard_fact", "topic", "summary") and val:
+                    topic_tokens.append({t for t in val.casefold().split() if len(t) > 1})
+        n = len(document_revision_ids)
+
+        def _mean_jaccard(sets: list[set[str]]) -> float | None:
+            if len(sets) < n:
+                return None
+            pairs = [
+                len(a & b) / max(1, len(a | b)) for i, a in enumerate(sets) for b in sets[i + 1 :]
+            ]
+            return sum(pairs) / len(pairs) if pairs else None
+
+        ent_score = _mean_jaccard(entity_tokens)
+        top_score = _mean_jaccard(topic_tokens)
+        scores = [s for s in (ent_score, top_score) if s is not None]
+        avg = sum(scores) / len(scores) if scores else 0.0
+        if avg >= 0.45:
+            probability = "high"
+        elif avg < 0.25:
+            probability = "low"
+        else:
+            probability = "medium"
+        eligibility = {
+            "entity_overlap": ent_score,
+            "topic_similarity": top_score,
+            "same_event_probability": probability,
+            "comparison_mode": (
+                "same_event_cross_validation"
+                if probability in ("high", "medium")
+                else "cross_event_analogy"
+            ),
+        }
+        if probability == "low":
+            summary = (
+                f"同事件概率低（实体/主题重叠 {avg:.2f}），已跳过默认交叉验证；"
+                "如需跨事件类比分析请明确要求。"
+            )
+            self._finish_run(
+                run,
+                "succeeded",
+                output={
+                    "eligibility": eligibility,
+                    "blocked": True,
+                    "summary": summary,
+                },
+            )
+            return {
+                "run_id": run.run_id,
+                "comparison_id": None,
+                "summary": summary,
+                "blocked": True,
+                "eligibility": eligibility,
+            }
         agreement: list[str] = []
         conflicts: dict[str, dict[str, str]] = {}
-        gaps: list[str] = []
+        missing: list[str] = []
         for key, by_rev in matrix.items():
+            if len(by_rev) < n:
+                # 单侧/多侧缺失：独立类别，绝不计入一致或冲突
+                missing.append(key)
+                continue
             values = {v.strip().casefold() for v in by_rev.values() if v.strip()}
-            if len(by_rev) < len(document_revision_ids):
-                gaps.append(key)
-            if len(values) <= 1 and by_rev:
+            if len(values) <= 1:
                 agreement.append(key)
-            elif len(values) > 1:
-                conflicts[key] = by_rev
+            else:
+                cls = (
+                    "fact_conflict"
+                    if key
+                    in (
+                        "hard_fact",
+                        "data_scope",
+                        "quant_data",
+                        "actor",
+                        "target",
+                        "action",
+                        "timeline",
+                    )
+                    else "narrative_difference"
+                )
+                conflicts[key] = {**by_rev, "classification": cls}
+        n_fact = sum(1 for c in conflicts.values() if c["classification"] == "fact_conflict")
+        n_narr = len(conflicts) - n_fact
         summary = (
-            f"{len(agreement)} 一致 / {len(conflicts)} 分歧 / {len(gaps)} 缺口，"
-            f"共 {len(document_revision_ids)} 个版本"
+            f"{len(agreement)} 一致 / {len(conflicts)} 分歧（事实 {n_fact}·叙事 {n_narr}）/ "
+            f"{len(missing)} 缺失，共 {n} 个版本"
         )
         comparison = ComparisonSet(
             comparison_id=self._rid("cmp"),
@@ -403,7 +500,9 @@ class CaseWorkflows:
                 "summary": summary,
                 "agreement": agreement,
                 "conflicts": conflicts,
-                "gaps": gaps,
+                "missing": missing,
+                "eligibility": eligibility,
+                "blocked": False,
             },
         )
         return {
@@ -412,10 +511,90 @@ class CaseWorkflows:
             "summary": summary,
             "agreement": agreement,
             "conflicts": conflicts,
-            "gaps": gaps,
+            "missing": missing,
         }
 
     # ---------- W4 报告 BuildReport ----------
+
+    def _collect_report_evidence(self, case_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        """收集 Case 全部真实材料作为报告证据包（只含库内可核对的 id 与原文）。
+
+        返回 (evidence_pack, inputs 清单)；inputs 供验收方核对
+        「报告输入与页面 ResearchState 一致」，truncated 标记正文截断。
+        """
+        truncated = False
+        documents: list[dict[str, Any]] = []
+        n_extractions = 0
+        for doc in self._research.case_documents(case_id):
+            rev_id = str(doc["document_revision_id"])
+            rev = self._research.get_document_revision(rev_id) or {}
+            body = str(rev.get("body") or "")
+            entry: dict[str, Any] = {
+                "document_revision_id": rev_id,
+                "source_id": str(doc.get("source_id") or ""),
+                "language": str(doc.get("language") or ""),
+            }
+            if len(body) > _MAX_REPORT_BODY_CHARS:
+                truncated = True
+                entry["body"] = body[:_MAX_REPORT_BODY_CHARS]
+                entry["body_note"] = (
+                    f"正文超长已截断：仅前 {_MAX_REPORT_BODY_CHARS} 字符（原文 {len(body)} 字符）"
+                )
+            else:
+                entry["body"] = body
+            elements: list[dict[str, Any]] = []
+            for row in self._research.extractions_for_revision(rev_id):
+                spans = self._research.spans_by_ids(list(row.get("span_ids") or []))
+                elements.append(
+                    {
+                        "extraction_id": str(row["extraction_id"]),
+                        "element_key": str(row["element_key"]),
+                        "normalized_value": str(row.get("normalized_value") or ""),
+                        "confidence": row.get("confidence"),
+                        "human_status": str(row.get("human_status") or ""),
+                        "span_quotes": [sp.quote for sp in spans],
+                    }
+                )
+            n_extractions += len(elements)
+            entry["extraction_elements"] = elements
+            documents.append(entry)
+        claims = [
+            {"claim_id": c.claim_id, "kind": c.kind, "statement": c.statement}
+            for c in self._research.claims_for_case(case_id)
+        ]
+        challenge_runs = [
+            {
+                "questions": list(out.get("questions") or []),
+                "counter_evidence": list(out.get("counter_evidence") or []),
+            }
+            for out in self._research.run_outputs_for_case(case_id, "challenge")
+        ]
+        compare_runs = [
+            {
+                "summary": str(out.get("summary") or ""),
+                "agreement": list(out.get("agreement") or []),
+                "conflicts": dict(out.get("conflicts") or {}),
+                "missing": list(out.get("missing") or []),
+                "eligibility": dict(out.get("eligibility") or {}),
+                "blocked": bool(out.get("blocked")),
+            }
+            for out in self._research.run_outputs_for_case(case_id, "compare")
+        ]
+        pack = {
+            "documents": documents,
+            "claims": claims,
+            "challenge_runs": challenge_runs,
+            "compare_runs": compare_runs,
+        }
+        inputs = {
+            "n_documents": len(documents),
+            "n_extractions": n_extractions,
+            "n_claims": len(claims),
+            "n_challenge_runs": len(challenge_runs),
+            "n_compare_runs": len(compare_runs),
+            "truncated": truncated,
+        }
+        return pack, inputs
 
     async def build_report(
         self,
@@ -427,7 +606,12 @@ class CaseWorkflows:
         item_key: str = "",
         run_id: str | None = None,
     ) -> dict:
-        """报告 → Artifact(draft revision)；入库需经 commit_artifact（HITL 后）。"""
+        """报告 → Artifact(draft revision)；入库需经 commit_artifact（HITL 后）。
+
+        prompt 只注入 Case 库内真实材料（原文/拆解元素/主张/挑战/比较），
+        杜绝「报告只看到字段名」的空转；材料为空（无文档或无拆解）→
+        run failed 不产 draft（诚实失败，不假 succeeded）。
+        """
         if report_type not in _REPORT_TYPE_TO_KIND:
             raise ValueError(f"未知 report_type: {report_type}")
         run = self._begin_run(
@@ -437,6 +621,11 @@ class CaseWorkflows:
             input_refs=[item_key or title],
             run_id=run_id,
         )
+        pack, inputs = self._collect_report_evidence(case_id)
+        if inputs["n_documents"] == 0 or inputs["n_extractions"] == 0:
+            error = "报告证据包为空：无已拆解文档"
+            self._finish_run(run, "failed", error=error)
+            raise RuntimeError(error)
         if self._report_graph is None:
             self._report_graph = build_report_graph(
                 router=self._router, store=self._silver, now_fn=self._graph_now
@@ -448,6 +637,7 @@ class CaseWorkflows:
                 "title": title,
                 "text": text,
                 "dissection_json": "",
+                "evidence_json": _dumps(pack),
             }
         )
         report = state.get("report")
@@ -482,6 +672,7 @@ class CaseWorkflows:
                 "sections": [s.model_dump(mode="json") for s in report.sections],
                 "engine": report.engine,
                 "model_hint": report.model_hint,
+                "inputs": inputs,
             },
             status="draft",
             created_at=self._now(),
@@ -498,6 +689,7 @@ class CaseWorkflows:
                 "artifact_id": artifact.artifact_id,
                 "revision_id": revision.revision_id,
                 "engine": report.engine,
+                "inputs": inputs,
             },
         )
         return {

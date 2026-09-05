@@ -37,6 +37,9 @@ _REPORT_SYSTEM = (
     "你是资深财经分析师。基于给定的文章拆解结果与原文摘录撰写研究报告，仅输出 JSON。"
     "sections 为 2-4 个分节（title 一句 + body 一段）；所有论断必须引用拆解元素或原文，"
     "禁止编造数据与外部事实；证据不足时分节内明确写明「证据不足」，不得硬凑结论。"
+    "每个分节必须给出 evidence_refs：只能引用输入材料中真实出现的 id"
+    "（extraction_id/claim_id/document_revision_id），禁止虚构 id；"
+    "某分节找不到任何可引用证据时，evidence_refs 留空并在 body 写明「证据不足」。"
 )
 
 
@@ -58,6 +61,7 @@ class ReportState(TypedDict, total=False):
     title: str
     text: str
     dissection_json: str
+    evidence_json: str
     sections: list[ReportSection]
     report: AgentReport
     llm_failed: str
@@ -88,13 +92,22 @@ def build_report_graph(
     async def llm_node(state: ReportState) -> dict[str, Any]:
         if router is None:
             return {"errors": ["llm_unavailable: router 未配置"], "llm_failed": "router 未配置"}
-        user = (
-            f"报告视角：{REPORT_KIND_ZH.get(state['kind'], state['kind'])}\n"
-            f"文章标题：{state.get('title', '')}\n"
-            f"拆解结果（18 元素闭集：{','.join(ELEMENT_KEYS)}）：\n"
-            f"{state.get('dissection_json', '{}')}\n"
-            f"原文摘录：\n{(state.get('text') or '')[:_MAX_SOURCE_CHARS]}"
-        )
+        if state.get("evidence_json"):
+            # Case 工作流路径：完整证据包（原文/逐元素提取/主张/挑战/比较）
+            user = (
+                f"报告视角：{REPORT_KIND_ZH.get(state['kind'], state['kind'])}\n"
+                f"文章标题：{state.get('title', '')}\n"
+                "Case 证据包（全部为该案例库内真实材料，id 可直接引用）：\n"
+                f"{state['evidence_json']}"
+            )
+        else:
+            user = (
+                f"报告视角：{REPORT_KIND_ZH.get(state['kind'], state['kind'])}\n"
+                f"文章标题：{state.get('title', '')}\n"
+                f"拆解结果（18 元素闭集：{','.join(ELEMENT_KEYS)}）：\n"
+                f"{state.get('dissection_json', '{}')}\n"
+                f"原文摘录：\n{(state.get('text') or '')[:_MAX_SOURCE_CHARS]}"
+            )
         try:
             async with asyncio.timeout(90.0):
                 parsed, ref, usage = await router.invoke(

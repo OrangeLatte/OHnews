@@ -19,8 +19,10 @@ class FakeRouter:
     def __init__(self, *, fail: bool = False, empty: bool = False) -> None:
         self.fail = fail
         self.empty = empty
+        self.last_user = ""
 
     async def invoke(self, tier: Any, system: str, user: str, schema: type) -> tuple:
+        self.last_user = user
         if self.fail:
             raise RuntimeError("all candidates failed")
         sections = (
@@ -93,6 +95,25 @@ def test_llm_empty_output_degrades_offline() -> None:
 def test_report_id_stable_across_calls() -> None:
     assert report_id_for("k", "truth") == report_id_for("k", "truth")
     assert report_id_for("k", "truth") != report_id_for("k", "intent")
+
+
+def test_evidence_pack_prompt_injected() -> None:
+    """Case 工作流路径：evidence_json 优先注入 user prompt（真实材料而非字段名）。"""
+    store = FakeStore()
+    router = FakeRouter()
+    g = build_report_graph(router=router, store=store, now_fn=lambda: _NOW)
+    state = dict(_state())
+    state["evidence_json"] = (
+        '{"documents": [{"document_revision_id": "drev-1", "source_id": "wsj",'
+        ' "extraction_elements": [{"extraction_id": "ext-9", "element_key": "actor"}]}]}'
+    )
+    out = asyncio.run(g.ainvoke(state))
+    assert "drev-1" in router.last_user
+    assert "wsj" in router.last_user
+    assert "ext-9" in router.last_user
+    assert out["report"].engine == "llm"
+    # 分节模型保留 evidence_refs 字段（可空但必须在）
+    assert out["report"].sections[0].evidence_refs == []
 
 
 class FakeTransRouter:

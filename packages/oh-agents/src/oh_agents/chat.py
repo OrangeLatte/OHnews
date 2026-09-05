@@ -437,17 +437,95 @@ class IntentOut(BaseModel):
 
 
 _INTERROGATIVE_MARKS = (
-    "为什么", "为什么", "怎么", "如何", "什么意思", "是什么", "吗？", "呢？",
-    " explain", " why ", " how ", " what ", "?",
+    "为什么",
+    "为什么",
+    "怎么",
+    "如何",
+    "什么意思",
+    "是什么",
+    "吗？",
+    "呢？",
+    " explain",
+    " why ",
+    " how ",
+    " what ",
+    "?",
 )
 
 
 def _is_interrogative(text: str) -> bool:
     """疑问语境判定：疑问词/问号命中即视为追问（回答优先于执行）。"""
     stripped = text.strip()
-    return stripped.endswith("?") or stripped.endswith("？") or any(
-        m in stripped for m in _INTERROGATIVE_MARKS
+    return (
+        stripped.endswith("?")
+        or stripped.endswith("？")
+        or any(m in stripped for m in _INTERROGATIVE_MARKS)
     )
+
+
+# P0-1 否定约束：用户显式禁止写操作时，执行类意图一律降级为建议（最高优先级）。
+_NEGATION_MARKS: tuple[str, ...] = (
+    "不要创建",
+    "不要保存",
+    "不要修改",
+    "不要执行",
+    "不要动",
+    "不要跑",
+    "不要触发",
+    "别创建",
+    "别保存",
+    "别修改",
+    "别执行",
+    "别跑",
+    "禁止创建",
+    "禁止保存",
+    "禁止修改",
+    "禁止执行",
+    "不要任何",
+    "don't",
+    "do not ",
+    "never ",
+    "without ",
+)
+# "只/仅…判断/分析/回答/解释"型只读约束（用户要求先直接回答）。
+_ONLY_MARKS: tuple[str, ...] = (
+    "仅基于",
+    "只基于",
+    "仅根据",
+    "只根据",
+    "只回答",
+    "仅回答",
+    "只判断",
+    "仅判断",
+    "只分析",
+    "仅分析",
+    "只解释",
+    "仅解释",
+    "based only",
+    "only based",
+    "just tell",
+    "just answer",
+    "just analyze",
+    "just judge",
+)
+
+
+def detect_read_only_forced(message: str) -> bool:
+    """否定/只读约束解析：命中即强制只读（任何写操作不得执行，P0-1）。
+
+    规则层保守判定：显式否定短语命中 → True；"仅/只…回答/判断/分析"型
+    约束命中 → True。LLM 路由不可依赖（分类本身可能出错）。
+    """
+    text = message.strip().lower()
+    if any(m in text for m in _NEGATION_MARKS):
+        return True
+    if any(m in text for m in _ONLY_MARKS):
+        return True
+    # 中文无空格变体："仅…判断"（约束词与动词间有间隔）
+    for mark in ("仅", "只"):
+        if mark in text and any(v in text for v in ("判断", "回答", "分析", "解释")):
+            return True
+    return False
 
 
 def classify_intent(message: str) -> ChatIntent:
@@ -457,9 +535,7 @@ def classify_intent(message: str) -> ChatIntent:
     # 也应回答而非再次执行；元意图（status/observe/hitl）本身是查询，保留。
     if _is_interrogative(text):
         for intent, keywords in _INTENT_RULES:
-            if intent in ("status", "observe", "hitl") and any(
-                k in text for k in keywords
-            ):
+            if intent in ("status", "observe", "hitl") and any(k in text for k in keywords):
                 return intent
         return "question"
     for intent, keywords in _INTENT_RULES:
@@ -587,6 +663,38 @@ _COMMAND_WORKFLOWS: dict[str, tuple[str, str]] = {
     "challenge": ("ChallengeClaim", "challenge"),
 }
 _LLM_RUN_KINDS = frozenset({"dissect", "report", "translate"})
+
+
+def _mutation_changes(intent: str, case_id: str, p: dict[str, Any]) -> list[str]:
+    """写操作预览：confirm_action 卡的 changes 列表（用户确认依据，P0-1）。"""
+    head = f"Case: {case_id}"
+    if intent == "dissect":
+        rev = str(p.get("document_revision_id") or "自动选取第一篇文档")
+        return [
+            "创建 1 个拆解运行（DissectDocument）",
+            "写入元素提取与证据 span",
+            head,
+            f"文档: {rev}",
+        ]
+    if intent == "compare":
+        ids = list(p.get("document_revision_ids") or [])
+        n = len(ids) if ids else "自动选取前 2 篇"
+        return [
+            "创建 1 个跨源比较运行（CompareSources）",
+            "写入 ComparisonSet",
+            head,
+            f"文档版本: {n}",
+        ]
+    if intent == "report":
+        rtype = str(p.get("report_type") or "structured_summary")
+        return [
+            f"创建 1 个报告草稿（{rtype}）+ Artifact/Revision（draft）",
+            head,
+            "归档仍需您在 REPORT 模式确认（HITL）",
+        ]
+    if intent == "challenge":
+        return ["创建 1 个挑战运行（ChallengeClaim）", "写入质询问题与反证", head]
+    return ["创建 1 个分析运行", head]
 
 
 def _prepare_run(
@@ -719,6 +827,7 @@ async def run_chat_command(
     now: datetime | None = None,
     case_id: str = "",
     params: dict[str, Any] | None = None,
+    confirmed: bool = False,
 ) -> dict[str, Any]:
     """指挥模式单轮会话：意图路由 → 中间件链 → 执行接线 → 结构化卡片。
 
@@ -728,6 +837,11 @@ async def run_chat_command(
     run_id（异步 202 协议，chat 不等待）；status/observe/hitl 只读汇总；
     question 走既有 run_chat LLM 循环。返回 {reply, message_type, intent,
     intent_by, cards, citations, tools_used, rounds}。
+
+    P0-1 权限纪律：执行类意图一律 state_mutation——未经 ``confirmed=True``
+    （用户在卡片上显式确认）不触发任何工作流，返回 confirm_action 预览卡；
+    用户消息含否定/只读约束（detect_read_only_forced）时进一步降级为
+    draft_action（只回答+建议，绝不执行，即使 confirmed 也不放行约束轮）。
     """
     now_dt = now or datetime.now(UTC)
     now_s = now_dt.isoformat()
@@ -735,6 +849,7 @@ async def run_chat_command(
     intent, intent_by = await resolve_intent(message, router=router, tier=tier)
     cards: list[dict[str, Any]] = hitl_gate(research)
     case = research.get_case(case_id) if (research is not None and case_id) else None
+    read_only_forced = detect_read_only_forced(message) and not confirmed
     base = {
         "citations": [],
         "tools_used": (),
@@ -742,6 +857,7 @@ async def run_chat_command(
         "intent": intent,
         "intent_by": intent_by,
         "cards": cards,
+        "read_only_forced": read_only_forced,
     }
 
     def _abstain(reason: str) -> dict[str, Any]:
@@ -799,6 +915,47 @@ async def run_chat_command(
                 refs=[claim_id],
                 call=lambda wf, rid: wf.challenge_claim(case_id, claim_id, run_id=rid),
             )
+        if read_only_forced:
+            # P0-1：用户显式禁止写操作——最高优先级，降级为建议（绝不执行）
+            wf_name = _COMMAND_WORKFLOWS[intent][0]
+            cards.append(
+                {
+                    "type": "confirm_action",
+                    "action_id": "",
+                    "intent": intent,
+                    "title": "已按您的只读约束跳过执行",
+                    "changes": [],
+                    "needs_confirmation": False,
+                }
+            )
+            return {
+                **base,
+                "reply": (
+                    f"已遵循您的只读约束：本次不会创建、修改或保存任何数据。"
+                    f"如需执行「{wf_name}」，请去掉约束表述后再发送，或在页面上手动操作。"
+                ),
+                "message_type": "abstention",
+            }
+        if not confirmed:
+            # P0-1 写操作确认门：预览将产生的变更，等待用户显式确认
+            changes = _mutation_changes(intent, case_id, p)
+            cards.append(
+                {
+                    "type": "confirm_action",
+                    "action_id": f"act-{intent}-{case_id}",
+                    "intent": intent,
+                    "title": "待确认的写操作",
+                    "changes": changes,
+                    "needs_confirmation": True,
+                    "message": message,
+                }
+            )
+            return {
+                **base,
+                "cards": cards,
+                "reply": "此操作将创建分析运行（写操作）。请核对以下变更，确认后执行。",
+                "message_type": "hitl_request",
+            }
         use_thread = research_factory is not None or workflows_factory is not None
         if use_thread:
             launched = _launch_workflow(  # 线程模式：触发即返回，不等待
@@ -1045,6 +1202,7 @@ __all__ = [
     "classify_intent_llm",
     "context_injector",
     "execute_tool",
+    "detect_read_only_forced",
     "hitl_gate",
     "resolve_intent",
     "run_chat",

@@ -9,7 +9,7 @@ from oh_agents.case_workflows import CaseWorkflows
 from oh_agents.dissection_agent import DissectionOutputP
 from oh_agents.report_agent import ReportOutputP
 from oh_agents.translation_agent import TranslationOutputP
-from oh_contracts.case import ElementExtraction, ResearchCase
+from oh_contracts.case import Claim, ElementExtraction, ResearchCase
 from oh_contracts.dissection import DissectionElement, DissectionSpan
 from oh_contracts.reports import ReportSection
 from oh_llm.config import ModelRef
@@ -19,14 +19,16 @@ _TEXT = "美联储官员周三表示，通胀放缓令九月的利率决定保�
 
 
 class MultiRouter:
-    """按 schema 类型分派的结构化输出桩。"""
+    """按 schema 类型分派的结构化输出桩（记录 prompt 供注入断言）。"""
 
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.calls: list[type] = []
+        self.prompts: list[str] = []
 
     async def invoke(self, tier: Any, system: str, user: str, schema: type) -> tuple:
         self.calls.append(schema)
+        self.prompts.append(user)
         if self.fail:
             raise RuntimeError("all candidates failed")
         if schema is DissectionOutputP:
@@ -36,8 +38,9 @@ class MultiRouter:
                         element="actor",
                         content="美联储",
                         spans=[DissectionSpan(start=0, end=3)],
+                        confidence=1.0,
                     ),
-                    DissectionElement(element="tone", content="谨慎"),
+                    DissectionElement(element="tone", content="谨慎", confidence=0.7),
                 ]
             )
             return out, ModelRef(provider="zhipu", model_id="glm-5.3-flash"), None
@@ -46,7 +49,13 @@ class MultiRouter:
             return out, ModelRef(provider="zhipu", model_id="glm-5.3-flash"), None
         if schema is ReportOutputP:
             out = ReportOutputP(
-                sections=[ReportSection(title="核实结论与证据链", body="叙事分歧上升。")]
+                sections=[
+                    ReportSection(
+                        title="核实结论与证据链",
+                        body="叙事分歧上升。",
+                        evidence_refs=["ext-r1"],
+                    )
+                ]
             )
             return out, ModelRef(provider="zhipu", model_id="glm-5.3-flash"), None
         raise AssertionError(f"unexpected schema: {schema}")
@@ -84,6 +93,21 @@ def _add_revision(store, *, rev_id: str, body: str = _TEXT, language: str = "zh"
     return rev_id
 
 
+def _seed_report_evidence(store, case_id: str) -> None:
+    """报告最小证据包：1 篇挂载文档 + 1 条拆解提取（报告 failed 门槛之上）。"""
+    rev = _add_revision(store, rev_id="drev-r1")
+    store.link_case_document(case_id, rev, _NOW())
+    store.add_extraction(
+        ElementExtraction(
+            extraction_id="ext-r1",
+            case_id=case_id,
+            document_revision_id=rev,
+            element_key="actor",
+            normalized_value="美联储",
+        )
+    )
+
+
 def test_dissect_offline_abstains_honestly(store, case_id) -> None:
     rev = _add_revision(store, rev_id="drev-1")
     wf = CaseWorkflows(research=store, router=None, now_fn=_NOW)
@@ -103,6 +127,10 @@ def test_dissect_llm_persists_extractions_and_spans(store, case_id) -> None:
     assert len(out["extraction_ids"]) == 2
     rows = store.extractions_for_revision(rev)
     assert len(rows) == 2
+    # confidence 采用模型自报校准值：显式事实 1.0 / 推断类 0.7（不再一律 1.0）
+    by_key = {r["element_key"]: r for r in rows}
+    assert by_key["actor"]["confidence"] == 1.0
+    assert by_key["tone"]["confidence"] == 0.7
     with_span = [r for r in rows if r["span_ids"]]
     assert len(with_span) == 1
     spans = store.spans_by_ids(with_span[0]["span_ids"])
@@ -123,6 +151,7 @@ def test_translate_creates_new_revision_and_is_idempotent(store) -> None:
 def test_compare_sources_matrix(store, case_id) -> None:
     r1 = _add_revision(store, rev_id="drev-4")
     r2 = _add_revision(store, rev_id="drev-5", body="其他正文", language="zh")
+    shared = "利率决议维持不变"
     for rev_id, actor in (("drev-4", "美联储"), ("drev-5", "欧洲央行")):
         store.add_extraction(
             ElementExtraction(
@@ -133,25 +162,169 @@ def test_compare_sources_matrix(store, case_id) -> None:
                 normalized_value=actor,
             )
         )
+        store.add_extraction(
+            ElementExtraction(
+                extraction_id=f"ext-topic-{rev_id}",
+                case_id=case_id,
+                document_revision_id=rev_id,
+                element_key="hard_fact",
+                normalized_value=shared,
+            )
+        )
     wf = CaseWorkflows(research=store, now_fn=_NOW)
     out = wf.compare_sources(case_id, [r1, r2])
-    assert out["agreement"] == []
-    assert "actor" in out["conflicts"]
+    # hard_fact 相同 → agreement；actor 不同 → 事实冲突；单侧缺失绝不进两者
+    assert "hard_fact" in out["agreement"]
+    assert out["conflicts"]["actor"]["classification"] == "fact_conflict"
     assert out["comparison_id"]
     with pytest.raises(ValueError):
         wf.compare_sources(case_id, [r1])
 
 
+def test_compare_blocks_unrelated_events(store, case_id) -> None:
+    r1 = _add_revision(store, rev_id="drev-6")
+    r2 = _add_revision(store, rev_id="drev-7", body="完全另一条线", language="en")
+    for rev_id, actor, fact in (
+        ("drev-6", "美联储", "通胀数据走高"),
+        ("drev-7", "加沙卫生部门", "人道主义走廊谈判"),
+    ):
+        for key, val in (("actor", actor), ("hard_fact", fact)):
+            store.add_extraction(
+                ElementExtraction(
+                    extraction_id=f"ext-{key}-{rev_id}",
+                    case_id=case_id,
+                    document_revision_id=rev_id,
+                    element_key=key,
+                    normalized_value=val,
+                )
+            )
+    wf = CaseWorkflows(research=store, now_fn=_NOW)
+    out = wf.compare_sources(case_id, [r1, r2])
+    assert out["blocked"] is True
+    assert out["eligibility"]["same_event_probability"] == "low"
+    assert out["comparison_id"] is None
+    # 不落 ComparisonSet：不编造跨事件比较
+    row = store._conn.execute(
+        "SELECT COUNT(*) FROM comparison_sets WHERE case_id = ?", (case_id,)
+    ).fetchone()
+    assert row[0] == 0
+
+
 def test_report_then_commit_via_archive(store, case_id) -> None:
-    wf = CaseWorkflows(research=store, router=MultiRouter(), now_fn=_NOW)
+    """报告证据包注入真实材料；inputs 可核对；evidence_refs 原样落 content。"""
+    _seed_report_evidence(store, case_id)
+    store.add_claim(
+        Claim(
+            claim_id="claim-r1",
+            case_id=case_id,
+            statement="美联储暗示九月暂停加息",
+            kind="factual",
+            created_by="user",
+            created_at=_NOW(),
+        )
+    )
+    router = MultiRouter()
+    wf = CaseWorkflows(research=store, router=router, now_fn=_NOW)
     out = asyncio.run(wf.build_report(case_id, report_type="veracity", title="核实报告"))
     assert out["status"] == "succeeded"
+    # prompt 注入真实 Case 材料：source_id / 正文片段 / 主张陈述
+    prompt = router.prompts[-1]
+    assert "reuters" in prompt
+    assert "美联储官员周三" in prompt
+    assert "美联储暗示九月暂停加息" in prompt
+    # inputs 清单：报告输入与页面 ResearchState 一致
+    run = store.get_analysis_run(out["run_id"])
+    assert run is not None
+    assert run["output"]["inputs"] == {
+        "n_documents": 1,
+        "n_extractions": 1,
+        "n_claims": 1,
+        "n_challenge_runs": 0,
+        "n_compare_runs": 0,
+        "truncated": False,
+    }
     assert store.archive_list() == []
     committed = wf.commit_artifact(out["revision_id"], commit_note="人工确认")
     assert committed["artifact_id"] == out["artifact_id"]
     assert committed["superseded_revision_id"] == ""
     archive = store.archive_list()
     assert len(archive) == 1 and archive[0]["current_revision_id"] == out["revision_id"]
+    # sections 原样保存（含 evidence_refs）+ content 携带 inputs
+    revs = store.artifact_revisions(out["artifact_id"])
+    assert revs[0]["content"]["sections"][0]["evidence_refs"] == ["ext-r1"]
+    assert revs[0]["content"]["inputs"]["n_documents"] == 1
+
+
+def test_report_empty_evidence_fails_honestly(store, case_id) -> None:
+    """无拆解材料 → run failed 不产 draft（诚实失败，不假 succeeded）。"""
+    wf = CaseWorkflows(research=store, router=MultiRouter(), now_fn=_NOW)
+    with pytest.raises(RuntimeError, match="报告证据包为空"):
+        asyncio.run(wf.build_report(case_id, report_type="veracity", title="核实报告"))
+    # 有文档但无拆解元素同样失败
+    rev = _add_revision(store, rev_id="drev-r0")
+    store.link_case_document(case_id, rev, _NOW())
+    with pytest.raises(RuntimeError, match="报告证据包为空"):
+        asyncio.run(wf.build_report(case_id, report_type="veracity", title="核实报告"))
+    failed = [r for r in store.analysis_runs() if r.kind == "report"]
+    assert len(failed) == 2 and all(r.status == "failed" for r in failed)
+    row = store._conn.execute("SELECT COUNT(*) FROM artifacts").fetchone()
+    assert row[0] == 0
+
+
+def test_report_evidence_pack_covers_runs_and_truncation(store, case_id) -> None:
+    """证据包含挑战/比较 run 产物；超长正文截断并标注（truncated=True）。"""
+    r1 = _add_revision(store, rev_id="drev-c1")
+    r2 = _add_revision(store, rev_id="drev-c2", body="美联储官员暗示九月暂停加息。")
+    store.link_case_document(case_id, r1, _NOW())
+    store.link_case_document(case_id, r2, _NOW())
+    for rev in (r1, r2):
+        store.add_extraction(
+            ElementExtraction(
+                extraction_id=f"ext-{rev}",
+                case_id=case_id,
+                document_revision_id=rev,
+                element_key="hard_fact",
+                normalized_value="通胀放缓",
+            )
+        )
+    store.add_claim(
+        Claim(
+            claim_id="claim-c1",
+            case_id=case_id,
+            statement="通胀放缓",
+            kind="factual",
+            created_at=_NOW(),
+        )
+    )
+    wf = CaseWorkflows(research=store, now_fn=_NOW)
+    wf.compare_sources(case_id, [r1, r2])
+    wf.challenge_claim(case_id, "claim-c1")
+    pack, inputs = wf._collect_report_evidence(case_id)
+    assert inputs["n_documents"] == 2
+    assert inputs["n_extractions"] == 2
+    assert inputs["n_claims"] == 1
+    assert inputs["n_challenge_runs"] == 1
+    assert inputs["n_compare_runs"] == 1
+    assert inputs["truncated"] is False
+    assert pack["compare_runs"][0]["agreement"] == ["hard_fact"]
+    assert pack["challenge_runs"][0]["questions"]
+    # 超长正文：截断到 6000 字符并注明
+    r3 = _add_revision(store, rev_id="drev-big", body="长" * 7000)
+    store.link_case_document(case_id, r3, _NOW())
+    store.add_extraction(
+        ElementExtraction(
+            extraction_id="ext-big",
+            case_id=case_id,
+            document_revision_id=r3,
+            element_key="actor",
+            normalized_value="美联储",
+        )
+    )
+    pack, inputs = wf._collect_report_evidence(case_id)
+    assert inputs["truncated"] is True
+    big = next(d for d in pack["documents"] if d["document_revision_id"] == r3)
+    assert len(big["body"]) == 6000
+    assert "截断" in big["body_note"]
 
 
 def test_challenge_claim_requires_existing_claim(store, case_id) -> None:
@@ -162,6 +335,7 @@ def test_challenge_claim_requires_existing_claim(store, case_id) -> None:
 
 def test_compose_press_edition_committed_only(store, case_id) -> None:
     """入编只认 current committed 版本；draft/缺失 artifact 诚实 skipped；发布走 HITL。"""
+    _seed_report_evidence(store, case_id)
     wf = CaseWorkflows(research=store, router=MultiRouter(), now_fn=_NOW)
     a = asyncio.run(wf.build_report(case_id, report_type="veracity", title="核实报告"))
     b = asyncio.run(wf.build_report(case_id, report_type="intent", title="意图分析报告"))

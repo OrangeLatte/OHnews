@@ -24,8 +24,17 @@ _DISSECT_SYSTEM = (
     "你是新闻拆解专家。对给定文章做结构化拆解，仅输出 JSON。"
     "元素闭集："
     + ",".join(ELEMENT_KEYS)
-    + "。每个元素给 content（一句中文提炼）与可选 spans（原文 start/end 字符偏移）。"
-    "文中未体现的元素直接省略，禁止编造；引文必须来自原文。"
+    + "。每个元素给 content（一句中文提炼）、confidence（0-1 置信度，按下方校准规则）"
+    "与可选 spans（原文 start/end 字符偏移）。"
+    "文中未体现的元素直接省略，禁止编造；引文必须来自原文；"
+    "禁止输出文中不存在的实体、机构、数字（禁造证据；找不到就诚实缺该元素）。"
+    "信源纪律：source_reliability 只分析文中引用了哪些来源（cited sources），"
+    "不得据此推断发布方身份——发布方（publisher）来自元数据注入（见用户消息），不可质疑；"
+    "严格区分 publisher（元数据）/cited source（文中引用）/primary evidence（一手证据）/"
+    "anonymous source（匿名信源），分析哪个写哪个，不得混同。"
+    "confidence 校准：1.0 仅限原文逐字可直接引用的显式事实（hard_fact/actor 等且 span 命中）；"
+    "0.6-0.85 为推断类（intent/perspective/implicit_bias/tone 等分析判断）；"
+    "≤0.5 为证据不足或需外部知识的判断；禁止对推断类元素输出 1.0。"
 )
 
 
@@ -71,6 +80,7 @@ class DissectionState(TypedDict, total=False):
     title: str
     text: str
     language: str
+    publisher: str
     hints: str
     elements: list[DissectionElement]
     dissection: ArticleDissection
@@ -101,6 +111,8 @@ def build_dissection_graph(
             return {"errors": ["llm_unavailable: router 未配置"], "llm_failed": "router 未配置"}
         user = (
             f"标题：{state.get('title', '')}\n语言：{state.get('language', '')}\n"
+            f"本文档发布方（publisher，来自信源注册目录，不可质疑）："
+            f"{state.get('publisher') or '（未注册，按 unknown 处理，禁止臆测）'}\n"
             f"词典标注锚：{state.get('hints', '')}\n正文：\n{state.get('text', '')}"
         )
         try:

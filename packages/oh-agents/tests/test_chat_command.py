@@ -198,6 +198,7 @@ def test_command_dissect_launches_workflow(tmp_path: Path) -> None:
             research=research,
             workflows=wf,
             case_id="case-1",
+            confirmed=True,
         )
     )
     assert result["message_type"] == "tool_call"
@@ -240,6 +241,7 @@ def test_command_launch_reuses_active_run(tmp_path: Path) -> None:
             research=research,
             workflows=wf,
             case_id="case-1",
+            confirmed=True,
         )
     )
     assert wf.calls == []
@@ -265,6 +267,7 @@ def test_command_compare_requires_two_revisions(tmp_path: Path) -> None:
             research=research,
             workflows=wf,
             case_id="case-1",
+            confirmed=True,
         )
     )
     assert result["message_type"] == "abstention" and wf.calls == []
@@ -280,6 +283,7 @@ def test_command_compare_requires_two_revisions(tmp_path: Path) -> None:
             research=research,
             workflows=wf,
             case_id="case-1",
+            confirmed=True,
         )
     )
     assert result2["message_type"] == "tool_call"
@@ -302,6 +306,7 @@ def test_command_challenge_without_claims_abstains(tmp_path: Path) -> None:
             registry=None,
             research=research,
             case_id="case-1",
+            confirmed=True,
         )
     )
     assert result["message_type"] == "abstention"
@@ -324,6 +329,7 @@ def test_command_report_uses_case_question_as_title(tmp_path: Path) -> None:
             research=research,
             workflows=wf,
             case_id="case-1",
+            confirmed=True,
         )
     )
     assert result["message_type"] == "tool_call"
@@ -362,6 +368,7 @@ def test_command_background_factory_mode(tmp_path: Path) -> None:
             research_factory=lambda: _research(tmp_path),
             workflows_factory=wf_factory,
             case_id="case-1",
+            confirmed=True,
         )
     )
     progress = next(c for c in result["cards"] if c["type"] == "progress")
@@ -570,3 +577,85 @@ def test_chat_store_legacy_db_cards_migration(tmp_path: Path) -> None:
         cards=[{"type": "progress", "run_id": "r", "kind": "report", "status": "queued"}],
     )
     assert cs.messages("t0")[1]["cards"][0]["kind"] == "report"
+
+
+def test_command_read_only_constraint_blocks_write(tmp_path: Path) -> None:
+    """P0-1：用户否定约束下，执行类意图绝不触发工作流（最高优先级）。"""
+    research = _research(tmp_path)
+    _case(research)
+    _doc(research, "case-1", "drev-a", "doc-a", seq=1)
+    _doc(research, "case-1", "drev-b", "doc-b", seq=2)
+    wf = FakeWorkflows(research)
+    result = asyncio.run(
+        run_chat_command(
+            "仅基于当前 Case 比较两篇文档是否同一事件，不要创建保存修改",
+            [],
+            bronze=None,
+            store=None,
+            gold=None,
+            registry=None,
+            research=research,
+            workflows=wf,
+            case_id="case-1",
+        )
+    )
+    assert result["read_only_forced"] is True
+    assert result["message_type"] == "abstention"
+    assert "不会创建" in result["reply"]
+    assert wf.calls == []
+    assert not any(c["type"] in ("tool_call", "progress") for c in result["cards"])
+
+
+def test_command_write_requires_confirmation_card(tmp_path: Path) -> None:
+    """P0-1：未确认的写操作返回 confirm_action 预览卡，不触发工作流。"""
+    research = _research(tmp_path)
+    _case(research)
+    _doc(research, "case-1", "drev-a", "doc-a", seq=1)
+    _doc(research, "case-1", "drev-b", "doc-b", seq=2)
+    wf = FakeWorkflows(research)
+    result = asyncio.run(
+        run_chat_command(
+            "比较这两篇文档",
+            [],
+            bronze=None,
+            store=None,
+            gold=None,
+            registry=None,
+            research=research,
+            workflows=wf,
+            case_id="case-1",
+        )
+    )
+    conf = [c for c in result["cards"] if c["type"] == "confirm_action"]
+    assert len(conf) == 1
+    assert conf[0]["needs_confirmation"] is True
+    assert conf[0]["intent"] == "compare"
+    assert result["message_type"] == "hitl_request"
+    assert wf.calls == []
+    assert not any(c["type"] == "progress" for c in result["cards"])
+
+
+def test_command_confirmed_channel_executes(tmp_path: Path) -> None:
+    """P0-1：confirmed=True 放行写操作门，正常触发工作流。"""
+    research = _research(tmp_path)
+    _case(research)
+    _doc(research, "case-1", "drev-a", "doc-a", seq=1)
+    _doc(research, "case-1", "drev-b", "doc-b", seq=2)
+    wf = FakeWorkflows(research)
+    result = asyncio.run(
+        run_chat_command(
+            "比较这两篇文档",
+            [],
+            bronze=None,
+            store=None,
+            gold=None,
+            registry=None,
+            research=research,
+            workflows=wf,
+            case_id="case-1",
+            confirmed=True,
+        )
+    )
+    assert any(c["type"] == "tool_call" for c in result["cards"])
+    assert not any(c["type"] == "confirm_action" for c in result["cards"])
+    assert len(wf.calls) == 1 and wf.calls[0][0] == "compare"

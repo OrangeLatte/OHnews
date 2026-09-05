@@ -15,9 +15,12 @@ class FakeRouter:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.calls = 0
+        self.last_system = ""
+        self.last_user = ""
 
     async def invoke(self, tier: Any, system: str, user: str, schema: type) -> tuple:
         self.calls += 1
+        self.last_system, self.last_user = system, user
         if self.fail:
             raise RuntimeError("all candidates failed")
         out = DissectionOutputP(
@@ -109,3 +112,27 @@ def test_llm_empty_output_degrades_offline() -> None:
     assert d.model_hint == ""
     assert len(d.elements) == 1
     assert any("llm_empty_output" in e for e in out["errors"])
+
+
+def test_prompt_carries_publisher_and_calibration_rules() -> None:
+    """P0-4 来源幻觉防线：publisher 元数据注入 + 信源纪律 + confidence 校准规则。"""
+    from oh_agents.dissection_agent import _DISSECT_SYSTEM
+
+    router = FakeRouter()
+    g = build_dissection_graph(router=router, store=FakeStore(), now_fn=lambda: _NOW)
+    state = dict(_base_state())
+    state["publisher"] = "wsj"
+    asyncio.run(g.ainvoke(state))
+    # user prompt 显式注入元数据发布方（不可质疑）
+    assert "wsj" in router.last_user
+    assert "publisher" in router.last_user
+    assert "不可质疑" in router.last_user
+    # system：source_reliability 只分析文中引用来源，发布方来自元数据
+    assert "publisher" in _DISSECT_SYSTEM
+    assert "cited source" in _DISSECT_SYSTEM
+    assert "primary evidence" in _DISSECT_SYSTEM
+    assert "anonymous source" in _DISSECT_SYSTEM
+    # system：confidence 校准（推断类禁止 1.0）
+    assert "confidence" in _DISSECT_SYSTEM
+    assert "禁止对推断类元素输出 1.0" in _DISSECT_SYSTEM
+    assert router.last_system == _DISSECT_SYSTEM
