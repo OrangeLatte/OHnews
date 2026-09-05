@@ -3,7 +3,9 @@
 /**
  * MONITORS 空间（04）：监测台。
  * 顶部统计 + 状态 chips 过滤 + split view（左卡片列表 j/k 键盘流，右详情面板）。
- * 详情 = 元数据 + 运行时间线 + 未复核 updates（HITL 三按钮）+ confirm-snapshot。
+ * 三概念分离：Monitor 配置状态（active/paused，error 预留）≠ Run 状态 ≠ Update
+ * 审核状态（review_status 派生键）——"待复核"只数 unreviewed updates。
+ * 详情 = 元数据 + 运行时间线 + 未复核 updates（HITL 三按钮）+ confirm-snapshot + 新建入口。
  * 所有写操作 window.confirm（文案说明不可逆性），决策后 toast + 局部刷新。
  */
 
@@ -17,11 +19,20 @@ import { HelpIcon } from "@/components/help/help-icon";
 import { MonitorCard, statusTone } from "@/components/monitors/monitor-card";
 import { RunsTimeline, type MonitorRunRow } from "@/components/monitors/runs-timeline";
 import { UpdateCard } from "@/components/monitors/update-card";
-import { EmptyGuide, StatCard, type TFunc } from "@/components/monitors/bits";
+import { CreateForm } from "@/components/monitors/create-form";
+import { EmptyGuide, StatCard, TONE_DOT, type TFunc } from "@/components/monitors/bits";
 import { nowIso, relTime } from "@/components/monitors/format";
 import { useExtraT } from "@/components/monitors/i18n-extra";
 
 type RunsState = { list: MonitorRunRow[]; unavailable: boolean };
+
+/** Monitor 配置状态闭集（三概念分离：needs_review 是 Update 审核概念，永不入此列）。 */
+const CONFIG_STATUSES = ["active", "paused", "error"] as const;
+
+/** 待复核 = review_status 为 unreviewed 的 updates（旧后端缺省键视为 unreviewed）。 */
+function unreviewedCount(list: MonitorUpdateRow[]): number {
+  return list.filter((u) => (u.review_status ?? "unreviewed") === "unreviewed").length;
+}
 
 async function postJson(path: string, body: unknown): Promise<unknown> {
   const r = await fetch(`/api${path}`, {
@@ -61,6 +72,18 @@ export default function MonitorsPage() {
   const [editW, setEditW] = useState("");
   const [editS, setEditS] = useState("");
   const [editBusy, setEditBusy] = useState(false);
+  // OBSERVE Change Drawer 跳转落地：/monitors?create=1 自动打开创建表单。
+  // 必须在 effect 内异步打开：惰性初始化会导致 SSR(false) 与客户端(true) 首帧
+  // 不一致 → hydration mismatch；同步 setState 又违反 set-state-in-effect 规则。
+  const [createOpen, setCreateOpen] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (new URLSearchParams(window.location.search).get("create") === "1") {
+        setCreateOpen(true);
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -120,14 +143,17 @@ export default function MonitorsPage() {
     };
   }, [openId, runs]);
 
-  const statuses = useMemo(() => Array.from(new Set(rows.map((r) => r.status))).sort(), [rows]);
+  const configStatuses = useMemo(
+    () => CONFIG_STATUSES.filter((s) => rows.some((r) => r.status === s)),
+    [rows],
+  );
   const filtered = useMemo(
     () => (statusFilter ? rows.filter((r) => r.status === statusFilter) : rows),
     [rows, statusFilter],
   );
 
   const pendingTotal = useMemo(
-    () => rows.reduce((acc, m) => acc + (pending[m.monitor_id]?.length ?? 0), 0),
+    () => rows.reduce((acc, m) => acc + unreviewedCount(pending[m.monitor_id] ?? []), 0),
     [rows, pending],
   );
   const activeCount = rows.filter((r) => r.status === "active").length;
@@ -158,6 +184,15 @@ export default function MonitorsPage() {
     objectApi
       .monitorUpdates(monitorId)
       .then((list) => setPending((p) => ({ ...p, [monitorId]: list })))
+      .catch(() => toast.error(t("monitors.loadFailed")));
+  };
+
+  const handleCreated = (monitorId: string) => {
+    setCreateOpen(false);
+    setOpenId(monitorId);
+    objectApi
+      .monitors()
+      .then((list) => setRows(list))
       .catch(() => toast.error(t("monitors.loadFailed")));
   };
 
@@ -312,7 +347,7 @@ export default function MonitorsPage() {
         >
           {t("monitors.filterAll")} · {rows.length}
         </button>
-        {statuses.map((s) => (
+        {configStatuses.map((s) => (
           <button
             key={s}
             type="button"
@@ -322,12 +357,24 @@ export default function MonitorsPage() {
             onClick={() => setStatusFilter(s)}
           >
             <span className="inline-flex items-center gap-1">
-              <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusTone(s) === "ok" ? "bg-[#16a34a]" : statusTone(s) === "warn" ? "bg-[#d97706]" : "bg-[#6b7280]"}`} />
+              <span className={`inline-block h-1.5 w-1.5 rounded-full ${TONE_DOT[statusTone(s)]}`} />
               {s} · {rows.filter((r) => r.status === s).length}
             </span>
           </button>
         ))}
+        <Button
+          size="sm"
+          className="ml-auto"
+          onClick={() => setCreateOpen((v) => !v)}
+          aria-expanded={createOpen}
+        >
+          + {t("monitors.create.open")}
+        </Button>
       </div>
+
+      {createOpen && (
+        <CreateForm t={t} onCreated={handleCreated} onClose={() => setCreateOpen(false)} />
+      )}
 
       {loadErr && <p className="text-xs text-destructive">{loadErr}</p>}
 
@@ -357,7 +404,7 @@ export default function MonitorsPage() {
               <li key={m.monitor_id}>
                 <MonitorCard
                   m={m}
-                  pending={pending[m.monitor_id]?.length ?? 0}
+                  pending={unreviewedCount(pending[m.monitor_id] ?? [])}
                   selected={openId === m.monitor_id}
                   onSelect={setOpenId}
                   t={t}
@@ -386,13 +433,7 @@ export default function MonitorsPage() {
                     <span className="font-mono text-xs text-muted-foreground">{open.monitor_id}</span>
                     <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                       <span
-                        className={`inline-block h-2 w-2 rounded-full ${
-                          statusTone(open.status) === "ok"
-                            ? "bg-[#16a34a]"
-                            : statusTone(open.status) === "warn"
-                              ? "bg-[#d97706]"
-                              : "bg-[#6b7280]"
-                        }`}
+                        className={`inline-block h-2 w-2 rounded-full ${TONE_DOT[statusTone(open.status)]}`}
                       />
                       {open.status}
                     </span>

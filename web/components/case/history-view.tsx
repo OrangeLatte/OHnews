@@ -12,6 +12,7 @@ import { HelpIcon } from "@/components/help/help-icon";
 import { Skeleton, toast } from "@/components/ui/toast";
 import { objectApi, type CaseDetail, type WorkflowOut } from "@/lib/object-api";
 import { useT } from "@/lib/i18n/use-t";
+import { runKindLabel, runStatusLabel } from "@/lib/i18n/labels";
 import {
   ModeHeader,
   StatusPill,
@@ -93,6 +94,11 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
 
   const isOpen = (r: RunRow): boolean =>
     openIds[r.run_id] !== undefined ? openIds[r.run_id] : r.status === "failed";
+
+  const claimKindLabel = (k: string): string => {
+    const label = t(`case.claimKind.${k}`);
+    return label === `case.claimKind.${k}` ? k : label;
+  };
 
   const toggleRun = (r: RunRow) => {
     const next = !isOpen(r);
@@ -178,9 +184,9 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
     if (o.agreement) out.push({ label: t("case.compareConsistent"), value: o.agreement.join(", ") || "—" });
     if (o.conflicts) out.push({ label: t("case.compareConflicts"), value: Object.keys(o.conflicts).join(", ") || "—" });
     if (o.gaps) out.push({ label: t("case.compareGaps"), value: o.gaps.join(", ") || "—" });
-    if (o.artifact_id) out.push({ label: "artifact", value: o.artifact_id });
+    if (o.artifact_id) out.push({ label: t("case.outArtifact"), value: o.artifact_id });
     if (o.questions) out.push({ label: t("case.questions"), value: o.questions.join(" / ") || "—" });
-    if (o.engine) out.push({ label: "engine", value: o.engine });
+    if (o.engine) out.push({ label: t("case.outEngine"), value: o.engine });
     return out;
   };
 
@@ -247,8 +253,8 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
                   <span className="w-16 shrink-0 text-[11px] text-muted-foreground" title={r.started_at?.slice(0, 19)}>
                     {relLabel(r.started_at)}
                   </span>
-                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{r.kind}</span>
-                  <StatusPill status={r.status} label={r.status} />
+                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{runKindLabel(t, r.kind)}</span>
+                  <StatusPill status={r.status} label={runStatusLabel(t, r.status)} />
                   {r.engine ? <span className="text-muted-foreground">{r.engine}</span> : null}
                   {r.error ? (
                     <span className="min-w-0 flex-1 truncate text-red-700 dark:text-red-300" title={r.error}>
@@ -336,7 +342,7 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
           return (
             <div key={c.claim_id} className="rounded-xl border p-2.5 text-xs">
               <p className="flex min-h-[36px] flex-wrap items-center gap-2">
-                <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{c.kind}</span>
+                <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{claimKindLabel(c.kind)}</span>
                 <span className="min-w-0 flex-1">{c.statement}</span>
                 <span className="text-muted-foreground">({c.status})</span>
                 <button
@@ -406,8 +412,8 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
             aria-label={t("case.claimKind")}
             className="rounded-md border bg-transparent px-1 py-1 text-xs"
           >
-            <option value="factual">factual</option>
-            <option value="opinion">opinion</option>
+            <option value="factual">{t("case.claimKind.factual")}</option>
+            <option value="opinion">{t("case.claimKind.opinion")}</option>
           </select>
           <button
             type="submit"

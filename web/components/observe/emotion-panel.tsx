@@ -18,7 +18,16 @@ const EMOTION_COLORS: { key: string; cls: string; dot: string }[] = [
   { key: "confidence", cls: "stroke-blue-500", dot: "bg-blue-500" },
 ];
 
-export function EmotionPanel({ emotion, loading }: { emotion: EmotionRow[]; loading: boolean }) {
+export function EmotionPanel({
+  emotion,
+  loading,
+  onOpenEmotion,
+}: {
+  emotion: EmotionRow[];
+  loading: boolean;
+  /** 情绪线最新点（chips）点击 → 统一 Change Drawer（P1 图表联动）。 */
+  onOpenEmotion: (emotionKey: string, value: number, date: string) => void;
+}) {
   const ot = useOt();
   if (loading) {
     return (
@@ -59,18 +68,24 @@ export function EmotionPanel({ emotion, loading }: { emotion: EmotionRow[]; load
         <div className="flex flex-wrap gap-1.5">
           {EMOTION_COLORS.map((c) => {
             const v = latest[c.key];
+            const hasValue = typeof v === "number";
             return (
-              <span
+              <button
                 key={c.key}
-                className="inline-flex items-center gap-1 rounded-[6px] border px-1.5 py-0.5 text-xs"
-                title={`${latest.date} · ${ot(`observe.emo.${c.key}`, c.key)}`}
+                type="button"
+                disabled={!hasValue}
+                onClick={() => onOpenEmotion(c.key, v as number, latest.date)}
+                className="inline-flex items-center gap-1 rounded-[6px] border px-1.5 py-0.5 text-xs transition-colors enabled:cursor-pointer enabled:hover:bg-muted/60 disabled:cursor-default disabled:opacity-60"
+                title={
+                  hasValue
+                    ? `${latest.date} · ${ot(`observe.emo.${c.key}`, c.key)} · ${ot("observe.drawer.clickHint", "Click to open the change detail drawer")}`
+                    : `${latest.date} · ${ot(`observe.emo.${c.key}`, c.key)}`
+                }
               >
                 <span aria-hidden className={`inline-block h-2 w-2 rounded-full ${c.dot}`} />
                 {ot(`observe.emo.${c.key}`, c.key)}
-                <span className="font-semibold tabular-nums">
-                  {typeof v === "number" ? v.toFixed(2) : "—"}
-                </span>
-              </span>
+                <span className="font-semibold tabular-nums">{hasValue ? (v as number).toFixed(2) : "—"}</span>
+              </button>
             );
           })}
         </div>

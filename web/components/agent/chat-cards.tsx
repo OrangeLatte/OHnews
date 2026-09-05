@@ -12,6 +12,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useT } from "@/lib/i18n/use-t";
+import { runKindLabel, runStatusLabel } from "@/lib/i18n/labels";
 
 /** 后端 chat 响应卡片：type 判别 + 任意负载（网络数据不做强类型假设）。 */
 export type CardData = { type: string } & Record<string, unknown>;
@@ -90,7 +91,9 @@ function ToolCallCardView({ card, t }: { card: CardData; t: TFn }) {
       <CardTitle label={t("chat.card.tool_call")} extra={tool} />
       <p className="mt-1 flex items-center gap-1.5 text-xs">
         <StatusDot status={status} />
-        <span className={STATUS_TEXT[status] ?? "text-muted-foreground"}>{status || "—"}</span>
+        <span className={STATUS_TEXT[status] ?? "text-muted-foreground"}>
+          {status ? runStatusLabel(t, status) : "—"}
+        </span>
       </p>
       {detail ? <p className="mt-1 break-words text-muted-foreground">{detail}</p> : null}
     </div>
@@ -103,10 +106,12 @@ function ProgressCardView({ card, t }: { card: CardData; t: TFn }) {
   const status = str(card.status);
   return (
     <div className="ag-card ag-node" data-status={status}>
-      <CardTitle label={t("chat.card.progress")} extra={kind || "—"} />
+      <CardTitle label={t("chat.card.progress")} extra={kind ? runKindLabel(t, kind) : "—"} />
       <p className="mt-1 flex items-center gap-1.5 text-xs">
         <StatusDot status={status} />
-        <span className={STATUS_TEXT[status] ?? "text-muted-foreground"}>{status || "—"}</span>
+        <span className={STATUS_TEXT[status] ?? "text-muted-foreground"}>
+          {status ? runStatusLabel(t, status) : "—"}
+        </span>
         {runId ? <span className="truncate font-mono text-[10px] text-muted-foreground">{runId}</span> : null}
       </p>
     </div>
@@ -225,8 +230,12 @@ function RunsSummaryCardView({ card, t }: { card: CardData; t: TFn }) {
             return (
               <li key={str(r.run_id) || `run-${i}`} className="flex items-center gap-1.5 text-xs">
                 <StatusDot status={status} />
-                <span className="truncate">{str(r.kind) || "—"}</span>
-                <span className={STATUS_TEXT[status] ?? "text-muted-foreground"}>{status || "—"}</span>
+                <span className="truncate">
+                  {str(r.kind) ? runKindLabel(t, str(r.kind)) : "—"}
+                </span>
+                <span className={STATUS_TEXT[status] ?? "text-muted-foreground"}>
+                  {status ? runStatusLabel(t, status) : "—"}
+                </span>
                 <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
                   {relTime(str(r.started_at), t)}
                 </span>

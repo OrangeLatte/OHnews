@@ -10,21 +10,29 @@ import { relTime } from "./format";
 import { MetaChip, StatusDot, type TFunc, type Tone } from "./bits";
 
 function targetTypeCode(targetType: string): string {
+  // oh-contracts MonitorTarget 闭集（monitoring.py）
   const known: Record<string, string> = {
-    source: "SRC",
     case: "CASE",
-    keyword: "KEY",
+    entity: "ENT",
     topic: "TOP",
+    question: "QST",
+    article: "ART",
     claim: "CLM",
+    stance: "STA",
+    sentiment: "SEN",
+    action: "ACT",
+    element: "ELE",
   };
   if (known[targetType]) return known[targetType];
   return targetType.slice(0, 3).toUpperCase() || "REF";
 }
 
+/** Monitor 配置状态三色：active=绿 / paused=灰 / error=红（预留）；其余视为口径外。 */
 export function statusTone(status: string): Tone {
   if (status === "active") return "ok";
   if (status === "paused") return "idle";
-  return "warn";
+  if (status === "error") return "bad";
+  return "info";
 }
 
 export function MonitorCard({

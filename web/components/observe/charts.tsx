@@ -46,13 +46,23 @@ interface MigrationBarProps {
   label: string;
   shareBaseline: number;
   shareCurrent: number;
+  /** 点击打开统一 Change Drawer（可选；P1 图表联动）。 */
+  onClick?: () => void;
+  /** 低样本警示（share_baseline<0.05）：虚线边框+琥珀 tint+title。 */
+  lowSampleTitle?: string;
 }
 
-export function MigrationBar({ label, shareBaseline, shareCurrent }: MigrationBarProps) {
+export function MigrationBar({ label, shareBaseline, shareCurrent, onClick, lowSampleTitle }: MigrationBarProps) {
   const delta = shareCurrent - shareBaseline;
   const arrow = delta > 0.005 ? "▲" : delta < -0.005 ? "▼" : "—";
   return (
-    <li className="text-sm">
+    <li
+      onClick={onClick}
+      className={`text-sm ${onClick ? "cursor-pointer" : ""} ${
+        lowSampleTitle ? "rounded-[8px] border border-dashed border-amber-500/70 bg-amber-500/10" : ""
+      }`}
+      title={lowSampleTitle ?? `${label}: ${pct(shareBaseline)} → ${pct(shareCurrent)}`}
+    >
       <div className="flex justify-between">
         <span>{label}</span>
         <span className="text-xs text-muted-foreground">
@@ -62,7 +72,7 @@ export function MigrationBar({ label, shareBaseline, shareCurrent }: MigrationBa
           </span>
         </span>
       </div>
-      <div className="relative h-3 rounded bg-muted" title={`${label}: ${pct(shareBaseline)} → ${pct(shareCurrent)}`}>
+      <div className="relative h-3 rounded bg-muted">
         <div
           className="absolute top-0 h-1.5 rounded-t bg-muted-foreground/40"
           style={{ width: `${Math.round(shareBaseline * 100)}%` }}

@@ -6,6 +6,7 @@
  */
 
 import { useOt } from "@/components/observe/i18n-bridge";
+import { isLowSample, type ChangeSelection } from "@/components/observe/change-drawer";
 import { DualBar } from "@/components/observe/charts";
 import { Skeleton } from "@/components/ui/toast";
 import type { Landscape, SourceStream } from "@/lib/landscape-api";
@@ -23,16 +24,19 @@ function windowLabel(w: { start: string; end: string; n_articles: number }): str
   return `${w.start.slice(0, 10)} → ${w.end.slice(0, 10)} · ${w.n_articles}`;
 }
 
-/** sankey 式流入图：左=信源节点，右=基线/当前两个窗口节点。 */
+/** sankey 式流入图：左=信源节点，右=基线/当前两个窗口节点。节点可点击开统一 Drawer。 */
 function SankeyFlow({
   streams,
   labelBaseline,
   labelCurrent,
+  onOpenSource,
 }: {
   streams: SourceStream[];
   labelBaseline: string;
   labelCurrent: string;
+  onOpenSource: (sel: ChangeSelection) => void;
 }) {
+  const ot = useOt();
   const TOP_N = 8;
   const sorted = [...streams].sort(
     (a, b) => Math.max(b.n_baseline, b.n_current) - Math.max(a.n_baseline, a.n_current),
@@ -109,16 +113,38 @@ function SankeyFlow({
           ) : null}
         </g>
       ))}
-      {nodes.map((n, i) => (
-        <g key={n.source_id}>
-          <rect x="122" y={24 + i * rowH + 4} width="12" height={rowH - 8} rx="3" fill={clusterColor(n.cluster)} opacity="0.85">
-            <title>{n.label}</title>
-          </rect>
-          <text x="112" y={24 + i * rowH + rowH / 2 + 3} textAnchor="end" fontSize="11" className="fill-muted-foreground">
-            {n.label.length > 14 ? `${n.label.slice(0, 13)}…` : n.label}
-          </text>
-        </g>
-      ))}
+      {nodes.map((n, i) => {
+        const isAgg = n.source_id === "__other__";
+        const low = !isAgg && isLowSample(n.n_baseline, n.n_current);
+        const lowLabel = ot("observe.lowSample", "Low sample (n={n}); growth may be distorted", {
+          n: Math.min(n.n_baseline, n.n_current),
+        });
+        return (
+          <g
+            key={n.source_id}
+            className={isAgg ? undefined : "cursor-pointer"}
+            onClick={isAgg ? undefined : () => onOpenSource({ kind: "source_stream", stream: n })}
+          >
+            <rect
+              x="122"
+              y={24 + i * rowH + 4}
+              width="12"
+              height={rowH - 8}
+              rx="3"
+              fill={low ? "#d97706" : clusterColor(n.cluster)}
+              opacity={low ? 0.6 : 0.85}
+              stroke={low ? "#b45309" : undefined}
+              strokeWidth={low ? 1.2 : undefined}
+              strokeDasharray={low ? "3 2" : undefined}
+            >
+              <title>{low ? `${n.label} · ${lowLabel}` : n.label}</title>
+            </rect>
+            <text x="112" y={24 + i * rowH + rowH / 2 + 3} textAnchor="end" fontSize="11" className="fill-muted-foreground">
+              {n.label.length > 14 ? `${n.label.slice(0, 13)}…` : n.label}
+            </text>
+          </g>
+        );
+      })}
       <rect x="600" y={baseStart} width="12" height={baseH} rx="3" className="fill-muted-foreground/50" />
       <text x="600" y={baseStart - 8} fontSize="11" className="fill-foreground" fontWeight="600">
         {labelBaseline} · {baseTotal.toLocaleString("en-US")}
@@ -131,7 +157,14 @@ function SankeyFlow({
   );
 }
 
-export function FlowPanel({ landscape }: { landscape: Landscape | null }) {
+export function FlowPanel({
+  landscape,
+  onOpenSource,
+}: {
+  landscape: Landscape | null;
+  /** 信源条/节点点击 → 统一 Change Drawer（P1 图表联动）。 */
+  onOpenSource: (sel: ChangeSelection) => void;
+}) {
   const t = useT();
   const ot = useOt();
 
@@ -158,43 +191,56 @@ export function FlowPanel({ landscape }: { landscape: Landscape | null }) {
       </p>
       {streams.length > 0 ? (
         <>
-          <SankeyFlow streams={streams} labelBaseline={labelBaseline} labelCurrent={labelCurrent} />
+          <SankeyFlow streams={streams} labelBaseline={labelBaseline} labelCurrent={labelCurrent} onOpenSource={onOpenSource} />
           <ul className="space-y-3">
             {streams.map((s) => {
               const delta =
                 s.n_baseline > 0 ? Math.round(((s.n_current - s.n_baseline) / s.n_baseline) * 100) : null;
+              const low = isLowSample(s.n_baseline, s.n_current);
+              const lowLabel = ot("observe.lowSample", "Low sample (n={n}); growth may be distorted", {
+                n: Math.min(s.n_baseline, s.n_current),
+              });
               return (
-                <li key={s.source_id} className="flex items-center gap-3 text-[13px]">
-                  <span className="w-44 shrink-0 truncate" title={s.label}>
-                    {s.label}{" "}
-                    <span className="rounded-[6px] bg-muted px-1 text-[10px] uppercase text-muted-foreground">
-                      {s.tier}
+                <li key={s.source_id}>
+                  <button
+                    type="button"
+                    onClick={() => onOpenSource({ kind: "source_stream", stream: s })}
+                    className={`flex w-full items-center gap-3 rounded-[8px] px-2 py-1 text-left text-[13px] transition-colors hover:bg-muted/60 ${
+                      low ? "border border-dashed border-amber-500/70 bg-amber-500/10" : ""
+                    }`}
+                    title={low ? `${s.label} · ${lowLabel}` : s.label}
+                  >
+                    <span className="w-44 shrink-0 truncate">
+                      {s.label}{" "}
+                      <span className="rounded-[6px] bg-muted px-1 text-[10px] uppercase text-muted-foreground">
+                        {s.tier}
+                      </span>
                     </span>
-                  </span>
-                  <DualBar
-                    baseline={s.n_baseline}
-                    current={s.n_current}
-                    max={max}
-                    labelBaseline="t-2w"
-                    labelCurrent="t-1w"
-                  />
-                  {delta === null ? (
-                    <span className="w-14 shrink-0 text-right text-xs text-muted-foreground" title={ot("observe.flow.noBaseline", "baseline is 0, delta undefined")}>
-                      —
-                    </span>
-                  ) : (
-                    <span
-                      className={`w-14 shrink-0 rounded-[6px] px-1 text-right text-xs tabular-nums ${
-                        delta > 0
-                          ? "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400"
-                          : delta < 0
-                            ? "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400"
-                            : "text-muted-foreground"
-                      }`}
-                    >
-                      {delta > 0 ? "▲" : delta < 0 ? "▼" : "—"} {Math.abs(delta)}%
-                    </span>
-                  )}
+                    <DualBar
+                      baseline={s.n_baseline}
+                      current={s.n_current}
+                      max={max}
+                      labelBaseline="t-2w"
+                      labelCurrent="t-1w"
+                    />
+                    {delta === null ? (
+                      <span className="w-14 shrink-0 text-right text-xs text-muted-foreground" title={ot("observe.flow.noBaseline", "baseline is 0, delta undefined")}>
+                        —
+                      </span>
+                    ) : (
+                      <span
+                        className={`w-14 shrink-0 rounded-[6px] px-1 text-right text-xs tabular-nums ${
+                          delta > 0
+                            ? "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400"
+                            : delta < 0
+                              ? "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400"
+                              : "text-muted-foreground"
+                        }`}
+                      >
+                        {delta > 0 ? "▲" : delta < 0 ? "▼" : "—"} {Math.abs(delta)}%
+                      </span>
+                    )}
+                  </button>
                 </li>
               );
             })}

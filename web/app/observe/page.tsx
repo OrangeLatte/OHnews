@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { HelpIcon } from "@/components/help/help-icon";
+import { ChangeDrawer, drawerSubject, type ChangeSelection } from "@/components/observe/change-drawer";
 import { DivergencePanel } from "@/components/observe/divergence-panel";
 import { EmotionPanel } from "@/components/observe/emotion-panel";
 import { EntitiesPanel } from "@/components/observe/entities-panel";
@@ -111,6 +112,27 @@ export default function ObservePage() {
   const [entityErr, setEntityErr] = useState("");
 
   const [strip, setStrip] = useState<{ total: number; pending: number } | null>(null);
+
+  // <lg 左栏 facet 折叠抽屉（默认收起：390px 首屏主舞台全宽可见）
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // 统一 Change Drawer：任意数据点点击后打开（P1 图表联动）
+  const [drawer, setDrawer] = useState<ChangeSelection | null>(null);
+  const openDrawer = useCallback((sel: ChangeSelection) => setDrawer(sel), []);
+  const closeDrawer = useCallback(() => setDrawer(null), []);
+  const createCaseFromDrawer = useCallback((sel: ChangeSelection) => {
+    if (qTimer.current !== null) {
+      window.clearTimeout(qTimer.current);
+      qTimer.current = null;
+    }
+    const subject = drawerSubject(sel);
+    if (subject) {
+      setQ(subject);
+      setQInput(subject);
+    }
+    setUrlState({ mode: "inbox" });
+    setDrawer(null);
+  }, []);
 
   // 主舞台只读数据（change-landscape + ndi/rank + emotion），窗口变化整体重拉
   useEffect(() => {
@@ -302,8 +324,23 @@ export default function ObservePage() {
     if (jump) setUrlState({ mode: "entities" });
   }, []);
 
+  // Drawer 内"查看实体时间线"：关 Drawer + 跳 Entities tab
+  const openEntityTimeline = useCallback(
+    (entityId: string) => {
+      setDrawer(null);
+      openEntity(entityId, true);
+    },
+    [openEntity],
+  );
+
   const mainStale = mainData !== null && mainData.days !== fetchDays;
-  const dataAsOf = mainData ? mainData.landscape.generated_at.slice(0, 16).replace("T", " ") : null;
+  // 诚实表述：数据截至 = freshness 覆盖尾（缺覆盖尾时退回场景生成时间），不用绝对"现在"
+  const coverageEnd = mainData?.landscape.freshness?.coverage_end ?? null;
+  const asOfText = coverageEnd
+    ? `${coverageEnd.slice(0, 10)} ${coverageEnd.slice(11, 16)}`
+    : mainData
+      ? `${mainData.landscape.generated_at.slice(0, 10)} ${mainData.landscape.generated_at.slice(11, 16)}`
+      : null;
 
   const tabLabels: Record<ObserveMode, string> = {
     signal: ot("observe.tab.signal", "Signal"),
@@ -347,6 +384,15 @@ export default function ObservePage() {
       {/* 顶栏：标题 + 窗口切换 + data as of */}
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">{t("nav.observe")}</h1>
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((v) => !v)}
+          aria-expanded={filtersOpen}
+          className="rounded-[6px] border px-2 py-0.5 text-xs lg:hidden"
+        >
+          {filtersOpen ? "✕ " : "☰ "}
+          {t("observe.filters")}
+        </button>
         <span className="flex items-center gap-1" role="group" aria-label={ot("observe.rail.window", "Time window")}>
           {WINDOWS.map((w) => (
             <button
@@ -362,10 +408,8 @@ export default function ObservePage() {
             </button>
           ))}
         </span>
-        {dataAsOf ? (
-          <span className="text-xs text-muted-foreground">
-            {t("observe.dataAsOf")}: {dataAsOf} UTC
-          </span>
+        {asOfText ? (
+          <span className="text-xs text-muted-foreground">{t("observe.coverageAsOf", { t: asOfText })}</span>
         ) : (
           <Skeleton className="h-4 w-44" />
         )}
@@ -417,9 +461,33 @@ export default function ObservePage() {
         </div>
       ) : null}
 
-      {/* 双区：左栏 facet + 主舞台 */}
-      <div className="flex flex-col gap-6 lg:flex-row">
-        <aside className="w-full shrink-0 space-y-5 lg:w-[220px]">
+      {/* 双区：左栏 facet + 主舞台；<lg 左栏收进抽屉（默认收起），lg+ 常驻左栏 */}
+      <div className="relative flex flex-col gap-6 lg:flex-row">
+        {filtersOpen ? (
+          <div
+            className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+            aria-hidden="true"
+            onClick={() => setFiltersOpen(false)}
+          />
+        ) : null}
+        <aside
+          className={`${
+            filtersOpen
+              ? "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] overflow-y-auto bg-background p-4 shadow-xl"
+              : "hidden"
+          } shrink-0 space-y-5 lg:static lg:z-auto lg:block lg:w-[220px] lg:overflow-visible lg:bg-transparent lg:p-0 lg:shadow-none`}
+        >
+          <div className="flex items-center justify-between lg:hidden">
+            <h2 className="text-sm font-semibold">{t("observe.filters")}</h2>
+            <button
+              type="button"
+              onClick={() => setFiltersOpen(false)}
+              aria-label={t("observe.filters")}
+              className="rounded-[6px] border px-2 py-0.5 text-xs"
+            >
+              ×
+            </button>
+          </div>
           <RailSection title={ot("observe.rail.window", "Time window")}>
             <div className="grid grid-cols-4 gap-1">
               {WINDOWS.map((w) => (
@@ -544,20 +612,32 @@ export default function ObservePage() {
                   emotion={mainData?.emotion ?? []}
                   sources={sources}
                   windowLabel={WINDOWS.find((w) => w.d === days)?.label ?? String(days)}
-                  onDrill={setMode}
+                  onOpenDrawer={openDrawer}
                 />
               ) : null}
-              {mode === "flow" ? <FlowPanel landscape={mainData?.landscape ?? null} /> : null}
-              {mode === "narrative" ? <NarrativePanel landscape={mainData?.landscape ?? null} /> : null}
+              {mode === "flow" ? (
+                <FlowPanel landscape={mainData?.landscape ?? null} onOpenSource={openDrawer} />
+              ) : null}
+              {mode === "narrative" ? (
+                <NarrativePanel landscape={mainData?.landscape ?? null} onOpenNarrative={openDrawer} />
+              ) : null}
               {mode === "divergence" ? (
                 <DivergencePanel
                   ndi={mainData?.ndi ?? []}
                   loading={mainData === null}
-                  onOpenEntity={(e) => openEntity(e, true)}
+                  onOpenDrawer={(entity, label, ndi, nSources) =>
+                    openDrawer({ kind: "entity", entity, label, ndi, nSources })
+                  }
                 />
               ) : null}
               {mode === "emotion" ? (
-                <EmotionPanel emotion={mainData?.emotion ?? []} loading={mainData === null} />
+                <EmotionPanel
+                  emotion={mainData?.emotion ?? []}
+                  loading={mainData === null}
+                  onOpenEmotion={(emotionKey, value, date) =>
+                    openDrawer({ kind: "emotion", emotionKey, value, date })
+                  }
+                />
               ) : null}
               {mode === "entities" ? (
                 <EntitiesPanel
@@ -568,6 +648,7 @@ export default function ObservePage() {
                   days={fetchDays}
                   ndi={mainData?.ndi ?? []}
                   onOpen={openEntity}
+                  onOpenDrawer={(id, label, ndi) => openDrawer({ kind: "entity", entity: id, label, ndi })}
                 />
               ) : null}
               {mode === "inbox" ? (
@@ -589,6 +670,26 @@ export default function ObservePage() {
           </footer>
         </div>
       </div>
+
+      {/* 统一 Change Drawer（图表联动 P1）；chips=真正作用于本图数据的窗口筛选 */}
+      <ChangeDrawer
+        selection={drawer}
+        landscape={mainData?.landscape ?? null}
+        chips={
+          drawer
+            ? [
+                {
+                  label: `${ot("observe.rail.window", "Time window")}: ${
+                    WINDOWS.find((w) => w.d === days)?.label ?? String(days)
+                  }`,
+                },
+              ]
+            : []
+        }
+        onClose={closeDrawer}
+        onCreateCase={createCaseFromDrawer}
+        onOpenEntityTimeline={openEntityTimeline}
+      />
     </div>
   );
 }

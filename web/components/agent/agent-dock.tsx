@@ -9,7 +9,7 @@
  * message_type 缺省按 answer 渲染。
  */
 
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { AgentPanel } from "@/components/agent/agent-panel";
 import { AgentPlan } from "@/components/agent/agent-plan";
 import { AgentRuns } from "@/components/agent/agent-runs";
@@ -92,6 +92,10 @@ const TYPE_CLS: Record<MessageType, string> = {
 
 const TABS = ["chat", "plan", "runs", "artifacts", "system"] as const;
 type DockTab = (typeof TABS)[number];
+
+/** 位置切换三选（dock header ⬅⬇➡）：写 localStorage "ag-position"，下次加载读取。 */
+const POSITION_CHOICES: readonly DockPosition[] = ["left", "bottom", "right"];
+const POSITION_GLYPH: Record<DockPosition, string> = { left: "⬅", bottom: "⬇", right: "➡" };
 
 /** 组件作用域禁 Date.now/random：id 与时间戳生成收敛在模块级函数。 */
 function newThreadId(): string {
@@ -501,12 +505,27 @@ export function AgentDock({
     const v = Number(window.localStorage.getItem("ag-width"));
     return v >= 18 && v <= 60 ? v : 26;
   });
+  // 停靠位置持久化：SSR 首帧用 prop 默认值，挂载后 setTimeout(0) 异步读 localStorage
+  // （同步/惰性读取会导致 SSR 与客户端首帧不一致 → hydration mismatch，monitors 页教训）
+  const [pos, setPos] = useState<DockPosition>(position);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const v = window.localStorage.getItem("ag-position");
+      if (v === "left" || v === "right" || v === "bottom") setPos(v);
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  const switchPosition = useCallback((p: DockPosition) => {
+    setPos(p);
+    window.localStorage.setItem("ag-position", p);
+  }, []);
 
   const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const startX = e.clientX;
     const startW = width;
-    const side = position === "left" ? "right" : "left";
+    const side = pos === "left" ? "right" : "left";
     const move = (ev: PointerEvent) => {
       const delta = side === "left" ? startX - ev.clientX : ev.clientX - startX;
       const next = Math.min(60, Math.max(18, startW + delta / 16));
@@ -525,7 +544,7 @@ export function AgentDock({
 
   return (
     <aside
-      className={`ag-dock ag-${position} ${expanded ? "ag-expanded" : ""}`}
+      className={`ag-dock ag-${pos} ${expanded ? "ag-expanded" : ""}`}
       data-open={open}
       data-expanded={expanded}
       aria-label={title}
@@ -545,22 +564,44 @@ export function AgentDock({
         >
           <div
             className="ag-resize"
-            data-side={position === "left" ? "right" : "left"}
+            data-side={pos === "left" ? "right" : "left"}
             onPointerDown={startResize}
             aria-hidden
           />
           <p className="ag-head flex items-center justify-between gap-2">
             <span>{title}</span>
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              aria-label={expanded ? t("agent.collapse") : t("agent.expand")}
-              aria-pressed={expanded}
-              title={expanded ? t("agent.collapse") : t("agent.expand")}
-              className="ag-mini"
-            >
-              ⛶
-            </button>
+            <span className="flex items-center gap-1">
+              <span role="group" aria-label={t("agentDock.position")} className="flex items-center gap-0.5">
+                {POSITION_CHOICES.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    aria-pressed={pos === p}
+                    aria-label={`${t("agentDock.position")}: ${p}`}
+                    title={`${t("agentDock.position")}: ${p}`}
+                    onClick={() => switchPosition(p)}
+                    className="ag-mini"
+                    style={
+                      pos === p
+                        ? { background: "var(--foreground)", color: "var(--background)" }
+                        : undefined
+                    }
+                  >
+                    {POSITION_GLYPH[p]}
+                  </button>
+                ))}
+              </span>
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                aria-label={expanded ? t("agent.collapse") : t("agent.expand")}
+                aria-pressed={expanded}
+                title={expanded ? t("agent.collapse") : t("agent.expand")}
+                className="ag-mini"
+              >
+                ⛶
+              </button>
+            </span>
           </p>
           <div className="ag-tabs flex flex-wrap gap-1 pb-2" role="tablist" aria-label={title}>
             {TABS.map((k) => (

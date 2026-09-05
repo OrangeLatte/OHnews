@@ -15,6 +15,11 @@ export function stampId(prefix: string): string {
   return `${prefix}-${nowMs().toString(36)}`;
 }
 
+/** 客户端生成的 monitor_id：mon-{uuid8}（模块级函数，组件内不触碰时钟/随机源）。 */
+export function newMonitorId(): string {
+  return `mon-${crypto.randomUUID().slice(0, 8)}`;
+}
+
 const rtfCache: Record<string, Intl.RelativeTimeFormat> = {};
 
 function rtf(lang: "en" | "zh"): Intl.RelativeTimeFormat {

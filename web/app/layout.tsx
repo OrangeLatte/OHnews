@@ -23,8 +23,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <FilterProvider>
         <HeaderNav />
         <ApiHealthBanner />
-        <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-6">{children}</main>
-        <footer className="mx-auto w-full max-w-7xl border-t px-6 py-3 text-xs text-muted-foreground">
+        <main className="mx-auto w-full max-w-[1400px] flex-1 px-6 py-6">{children}</main>
+        <footer className="mx-auto w-full max-w-[1400px] border-t px-6 py-3 text-xs text-muted-foreground">
           叙事分歧指数 NDI 为描述性监测指标；测量效度 ρ≥0.8 通过前不对外引用。
           本项目为非商业研究，不构成投资建议。
         </footer>

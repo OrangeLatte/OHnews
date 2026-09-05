@@ -7,6 +7,8 @@
  */
 
 import { STRIPES, type TFunc } from "@/components/monitors/bits";
+import { klassLabel } from "@/lib/i18n/labels";
+import { PressRender } from "./press-render";
 
 function textify(v: unknown): string {
   if (v == null) return "";
@@ -38,7 +40,23 @@ type SectionItem = {
   content?: unknown;
 };
 
-export function ContentPreview({ content, t }: { content: unknown; t: TFunc }) {
+export function ContentPreview({
+  content,
+  t,
+  klass,
+  title,
+  createdAt,
+  commitId,
+}: {
+  content: unknown;
+  t: TFunc;
+  /** artifact klass：press_edition 且为标准 {note, sections} 形状时走报纸版式渲染。 */
+  klass?: string;
+  /** artifact 级元数据透传给 PressRender（标题/日期/UserCommit 留痕）。 */
+  title?: string;
+  createdAt?: string;
+  commitId?: string;
+}) {
   if (content == null) {
     return <p className="text-xs text-muted-foreground">{t("archive.contentNone")}</p>;
   }
@@ -48,6 +66,9 @@ export function ContentPreview({ content, t }: { content: unknown; t: TFunc }) {
       : null;
   if (dict && Object.keys(dict).length === 0) {
     return <p className="text-xs text-muted-foreground">{t("archive.contentNone")}</p>;
+  }
+  if (klass === "press_edition" && dict && Array.isArray(dict.sections)) {
+    return <PressRender content={content} t={t} title={title} createdAt={createdAt} commitId={commitId} />;
   }
 
   const note = dict && typeof dict.note === "string" ? (dict.note as string) : "";
@@ -73,7 +94,7 @@ export function ContentPreview({ content, t }: { content: unknown; t: TFunc }) {
                   <span className="text-[13px] font-medium">{title}</span>
                   {klass && (
                     <span className={`${STRIPES} rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground`}>
-                      {klass}
+                      {klassLabel(t, klass)}
                     </span>
                   )}
                 </div>

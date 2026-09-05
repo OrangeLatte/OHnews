@@ -9,7 +9,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { HelpIcon } from "@/components/help/help-icon";
 import { Skeleton, toast } from "@/components/ui/toast";
 import { objectApi, type ReportInputs, type RevisionRow, type WorkflowOut } from "@/lib/object-api";
+import { readAnalysisLocale } from "@/lib/analysis-locale";
 import { useT } from "@/lib/i18n/use-t";
+import { revStatusLabel, runStatusLabel } from "@/lib/i18n/labels";
 import { ModeHeader, StatusPill, stampId } from "@/components/case/case-shared";
 
 const REPORT_TYPES = [
@@ -125,10 +127,12 @@ export default function ReportView({
     setBusy(true);
     setRunError(null);
     setNeedChallenge(false);
+    const analysisLocale = readAnalysisLocale();
     objectApi
       .report(caseId, {
         report_type: reportType,
         title: `${caseQuestion || caseId} · ${reportType}`,
+        ...(analysisLocale ? { analysis_locale: analysisLocale } : {}),
       })
       .then((r) => {
         if (r.status === "failed" || !r.output) {
@@ -203,7 +207,7 @@ export default function ReportView({
             aria-pressed={reportType === k}
             className={`rounded-xl border p-2.5 text-left ${reportType === k ? "border-sky-500 bg-sky-500/5 ring-1 ring-sky-500" : "hover:bg-muted"}`}
           >
-            <p className="text-[13px] font-semibold">{k}</p>
+            <p className="text-[13px] font-semibold">{t(`case.reportType.${k}`)}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">{t(`case.reportDesc.${k}`)}</p>
           </button>
         ))}
@@ -220,7 +224,7 @@ export default function ReportView({
         </button>
         {reportOut ? (
           <>
-            <StatusPill status={reportOut.status} label={reportOut.status} />
+            <StatusPill status={reportOut.status} label={runStatusLabel(t, reportOut.status)} />
             {reportOut.engine ? (
               <span className="text-xs text-muted-foreground">engine: {reportOut.engine}</span>
             ) : null}
@@ -306,7 +310,7 @@ export default function ReportView({
                 )}
                 <p className="mt-3 flex flex-wrap items-center gap-2 border-t pt-2 text-[11px] text-muted-foreground">
                   <span className="font-mono">{selectedRev.revision_id}</span>
-                  <span className={`rounded px-1 py-0.5 ${revPill(selectedRev.status)}`}>{selectedRev.status}</span>
+                  <span className={`rounded px-1 py-0.5 ${revPill(selectedRev.status)}`}>{revStatusLabel(t, selectedRev.status)}</span>
                   <span>{selectedRev.created_at?.slice(0, 19).replace("T", " ")}</span>
                   {selectedRev.content?.engine ? <span>engine: {selectedRev.content.engine}</span> : null}
                   {selectedRev.content?.model_hint ? <span>{selectedRev.content.model_hint}</span> : null}
@@ -341,7 +345,7 @@ export default function ReportView({
                       className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-xs ${selectedRevId === r.revision_id ? "border-foreground" : "hover:bg-muted"}`}
                     >
                       <span className="font-mono">v{i + 1}</span>
-                      <span className={`rounded px-1 py-0.5 ${revPill(r.status)}`}>{r.status}</span>
+                      <span className={`rounded px-1 py-0.5 ${revPill(r.status)}`}>{revStatusLabel(t, r.status)}</span>
                       <span className="ml-auto text-[11px] text-muted-foreground">{r.created_at?.slice(0, 10)}</span>
                     </button>
                   </li>

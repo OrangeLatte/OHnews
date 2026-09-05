@@ -223,7 +223,14 @@ export default function ArchivePage() {
                 </div>
                 {open && (
                   <div className="border-t p-3">
-                    <RevisionChain revisions={revisions ?? []} t={t} lang={lang} />
+                    <RevisionChain
+                      revisions={revisions ?? []}
+                      t={t}
+                      lang={lang}
+                      artifactKlass={a.klass}
+                      artifactTitle={a.title}
+                      commitId={a.commit_id ?? undefined}
+                    />
                   </div>
                 )}
               </li>

@@ -17,6 +17,7 @@ import {
   type ExtractionRow,
   type WorkflowOut,
 } from "@/lib/object-api";
+import { readAnalysisLocale } from "@/lib/analysis-locale";
 import { useT } from "@/lib/i18n/use-t";
 import {
   pushError,
@@ -223,8 +224,9 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
   const runDissect = (rid: string) => {
     setBusy(true);
     setDissecting(rid);
+    const analysisLocale = readAnalysisLocale();
     objectApi
-      .dissect(caseId, rid)
+      .dissect(caseId, rid, analysisLocale || undefined)
       .then((out) => objectApi.extractions(rid).then((rows) => ({ out, rows })))
       .then(({ out, rows }) => {
         loadedEx.current.add(rid);
@@ -331,20 +333,26 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
         <p className="hidden text-xs text-muted-foreground lg:block">{t("case.keyHint")}</p>
       </header>
 
-      <nav className="flex flex-wrap items-center gap-1 border-b" aria-label={t("case.modes")}>
+      {/* 模式导航：sticky 横条；<lg 单行横向滚动不换行，lg+ 换行平铺 */}
+      <nav
+        className="sticky top-0 z-30 flex flex-nowrap items-center gap-1 overflow-x-auto whitespace-nowrap border-b bg-background lg:flex-wrap lg:overflow-x-visible lg:whitespace-normal"
+        aria-label={t("case.modes")}
+      >
         {MODES.map((m, i) => (
           <button
             key={m}
             type="button"
             onClick={() => switchMode(m)}
-            className={`px-3 py-1.5 text-sm ${currentMode === m ? "border-b-2 border-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`}
+            className={`shrink-0 px-3 py-1.5 text-sm ${currentMode === m ? "border-b-2 border-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`}
             aria-pressed={currentMode === m}
             title={`${i + 1}`}
           >
             {modeLabels[m]}
           </button>
         ))}
-        <HelpIcon helpKey={`help.mode.${currentMode}`} />
+        <span className="shrink-0">
+          <HelpIcon helpKey={`help.mode.${currentMode}`} />
+        </span>
       </nav>
 
       {currentMode === "read" ? (

@@ -325,8 +325,14 @@ export const objectApi = {
     post<unknown>(`/sources/${encodeURIComponent(sourceId)}/refresh`, {}),
   extractions: (revisionId: string) =>
     get<ExtractionRow[]>(`/documents/${encodeURIComponent(revisionId)}/extractions`),
-  dissect: (caseId: string, document_revision_id: string) =>
-    launch(post<LaunchOut>(`/cases/${encodeURIComponent(caseId)}/dissect`, { document_revision_id })),
+  /** analysis_locale：可选分析输出语言（zh/en）；空/缺省不透传（后端维持默认）。 */
+  dissect: (caseId: string, document_revision_id: string, analysis_locale?: string) =>
+    launch(
+      post<LaunchOut>(`/cases/${encodeURIComponent(caseId)}/dissect`, {
+        document_revision_id,
+        ...(analysis_locale ? { analysis_locale } : {}),
+      }),
+    ),
   translate: (caseId: string, document_revision_id: string, target_language = "en") =>
     launch(
       post<LaunchOut>(`/cases/${encodeURIComponent(caseId)}/translate`, {
@@ -338,8 +344,15 @@ export const objectApi = {
     launch(
       post<LaunchOut>(`/cases/${encodeURIComponent(caseId)}/compare`, { document_revision_ids }),
     ),
-  report: (caseId: string, body: { report_type: string; title: string; text?: string }) =>
-    launch(post<LaunchOut>(`/cases/${encodeURIComponent(caseId)}/report`, body)),
+  report: (caseId: string, body: { report_type: string; title: string; text?: string; analysis_locale?: string }) =>
+    launch(
+      post<LaunchOut>(`/cases/${encodeURIComponent(caseId)}/report`, {
+        report_type: body.report_type,
+        title: body.title,
+        ...(body.text !== undefined ? { text: body.text } : {}),
+        ...(body.analysis_locale ? { analysis_locale: body.analysis_locale } : {}),
+      }),
+    ),
   challenge: (caseId: string, claim_id: string) =>
     launch(post<LaunchOut>(`/cases/${encodeURIComponent(caseId)}/challenge`, { claim_id })),
   createClaim: (caseId: string, body: { statement: string; kind: string; span_ids?: string[] }) =>
@@ -359,6 +372,16 @@ export const objectApi = {
   composePressEdition: (body: { artifact_ids: string[]; title: string; note?: string }) =>
     post<WorkflowOut>("/press-editions", body),
   monitors: () => get<MonitorRow[]>("/monitors"),
+  createMonitor: (body: {
+    monitor_id: string;
+    target_type: string;
+    target_ref: string;
+    question: string;
+    trigger_conditions: string[];
+    window: string;
+    schedule: string;
+    notification?: string;
+  }) => post<{ monitor_id: string; status: string }>("/monitors", body),
   monitorUpdates: (monitorId: string) =>
     get<MonitorUpdateRow[]>(`/monitors/${encodeURIComponent(monitorId)}/updates`),
   reviewUpdate: (updateId: string, body: { decision: string; case_id?: string }) =>
@@ -412,4 +435,7 @@ export type MonitorUpdateRow = {
   suggested_case_action: string;
   reviewed: boolean;
   created_at: string;
+  /** API 层派生键（旧后端可能缺省 → 视为 unreviewed） */
+  review_status?: "unreviewed" | "accepted" | "ignored";
+  decision_case_id?: string;
 };

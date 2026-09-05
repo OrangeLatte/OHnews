@@ -6,10 +6,11 @@
  */
 
 import { useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import type { CaseRow, MonitorUpdateRow } from "@/lib/object-api";
 import { relTime } from "./format";
-import { type TFunc } from "./bits";
+import { type TFunc, ToneChip } from "./bits";
 
 function fmtDelta(v: unknown): string {
   if (typeof v === "string") return v;
@@ -18,6 +19,13 @@ function fmtDelta(v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+/** Update 审核状态三态 → 徽标色调（unreviewed 琥珀 / accepted 绿 / ignored 灰）。 */
+function reviewTone(status: "unreviewed" | "accepted" | "ignored"): "warn" | "ok" | "idle" {
+  if (status === "accepted") return "ok";
+  if (status === "ignored") return "idle";
+  return "warn";
 }
 
 export function UpdateCard({
@@ -41,10 +49,23 @@ export function UpdateCard({
 }) {
   const [picking, setPicking] = useState(false);
   const deltaEntries = Object.entries(u.delta ?? {});
+  const reviewStatus = u.review_status ?? "unreviewed";
+  const decided = reviewStatus !== "unreviewed";
 
   return (
     <li className="rounded-xl border bg-card p-3">
       <p className="text-[13px] leading-relaxed">{u.summary}</p>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        <ToneChip tone={reviewTone(reviewStatus)}>{t(`monitors.reviewStatus.${reviewStatus}`)}</ToneChip>
+        {reviewStatus === "accepted" && u.decision_case_id && (
+          <Link
+            href={`/cases/${encodeURIComponent(u.decision_case_id)}`}
+            className="font-mono text-xs underline text-muted-foreground hover:text-foreground"
+          >
+            {u.decision_case_id}
+          </Link>
+        )}
+      </div>
       {deltaEntries.length > 0 && (
         <div className="mt-2">
           <p className="text-xs font-medium text-muted-foreground">{t("monitors.delta")}</p>
@@ -79,35 +100,40 @@ export function UpdateCard({
           ))}
         </div>
       )}
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          disabled={busy}
-          onClick={() => onDecide(u, "new_case")}
-          title={t("monitors.acceptNew")}
-        >
-          {t("monitors.acceptNew")}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy}
-          aria-expanded={picking}
-          onClick={() => setPicking((v) => !v)}
-        >
-          {t("monitors.joinCase")}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy}
-          className="border-[#dc2626]/60 text-[#b91c1c] hover:bg-[#fee2e2] hover:text-[#b91c1c] dark:border-[#dc2626]/50 dark:text-[#f87171] dark:hover:bg-[#dc2626]/15 dark:hover:text-[#f87171]"
-          onClick={() => onDecide(u, "ignore")}
-        >
-          {t("monitors.ignore")}
-        </Button>
-        {busy && <span className="text-xs text-muted-foreground">{t("monitors.reviewing")}</span>}
-      </div>
+      {!decided && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            disabled={busy}
+            onClick={() => onDecide(u, "new_case")}
+            title={t("monitors.acceptNew")}
+          >
+            {t("monitors.acceptNew")}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            aria-expanded={picking}
+            onClick={() => setPicking((v) => !v)}
+          >
+            {t("monitors.joinCase")}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            className="border-[#dc2626]/60 text-[#b91c1c] hover:bg-[#fee2e2] hover:text-[#b91c1c] dark:border-[#dc2626]/50 dark:text-[#f87171] dark:hover:bg-[#dc2626]/15 dark:hover:text-[#f87171]"
+            onClick={() => onDecide(u, "ignore")}
+          >
+            {t("monitors.ignore")}
+          </Button>
+          {busy && <span className="text-xs text-muted-foreground">{t("monitors.reviewing")}</span>}
+        </div>
+      )}
+      {decided && (
+        <p className="mt-3 text-xs text-muted-foreground">{t("monitors.allReviewed")}</p>
+      )}
       {picking && (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-2">
           <select

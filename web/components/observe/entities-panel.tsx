@@ -28,17 +28,17 @@ const TONE_HEX: Record<string, string> = {
   gap: "#6b7280",
 };
 
-/** 实体关系图：自适应单环布局，边=parent 层级弦线，环色=NDI 语义，标签上下交替防重叠。 */
+/** 实体关系图：自适应单环布局，边=parent 层级弦线，环色=NDI 语义，标签上下交替防重叠。节点点击开统一 Drawer。 */
 function EntityGraph({
   entities,
   ndiMap,
   selEntity,
-  onOpen,
+  onOpenDrawer,
 }: {
   entities: EntityRow[];
   ndiMap: Map<string, number>;
   selEntity: string;
-  onOpen: (id: string) => void;
+  onOpenDrawer: (id: string, label?: string, ndi?: number | null) => void;
 }) {
   const W = 640;
   const H = 360;
@@ -84,7 +84,7 @@ function EntityGraph({
           <g
             key={e.entity_id}
             className="cursor-pointer"
-            onClick={() => onOpen(e.entity_id)}
+            onClick={() => onOpenDrawer(e.entity_id, e.aliases[0], ndi)}
           >
             <title>
               {`${e.entity_id}${e.aliases.length > 0 ? ` · ${e.aliases.slice(0, 3).join(" / ")}` : ""} · NDI ${ndi === null ? "—" : ndi.toFixed(2)}`}
@@ -127,6 +127,7 @@ export function EntitiesPanel({
   days,
   ndi,
   onOpen,
+  onOpenDrawer,
 }: {
   entities: EntityRow[] | null;
   entityErr: string;
@@ -135,6 +136,8 @@ export function EntitiesPanel({
   days: number;
   ndi: NdiRankRow[];
   onOpen: (entityId: string) => void;
+  /** 星座节点点击 → 统一 Change Drawer（P1 图表联动）；chips 仍走 onOpen 选中。 */
+  onOpenDrawer: (entityId: string, label?: string, ndi?: number | null) => void;
 }) {
   const t = useT();
   const ot = useOt();
@@ -150,7 +153,7 @@ export function EntitiesPanel({
 
       {entities !== null && entities.length > 0 ? (
         <div className="space-y-1">
-          <EntityGraph entities={entities} ndiMap={ndiMap} selEntity={selEntity} onOpen={onOpen} />
+          <EntityGraph entities={entities} ndiMap={ndiMap} selEntity={selEntity} onOpenDrawer={onOpenDrawer} />
           <p className="flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground">
             <span>{ot("observe.entities.edgeNote", "edges = entity hierarchy (parent_id); no cross-entity relation data yet — shown honestly.")}</span>
             {(["ok", "warn", "conflict", "gap"] as const).map((tone) => (

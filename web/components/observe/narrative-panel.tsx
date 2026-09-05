@@ -6,6 +6,7 @@
  */
 
 import { MigrationBar } from "@/components/observe/charts";
+import { isLowShare, type ChangeSelection } from "@/components/observe/change-drawer";
 import { useOt } from "@/components/observe/i18n-bridge";
 import { Skeleton } from "@/components/ui/toast";
 import type { Landscape, NarrativeStream } from "@/lib/landscape-api";
@@ -23,8 +24,15 @@ const FALLBACK = ["#2563eb", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db277
 const frameColor = (frame: string, i: number): string =>
   FRAME_HEX[frame] ?? FALLBACK[i % FALLBACK.length];
 
-/** 双态冲积图：左柱=基线份额，右柱=当前份额，中间流带连接同一框架。 */
-function NarrativeRiver({ streams }: { streams: NarrativeStream[] }) {
+/** 双态冲积图：左柱=基线份额，右柱=当前份额，中间流带连接同一框架。流带可点击开统一 Drawer。 */
+function NarrativeRiver({
+  streams,
+  onOpenNarrative,
+}: {
+  streams: NarrativeStream[];
+  onOpenNarrative: (sel: ChangeSelection) => void;
+}) {
+  const ot = useOt();
   const H = 240;
   const y0 = 24;
   const gap = 3;
@@ -55,40 +63,68 @@ function NarrativeRiver({ streams }: { streams: NarrativeStream[] }) {
   ).acc;
   return (
     <svg viewBox="0 0 640 300" className="h-auto w-full" role="img" aria-label="narrative frame shares">
-      {segs.map(({ n, yB, hB, yC, hC, color }) => (
-        <g key={n.frame}>
-          {hasBase && hC > 0.5 && hB > 0.5 ? (
-            <path
-              d={`M${lx + barW},${yB} C320,${yB} 320,${yC} ${rx},${yC} L${rx},${yC + hC} C320,${yC + hC} 320,${yB + hB} ${lx + barW},${yB + hB} Z`}
-              fill={color}
-              opacity="0.28"
-              className="transition-opacity hover:opacity-60"
-            >
-              <title>{`${n.label || n.frame}: ${(n.share_baseline * 100).toFixed(1)}% → ${(n.share_current * 100).toFixed(1)}%`}</title>
-            </path>
-          ) : null}
-          {hasBase && hB > 0.5 ? (
-            <rect x={lx} y={yB} width={barW} height={hB} rx="3" fill={color} opacity="0.75">
-              <title>{`${n.label || n.frame} · ${ot0(n.share_baseline)}`}</title>
-            </rect>
-          ) : null}
-          {hC > 0.5 ? (
-            <rect x={rx} y={yC} width={barW} height={hC} rx="3" fill={color} opacity="0.9">
-              <title>{`${n.label || n.frame} · ${ot0(n.share_current)}`}</title>
-            </rect>
-          ) : null}
-          {hasBase && hB > 12 ? (
-            <text x={lx - 8} y={yB + hB / 2 + 3} textAnchor="end" fontSize="11" className="fill-muted-foreground">
-              {`${n.label || n.frame} ${(n.share_baseline * 100).toFixed(0)}%`}
-            </text>
-          ) : null}
-          {hC > 12 ? (
-            <text x={rx + barW + 8} y={yC + hC / 2 + 3} fontSize="11" className="fill-foreground">
-              {`${n.label || n.frame} ${(n.share_current * 100).toFixed(0)}%`}
-            </text>
-          ) : null}
-        </g>
-      ))}
+      {segs.map(({ n, yB, hB, yC, hC, color }) => {
+        const low = isLowShare(n.share_baseline);
+        const lowLabel = ot("observe.lowSample", "Low sample (n={n}); growth may be distorted", {
+          n: n.n_baseline,
+        });
+        return (
+          <g
+            key={n.frame}
+            className="cursor-pointer"
+            onClick={() => onOpenNarrative({ kind: "narrative", stream: n })}
+          >
+            {hasBase && hC > 0.5 && hB > 0.5 ? (
+              <path
+                d={`M${lx + barW},${yB} C320,${yB} 320,${yC} ${rx},${yC} L${rx},${yC + hC} C320,${yC + hC} 320,${yB + hB} ${lx + barW},${yB + hB} Z`}
+                fill={color}
+                opacity={low ? 0.2 : 0.28}
+                stroke={low ? "#d97706" : undefined}
+                strokeWidth={low ? 1 : undefined}
+                strokeDasharray={low ? "4 3" : undefined}
+                className="transition-opacity hover:opacity-60"
+              >
+                <title>
+                  {`${n.label || n.frame}: ${(n.share_baseline * 100).toFixed(1)}% → ${(n.share_current * 100).toFixed(1)}%${
+                    low ? ` · ${lowLabel}` : ""
+                  }`}
+                </title>
+              </path>
+            ) : null}
+            {hasBase && hB > 0.5 ? (
+              <rect
+                x={lx}
+                y={yB}
+                width={barW}
+                height={hB}
+                rx="3"
+                fill={color}
+                opacity="0.75"
+                stroke={low ? "#d97706" : undefined}
+                strokeWidth={low ? 1 : undefined}
+                strokeDasharray={low ? "3 2" : undefined}
+              >
+                <title>{low ? `${n.label || n.frame} · ${ot0(n.share_baseline)} · ${lowLabel}` : `${n.label || n.frame} · ${ot0(n.share_baseline)}`}</title>
+              </rect>
+            ) : null}
+            {hC > 0.5 ? (
+              <rect x={rx} y={yC} width={barW} height={hC} rx="3" fill={color} opacity="0.9">
+                <title>{`${n.label || n.frame} · ${ot0(n.share_current)}`}</title>
+              </rect>
+            ) : null}
+            {hasBase && hB > 12 ? (
+              <text x={lx - 8} y={yB + hB / 2 + 3} textAnchor="end" fontSize="11" className="fill-muted-foreground">
+                {`${n.label || n.frame} ${(n.share_baseline * 100).toFixed(0)}%`}
+              </text>
+            ) : null}
+            {hC > 12 ? (
+              <text x={rx + barW + 8} y={yC + hC / 2 + 3} fontSize="11" className="fill-foreground">
+                {`${n.label || n.frame} ${(n.share_current * 100).toFixed(0)}%`}
+              </text>
+            ) : null}
+          </g>
+        );
+      })}
       <text x={lx + barW / 2} y={y0 - 8} textAnchor="middle" fontSize="10" className="fill-muted-foreground">
         {hasBase ? "t-2w" : "—"}
       </text>
@@ -103,7 +139,14 @@ function ot0(x: number): string {
   return `${(x * 100).toFixed(1)}%`;
 }
 
-export function NarrativePanel({ landscape }: { landscape: Landscape | null }) {
+export function NarrativePanel({
+  landscape,
+  onOpenNarrative,
+}: {
+  landscape: Landscape | null;
+  /** 流带/迁移条点击 → 统一 Change Drawer（P1 图表联动）。 */
+  onOpenNarrative: (sel: ChangeSelection) => void;
+}) {
   const t = useT();
   const ot = useOt();
   if (!landscape) {
@@ -123,7 +166,7 @@ export function NarrativePanel({ landscape }: { landscape: Landscape | null }) {
   const baseTotal = landscape.narrative_streams.reduce((s, n) => s + n.share_baseline, 0);
   return (
     <div className="space-y-4">
-      <NarrativeRiver streams={landscape.narrative_streams} />
+      <NarrativeRiver streams={landscape.narrative_streams} onOpenNarrative={onOpenNarrative} />
       {baseTotal <= 0.005 ? (
         <p className="rounded-[12px] border border-dashed p-2 text-xs text-muted-foreground">
           {ot(
@@ -139,6 +182,12 @@ export function NarrativePanel({ landscape }: { landscape: Landscape | null }) {
             label={n.label || n.frame}
             shareBaseline={n.share_baseline}
             shareCurrent={n.share_current}
+            onClick={() => onOpenNarrative({ kind: "narrative", stream: n })}
+            lowSampleTitle={
+              isLowShare(n.share_baseline)
+                ? ot("observe.lowSample", "Low sample (n={n}); growth may be distorted", { n: n.n_baseline })
+                : undefined
+            }
           />
         ))}
       </ul>

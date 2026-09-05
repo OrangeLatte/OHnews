@@ -59,7 +59,7 @@ export function ToastViewport() {
       {list.map((i) => (
         <div
           key={i.id}
-          className={`pointer-events-auto flex items-start gap-2 rounded-md border px-3 py-2 text-xs shadow-sm ${KIND_STYLE[i.kind]}`}
+          className={`motion-scale-in pointer-events-auto flex items-start gap-2 rounded-md border px-3 py-2 text-xs shadow-sm ${KIND_STYLE[i.kind]}`}
         >
           <span className="flex-1">{i.text}</span>
           <button

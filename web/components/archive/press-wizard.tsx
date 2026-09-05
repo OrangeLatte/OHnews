@@ -16,8 +16,7 @@ import { HelpIcon } from "@/components/help/help-icon";
 import { relTime } from "@/components/monitors/format";
 import { stampId } from "@/components/monitors/format";
 import { type TFunc } from "@/components/monitors/bits";
-import { KlassChip } from "./klass";
-import { ContentPreview } from "./content-preview";
+import { PressRender } from "./press-render";
 
 export type ArchiveRowExt = {
   artifact_id: string;
@@ -237,28 +236,12 @@ export function PressWizard({
               {t("archive.draftReady")}: <span className="font-mono">{draft.revision_id}</span>
               {draft.created_at ? ` · ${relTime(draft.created_at, lang)}` : ""}
             </p>
-            {draft.note && (
-              <p className="whitespace-pre-wrap border-l-2 border-border pl-2 text-xs italic text-muted-foreground">
-                {t("archive.noteLabel")}: {draft.note}
-              </p>
-            )}
-            <ul className="space-y-2">
-              {draft.sections.map((s, i) => (
-                <li key={`${s.title}-${i}`} className="rounded-lg border bg-card p-2">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="font-mono text-[10px] text-muted-foreground">{String(i + 1).padStart(2, "0")}</span>
-                    <span className="text-[13px] font-medium">{s.title}</span>
-                    {s.klass && <KlassChip klass={s.klass} />}
-                  </div>
-                  <div className="mt-1">
-                    <ContentPreview content={s.content} t={t} />
-                  </div>
-                </li>
-              ))}
-              {draft.sections.length === 0 && (
-                <li className="text-xs text-muted-foreground">{t("archive.contentNone")}</li>
-              )}
-            </ul>
+            <PressRender
+              content={{ note: draft.note, sections: draft.sections }}
+              title={title}
+              createdAt={draft.created_at}
+              t={t}
+            />
             {draft.skipped.length > 0 && (
               <div className="rounded-lg border bg-[#fef3c7]/50 p-2 text-xs dark:bg-[#d97706]/10">
                 <p className="font-medium text-[#b45309] dark:text-[#fbbf24]">

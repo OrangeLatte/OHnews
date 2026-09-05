@@ -8,12 +8,18 @@
  */
 
 import { HelpIcon } from "@/components/help/help-icon";
+import { isLowSample, type ChangeSelection } from "@/components/observe/change-drawer";
 import { useOt } from "@/components/observe/i18n-bridge";
 import { ndiTone } from "@/components/observe/rel-time";
-import { Skeleton, toast } from "@/components/ui/toast";
-import type { EmotionRow, Landscape, NdiRankRow, SourceRow } from "@/lib/landscape-api";
+import { Skeleton } from "@/components/ui/toast";
+import type {
+  EmotionRow,
+  Landscape,
+  NdiRankRow,
+  QualifiedChange,
+  SourceRow,
+} from "@/lib/landscape-api";
 import { useT } from "@/lib/i18n/use-t";
-import type { ObserveMode } from "@/components/observe/url-state";
 
 const BAND_COLORS = ["#2563eb", "#16a34a", "#d97706", "#7c3aed", "#0891b2"];
 const TONE_HEX: Record<string, string> = {
@@ -31,15 +37,26 @@ const EMO_DOT: Record<string, string> = {
 };
 
 type BypassCard = {
-  lens: ObserveMode;
   dot: string;
   label: string;
   main: string;
   sub: string;
+  sel: ChangeSelection;
 };
 
 function fmtInt(n: number): string {
   return n.toLocaleString("en-US");
+}
+
+/**
+ * 变化卡数值变化（诚实口径）：载荷不含逐条数值字段；
+ * 仅 divergence_rise 可与 NDI 板实体/标签匹配时给出读数，其余显示 —。
+ */
+function changeDelta(c: QualifiedChange, ndi: NdiRankRow[]): string {
+  if (c.kind !== "divergence_rise" || c.subjects.length === 0) return "—";
+  const subj = c.subjects[0];
+  const row = ndi.find((r) => r.entity === subj || r.label === subj);
+  return row ? `NDI ${row.ndi.toFixed(2)}` : "—";
 }
 
 /** 质量门通过率：合格变化 / 当前窗口文章（密度口径；分母 0 时弃权显示 —）。 */
@@ -61,6 +78,7 @@ function HourglassSVG({
   ndiEntityCount,
   windowLabel,
   labels,
+  lowSampleLabel,
 }: {
   streams: { label: string; n_baseline: number; n_current: number }[];
   baselineArticles: number;
@@ -73,6 +91,7 @@ function HourglassSVG({
   topNarrativeShift: { label: string; delta: number } | null;
   ndiEntityCount: number;
   windowLabel: string;
+  lowSampleLabel: (n: number) => string;
   labels: {
     past: string;
     now: string;
@@ -94,14 +113,16 @@ function HourglassSVG({
   const hasStreams = sum > 0;
 
   // 上段流入带：顶边（收窄在舱壁内）→ 腰部收束（宽度 ∝ sqrt 占比，避免极端偏斜）
+  // 低样本（n<5）流带：琥珀 tint + title 低样本警示（P1 把不确定性编码进图形）
   const bands = streams
-    .reduce<{ acc: { s: typeof streams[number]; w: number; xTop: number; xWaist: number; color: string }[]; cursor: number }>(
+    .reduce<{ acc: { s: typeof streams[number]; w: number; xTop: number; xWaist: number; color: string; low: boolean }[]; cursor: number }>(
       (st, s, i) => {
         const v = Math.max(s.n_baseline, s.n_current);
         const w = v > 0 ? 2.5 + 19 * Math.sqrt(v / (sum || 1)) : 0;
         const xTop = 96 + (i / Math.max(streams.length - 1, 1)) * 128;
         const xWaist = Math.min(Math.max(st.cursor + w / 2, 136), 184);
-        st.acc.push({ s, w, xTop, xWaist, color: BAND_COLORS[i % BAND_COLORS.length] });
+        const low = isLowSample(s.n_baseline, s.n_current);
+        st.acc.push({ s, w, xTop, xWaist, color: low ? "#d97706" : BAND_COLORS[i % BAND_COLORS.length], low });
         return { acc: st.acc, cursor: st.cursor + w + 3 };
       },
       { acc: [], cursor: 138 },
@@ -149,7 +170,7 @@ function HourglassSVG({
       />
       {hasStreams ? (
         bands.map(
-          ({ s, w, xTop, xWaist, color }) =>
+          ({ s, w, xTop, xWaist, color, low }) =>
             w > 0 ? (
               <path
                 key={s.label}
@@ -158,10 +179,14 @@ function HourglassSVG({
                 stroke={color}
                 strokeWidth={w}
                 strokeLinecap="round"
-                opacity="0.7"
+                opacity={low ? 0.55 : 0.7}
                 className="hg-band"
               >
-                <title>{`${s.label}: base ${s.n_baseline} · current ${s.n_current}`}</title>
+                <title>
+                  {`${s.label}: base ${s.n_baseline} · current ${s.n_current}${
+                    low ? ` · ${lowSampleLabel(Math.min(s.n_baseline, s.n_current))}` : ""
+                  }`}
+                </title>
               </path>
             ) : null,
         )
@@ -196,6 +221,14 @@ function HourglassSVG({
       <text x="160" y="242" textAnchor="middle" className="fill-muted-foreground" fontSize="8">
         {labels.qualified}
       </text>
+      {/* 质量门旁 ⓘ：pass rate 密度口径说明（P1 验收 4） */}
+      <g className="cursor-help">
+        <title>{labels.rateFormula}</title>
+        <circle cx="220" cy="201" r="7" fill="none" stroke="#2563eb" strokeWidth="1.2" opacity="0.8" />
+        <text x="220" y="204.5" textAnchor="middle" fontSize="9" fontWeight="700" fill="#2563eb">
+          i
+        </text>
+      </g>
 
       {/* 下段舱体：当前汇聚 */}
       <path
@@ -278,14 +311,15 @@ export function HourglassPanel({
   emotion,
   sources,
   windowLabel,
-  onDrill,
+  onOpenDrawer,
 }: {
   landscape: Landscape | null;
   ndi: NdiRankRow[];
   emotion: EmotionRow[];
   sources: SourceRow[] | null;
   windowLabel: string;
-  onDrill: (target: ObserveMode) => void;
+  /** 打开统一 Change Drawer（P1 图表联动）。 */
+  onOpenDrawer: (sel: ChangeSelection) => void;
 }) {
   const t = useT();
   const ot = useOt();
@@ -353,7 +387,7 @@ export function HourglassPanel({
       ? `${fmtMD(landscape.freshness.coverage_start)}→${fmtMD(landscape.freshness.coverage_end)}`
       : `${fmtMD(base.start)}→${fmtMD(cur.end)}`;
 
-  // 旁路观察（未过质量门，不作为合格变化）：叙事迁移 / 分歧峰值 / 情绪主导
+  // 旁路观察（未过质量门，不作为合格变化）：叙事迁移 / 分歧峰值 / 情绪主导——点击开统一 Drawer
   const bypass: BypassCard[] = [];
   if (topNarrativeShift && Math.abs(topNarrativeShift.delta) > 0.005) {
     const nShift = [...landscape.narrative_streams].sort(
@@ -362,30 +396,41 @@ export function HourglassPanel({
     )[0];
     if (nShift) {
       bypass.push({
-        lens: "narrative",
         dot: "#2563eb",
         label: ot("observe.hero.bypassNarrative", "Largest narrative shift"),
         main: nShift.label || nShift.frame,
         sub: `${(nShift.share_baseline * 100).toFixed(1)}% → ${(nShift.share_current * 100).toFixed(1)}%`,
+        sel: { kind: "narrative", stream: nShift },
       });
     }
   }
   if (topNdi.length > 0) {
     bypass.push({
-      lens: "divergence",
       dot: TONE_HEX[ndiTone(topNdi[0].ndi)],
       label: ot("observe.hero.bypassDivergence", "Highest narrative divergence (NDI)"),
       main: topNdi[0].label ?? topNdi[0].entity,
       sub: `NDI ${topNdi[0].ndi.toFixed(2)} · n=${topNdi[0].n_sources ?? topNdi[0].n ?? "—"}`,
+      sel: {
+        kind: "entity",
+        entity: topNdi[0].entity,
+        label: topNdi[0].label,
+        ndi: topNdi[0].ndi,
+        nSources: topNdi[0].n_sources ?? topNdi[0].n ?? null,
+      },
     });
   }
   if (dominantEmotion) {
     bypass.push({
-      lens: "emotion",
       dot: EMO_DOT[dominantEmotion.key] ?? "#6b7280",
       label: ot("observe.hero.bypassEmotion", "Dominant emotion (latest dated reading)"),
       main: dominantEmotion.key,
       sub: `${dominantEmotion.value.toFixed(2)} @ ${dominantEmotion.date}`,
+      sel: {
+        kind: "emotion",
+        emotionKey: dominantEmotion.key,
+        value: dominantEmotion.value,
+        date: dominantEmotion.date,
+      },
     });
   }
 
@@ -488,6 +533,7 @@ export function HourglassPanel({
           topNarrativeShift={topNarrativeShift ?? null}
           ndiEntityCount={ndi.length}
           windowLabel={windowLabel}
+          lowSampleLabel={(n) => ot("observe.lowSample", "Low sample (n={n}); growth may be distorted", { n })}
           labels={hgLabels}
         />
 
@@ -498,21 +544,15 @@ export function HourglassPanel({
               <p className="text-xs text-muted-foreground">
                 {ot("observe.hero.topChanges", "Top change candidates (passed the quality gate)")}
               </p>
+              {/* 最多 5 张；逐卡用 change_id/what/why_now 各自渲染，点击开统一 Drawer（P1 验收 2/3） */}
               <ul className="space-y-2">
                 {qualified.slice(0, 5).map((c) => (
                   <li key={c.change_id}>
                     <button
                       type="button"
-                      onClick={() =>
-                        toast.info(
-                          ot(
-                            "observe.queue.hint",
-                            "Case flow: search related coverage in Inbox → multi-select → create a research Case (abstain when evidence is insufficient).",
-                          ),
-                        )
-                      }
+                      onClick={() => onOpenDrawer({ kind: "change", change: c })}
                       className="w-full rounded-[12px] border border-l-4 border-l-blue-600 p-3 text-left text-[13px] transition-colors hover:bg-muted/60"
-                      title={ot("observe.queue.clickHint", "click for case-creation flow hint")}
+                      title={ot("observe.drawer.clickHint", "Click to open the change detail drawer")}
                     >
                       <span className="flex items-center gap-2">
                         <span className="rounded-[6px] bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
@@ -520,6 +560,11 @@ export function HourglassPanel({
                         </span>
                         {c.at ? (
                           <span className="text-[10px] text-muted-foreground">{c.at.slice(0, 10)}</span>
+                        ) : null}
+                        {c.subjects.length > 0 ? (
+                          <span className="min-w-0 truncate text-[10px] text-muted-foreground" title={c.subjects.join(" / ")}>
+                            {c.subjects.join(" / ")}
+                          </span>
                         ) : null}
                       </span>
                       <p className="mt-1 text-sm font-semibold">{c.headline}</p>
@@ -529,6 +574,13 @@ export function HourglassPanel({
                           {ot("observe.queue.whyNow", "why now")}: {c.why_now}
                         </p>
                       ) : null}
+                      <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span>{ot("observe.topChanges.delta", "Numeric change")}:</span>
+                        <span className="rounded-[6px] border px-1 tabular-nums">{changeDelta(c, ndi)}</span>
+                        <span className="opacity-70">
+                          {c.strength_word} · {c.urgency}
+                        </span>
+                      </p>
                     </button>
                   </li>
                 ))}
@@ -544,13 +596,13 @@ export function HourglassPanel({
               </p>
               <ul className="space-y-2">
                 {bypass.map((b) => (
-                  <li key={b.lens}>
+                  <li key={`${b.sel.kind}-${b.main}`}>
                     <button
                       type="button"
-                      onClick={() => onDrill(b.lens)}
+                      onClick={() => onOpenDrawer(b.sel)}
                       className="w-full rounded-[12px] border border-l-4 p-3 text-left transition-colors hover:bg-muted/60"
                       style={{ borderLeftColor: b.dot }}
-                      title={ot("observe.hero.bypassClick", "click to inspect in the matching lens")}
+                      title={ot("observe.hero.bypassClick", "click to open the change detail drawer")}
                     >
                       <p className="text-xs text-muted-foreground">{b.label}</p>
                       <p className="mt-0.5 text-sm font-semibold">{b.main}</p>

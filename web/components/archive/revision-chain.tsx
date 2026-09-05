@@ -24,10 +24,17 @@ export function RevisionChain({
   revisions,
   t,
   lang,
+  artifactKlass,
+  artifactTitle,
+  commitId,
 }: {
   revisions: RevisionWithContent[];
   t: TFunc;
   lang: "en" | "zh";
+  /** artifact 级元数据：press_edition 走报纸版式（klass/title/UserCommit）。 */
+  artifactKlass?: string;
+  artifactTitle?: string;
+  commitId?: string;
 }) {
   const [openRev, setOpenRev] = useState("");
   if (revisions.length === 0) {
@@ -64,8 +71,15 @@ export function RevisionChain({
               )}
             </div>
             {open && (
-              <div className="mt-2 rounded-lg border bg-card/60 p-2">
-                <ContentPreview content={r.content} t={t} />
+              <div className="motion-fade-in mt-2 rounded-lg border bg-card/60 p-2">
+                <ContentPreview
+                  content={r.content}
+                  t={t}
+                  klass={artifactKlass}
+                  title={artifactTitle}
+                  createdAt={r.created_at}
+                  commitId={commitId}
+                />
               </div>
             )}
           </li>

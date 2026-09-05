@@ -20,11 +20,12 @@ const TONE_HEX: Record<string, string> = {
 export function DivergencePanel({
   ndi,
   loading,
-  onOpenEntity,
+  onOpenDrawer,
 }: {
   ndi: NdiRankRow[];
   loading: boolean;
-  onOpenEntity: (entity: string) => void;
+  /** 棒棒糖实体行点击 → 统一 Change Drawer（P1 图表联动）。 */
+  onOpenDrawer: (entity: string, label?: string, ndi?: number | null, nSources?: number | null) => void;
 }) {
   const ot = useOt();
   if (loading) {
@@ -59,9 +60,9 @@ export function DivergencePanel({
             <g
               key={r.entity}
               className="cursor-pointer"
-              onClick={() => onOpenEntity(r.entity)}
+              onClick={() => onOpenDrawer(r.entity, r.label, r.ndi, r.n_sources ?? r.n ?? null)}
             >
-              <title>{ot("observe.divergence.openEntity", "Open timeline of {entity}", { entity: r.entity })}</title>
+              <title>{ot("observe.drawer.clickHint", "Click to open the change detail drawer")}</title>
               <rect x="0" y={cy - rowH / 2 + 2} width="640" height={rowH - 4} className="fill-transparent hover:fill-muted/60" rx="6" />
               <text x={x0 - 12} y={cy + 4} textAnchor="end" fontSize="12" className="fill-foreground">
                 {(r.label ?? r.entity).length > 16 ? `${(r.label ?? r.entity).slice(0, 15)}…` : r.label ?? r.entity}
