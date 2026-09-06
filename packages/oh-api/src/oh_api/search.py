@@ -6,6 +6,10 @@ v2 语义（对 v1 子串整串匹配的升级）：
 3. 相同 URL 的文章去重（保留排序最前的一条）。
 4. 可选 events_fn：事件 title/summary 命中时前置返回 kind="event" 条目
    （事件数 ~百级，线性扫描无压力）；change 分类需要轻量信号索引，留 v2+。
+5. P1-A 五类型精确定位（阶段 3-7）：可选 entities_fn/cases_fn/monitors_fn
+   注入对象清单（entity/case/monitor 小集合线性扫描），命中结果与事件一起
+   前置于文章（entity → case → monitor → event → article，各类型上限 2，
+   文章填满剩余 limit）；全部结果必须携带 kind + 稳定 ID，供前端禁止裸跳。
 
 仍非全文倒排索引：1.3 万条 bronze 线性扫描单次请求在百毫秒量级；数据量再增
 两个数量级时应迁移 SQLite FTS5 或外部索引，本模块纯函数签名可保持不变。
@@ -18,6 +22,9 @@ v2 语义（对 v1 子串整串匹配的升级）：
         lambda: _bronze().iter_records(),
         events_fn=lambda: _store().events_asof(_now()),
         alias_fn=lambda: [a for eid in _registry().ids() for a in _registry().get(eid).aliases],
+        cases_fn=lambda: [...],      # {case_id,title,question,status}
+        monitors_fn=lambda: [...],   # {monitor_id,question,target_ref,status}
+        entities_fn=lambda: [...],   # {entity_id,aliases}
     ))
 """
 
@@ -31,11 +38,19 @@ from typing import Any
 from fastapi import APIRouter, Query
 from oh_contracts.schemas import BronzeRecord, EventRecord
 
-__all__ = ["build_router", "search_bronze", "search_events"]
+__all__ = [
+    "build_router",
+    "search_bronze",
+    "search_cases",
+    "search_entities",
+    "search_events",
+    "search_monitors",
+]
 
 _SNIPPET_WINDOW = 60
 _MIN_QUERY_LEN = 2
 _EVENT_LIMIT = 5
+_OBJ_LIMIT = 2  # P1-A：entity/case/monitor/event 前置条目各类型上限
 
 
 def _snippet(text: str, hit_start: int, hit_len: int, *, width: int = _SNIPPET_WINDOW) -> str:
@@ -109,6 +124,131 @@ def _sort_key(rank: tuple[int, int], published_at: datetime | None) -> tuple[int
     if published_at is None:
         return (*rank, float("inf"))
     return (*rank, -published_at.timestamp())
+
+
+def _contains_sub(text: str, term: str) -> bool:
+    """casefold 子串命中（entity/case/monitor 小集合检索用，非文章全文词边界语义）。"""
+    return term in text.casefold()
+
+
+def _hit_any(fields: Iterable[str], terms: list[str]) -> bool:
+    """AND 语义：每个查询词至少命中任一字段（与 search_bronze 分词语义对齐）。"""
+    return all(any(_contains_sub(f, t) for f in fields) for t in terms)
+
+
+def search_entities(
+    entities: Iterable[dict[str, Any]],
+    q: str,
+    *,
+    limit: int = _OBJ_LIMIT,
+) -> list[dict[str, Any]]:
+    """实体 entity_id/别名 子串检索（kind="entity"，点击跳实体时间线）。
+
+    Args:
+        entities: {entity_id, aliases} 字典流（主线来自 DEFAULT_ENTITIES 映射）。
+        q: 用户查询词；strip+casefold 后 <2 字符返回空列表。
+        limit: 返回条数上限。
+
+    Returns:
+        每条 {kind:"entity", id, title, url, published_at, snippet}；无别名时
+        title 降级为 entity_id；snippet 为固定标记 "entity"（实体无正文可摘）。
+    """
+    needle = q.strip().casefold()
+    if len(needle) < _MIN_QUERY_LEN or limit <= 0:
+        return []
+    terms = _terms(q) or [needle]
+
+    out: list[dict[str, Any]] = []
+    for spec in entities:
+        entity_id = str(spec.get("entity_id") or "")
+        aliases = [str(a) for a in (spec.get("aliases") or [])]
+        if not entity_id or not _hit_any([entity_id, *aliases], terms):
+            continue
+        out.append(
+            {
+                "kind": "entity",
+                "id": entity_id,
+                "title": aliases[0] if aliases else entity_id,
+                "url": "",
+                "published_at": None,
+                "snippet": "entity",
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+def search_cases(
+    cases: Iterable[dict[str, Any]],
+    q: str,
+    *,
+    limit: int = _OBJ_LIMIT,
+) -> list[dict[str, Any]]:
+    """案例 title/question/case_id 子串检索（kind="case"，点击跳案例工作台）。"""
+    needle = q.strip().casefold()
+    if len(needle) < _MIN_QUERY_LEN or limit <= 0:
+        return []
+    terms = _terms(q) or [needle]
+
+    out: list[dict[str, Any]] = []
+    for case in cases:
+        case_id = str(case.get("case_id") or "")
+        title = str(case.get("title") or "")
+        question = str(case.get("question") or "")
+        status = str(case.get("status") or "")
+        if not case_id or not _hit_any([title, question, case_id], terms):
+            continue
+        out.append(
+            {
+                "kind": "case",
+                "id": case_id,
+                "title": title or question,
+                "url": "",
+                "published_at": None,
+                "snippet": question,
+                "status": status,
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+def search_monitors(
+    monitors: Iterable[dict[str, Any]],
+    q: str,
+    *,
+    limit: int = _OBJ_LIMIT,
+) -> list[dict[str, Any]]:
+    """监测器 question/monitor_id/target_ref 子串检索（kind="monitor"，点击跳监测台）。"""
+    needle = q.strip().casefold()
+    if len(needle) < _MIN_QUERY_LEN or limit <= 0:
+        return []
+    terms = _terms(q) or [needle]
+
+    out: list[dict[str, Any]] = []
+    for mon in monitors:
+        monitor_id = str(mon.get("monitor_id") or "")
+        question = str(mon.get("question") or "")
+        target_ref = str(mon.get("target_ref") or "")
+        status = str(mon.get("status") or "")
+        if not monitor_id or not _hit_any([monitor_id, question, target_ref], terms):
+            continue
+        out.append(
+            {
+                "kind": "monitor",
+                "id": monitor_id,
+                "title": question,
+                "url": "",
+                "published_at": None,
+                "snippet": target_ref,
+                "status": status,
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
 
 
 def search_bronze(
@@ -265,6 +405,8 @@ def search_events(
                     "url": "",
                     "published_at": ev.as_of.isoformat(),
                     "snippet": snippet,
+                    # P1-A：主实体（第一个）供前端跳实体时间线；诚实无实体回 None
+                    "entity": (ev.entities or [None])[0],
                 },
             )
         )
@@ -292,6 +434,9 @@ def build_router(
     *,
     events_fn: Callable[[], Iterable[EventRecord]] | None = None,
     alias_fn: Callable[[], list[str]] | None = None,
+    cases_fn: Callable[[], list[dict[str, Any]]] | None = None,
+    monitors_fn: Callable[[], list[dict[str, Any]]] | None = None,
+    entities_fn: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> APIRouter:
     """构造搜索路由（依赖注入，避免本模块持有 IO 单例）。
 
@@ -301,6 +446,12 @@ def build_router(
         events_fn: 可选，返回事件流（主线 ``lambda: _store().events_asof(_now())``）；
             提供时命中事件以 kind="event" 前置。
         alias_fn: 可选，返回实体别名列表（用于排序提升）。
+        cases_fn: 可选，返回 {case_id,title,question,status} 列表
+            （主线 ``_research().list_cases()`` 映射）；kind="case" 前置。
+        monitors_fn: 可选，返回 {monitor_id,question,target_ref,status} 列表
+            （主线 ``_research().list_monitors()`` 映射）；kind="monitor" 前置。
+        entities_fn: 可选，返回 {entity_id,aliases} 列表
+            （主线 DEFAULT_ENTITIES 映射）；kind="entity" 最前置。
 
     Returns:
         挂载 ``GET /api/search?q=&limit=`` 的 APIRouter。
@@ -310,19 +461,39 @@ def build_router(
 
     @router.get("/api/search")
     def search(q: str = Query(...), limit: int = Query(20, ge=1, le=50)) -> list[dict[str, Any]]:
-        """分词 AND 检索（事件前置 + 文章）；limit 超界与缺失 q 由 FastAPI 校验 422。"""
-        events = (
-            search_events(events_fn(), q, limit=min(_EVENT_LIMIT, limit))
-            if events_fn is not None
+        """五类型精确检索（P1-A）：entity/case/monitor/event 前置各限 2 + 文章填满。
+
+        合并顺序固定 entity → case → monitor → event → article；对象类型间
+        累计扣减 remaining（limit=5 且三类全命中时事件/文章诚实让位）。
+        limit 超界与缺失 q 由 FastAPI 校验 422。
+        """
+        remaining = limit
+        entities: list[dict[str, Any]] = []
+        if entities_fn is not None and remaining > 0:
+            entities = search_entities(entities_fn(), q, limit=min(_OBJ_LIMIT, remaining))
+            remaining -= len(entities)
+        cases: list[dict[str, Any]] = []
+        if cases_fn is not None and remaining > 0:
+            cases = search_cases(cases_fn(), q, limit=min(_OBJ_LIMIT, remaining))
+            remaining -= len(cases)
+        monitors: list[dict[str, Any]] = []
+        if monitors_fn is not None and remaining > 0:
+            monitors = search_monitors(monitors_fn(), q, limit=min(_OBJ_LIMIT, remaining))
+            remaining -= len(monitors)
+        events: list[dict[str, Any]] = []
+        if events_fn is not None and remaining > 0:
+            events = search_events(events_fn(), q, limit=min(_OBJ_LIMIT, remaining))
+            remaining -= len(events)
+        articles = (
+            search_bronze(
+                bronze_iter_fn(),
+                q,
+                limit=remaining,
+                boost_terms=alias_fn() if alias_fn is not None else (),
+            )
+            if remaining > 0
             else []
         )
-        remaining = max(0, limit - len(events))
-        articles = search_bronze(
-            bronze_iter_fn(),
-            q,
-            limit=remaining,
-            boost_terms=alias_fn() if alias_fn is not None else (),
-        )
-        return [*events, *articles]
+        return [*entities, *cases, *monitors, *events, *articles]
 
     return router

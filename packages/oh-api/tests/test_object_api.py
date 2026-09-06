@@ -137,8 +137,13 @@ def test_monitor_flow(client: TestClient) -> None:
     assert client.get("/api/monitors").json()[0]["monitor_id"] == "mon-t1"
 
     # 更新（增量）→ 待复核 → 复核 → 确认快照
-    # 先建 run（FK 约束），用返回的真实 run_id 提交 update
-    run_id = client.post("/api/monitors/mon-t1/runs").json()["run_id"]
+    # 先建 run（FK 约束），用返回的真实 run_id 提交 update；
+    # P0-B：POST /runs 真实执行（bronze 空 → 0 命中）→ 终态后确认快照门放行
+    r = client.post("/api/monitors/mon-t1/runs")
+    assert r.status_code == 202 and r.json()["reused"] is False
+    run_id = r.json()["run_id"]
+    run = _await_monitor_run(client, "mon-t1", run_id)
+    assert run["status"] == "succeeded" and run["output"]["stage"] == "succeeded"
     update = {
         "update_id": "u1",
         "run_id": run_id,
@@ -149,7 +154,10 @@ def test_monitor_flow(client: TestClient) -> None:
     }
     assert client.post("/api/monitors/mon-t1/updates", json=update).status_code == 200
     pending = client.get("/api/monitors/mon-t1/updates").json()
-    assert len(pending) == 1 and pending[0]["summary"].startswith("自快照以来")
+    # 2 条：用户提交 u1 + 执行器自动产出（bronze 空 → 首次运行 0 命中）
+    assert len(pending) == 2
+    assert pending[0]["summary"].startswith("自快照以来")  # created_at 12:30 > 自动 12:00
+    assert pending[1]["update_id"].startswith("mupd-")
     assert client.post("/api/monitors/updates/u1/review").json()["reviewed"] is True
     r = client.post("/api/monitors/mon-t1/confirm-snapshot")
     assert r.status_code == 200 and r.json()["confirmed_at"]
@@ -171,7 +179,9 @@ def test_update_review_status_derived(client: TestClient) -> None:
         ).status_code
         == 200
     )
-    run_id = client.post("/api/monitors/mon-rs/runs").json()["run_id"]
+    r = client.post("/api/monitors/mon-rs/runs")
+    run_id = r.json()["run_id"]
+    _await_monitor_run(client, "mon-rs", run_id)  # 执行器自动产出一条 0 命中 update
     created = client.post(
         "/api/monitors/mon-rs/updates",
         json={
@@ -185,7 +195,8 @@ def test_update_review_status_derived(client: TestClient) -> None:
     assert created["review_status"] == "unreviewed"
 
     pending = client.get("/api/monitors/mon-rs/updates").json()
-    assert [u["review_status"] for u in pending] == ["unreviewed"]
+    # 2 条（u-rs-1 + 执行器自动 update），只断言目标 update 的派生状态
+    assert [u["review_status"] for u in pending if u["update_id"] == "u-rs-1"] == ["unreviewed"]
 
     # ignore → ignored
     r = client.post("/api/monitors/updates/u-rs-1/review", json={"decision": "ignore"})
@@ -245,6 +256,22 @@ def _await_run(client: TestClient, run_id: str, timeout: float = 10.0) -> dict:
     raise AssertionError(f"run {run_id} did not reach terminal state")
 
 
+def _await_monitor_run(
+    client: TestClient, monitor_id: str, run_id: str, timeout: float = 10.0
+) -> dict:
+    """轮询 MonitorRun 至终态（P0-B 异步协议：202 → 后台执行 → GET runs 时间线）。"""
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        rows = client.get(f"/api/monitors/{monitor_id}/runs").json()
+        row = next((r for r in rows if r["run_id"] == run_id), None)
+        if row is not None and row["status"] in ("succeeded", "failed", "cancelled"):
+            return row
+        time.sleep(0.05)
+    raise AssertionError(f"monitor run {run_id} did not reach terminal state")
+
+
 def test_workflow_endpoints_offline_honest(client: TestClient) -> None:
     """异步协议：POST → 202 queued → 后台执行 → offline 诚实 abstained。"""
     client.post("/api/cases", json=CASE)
@@ -292,6 +319,60 @@ def test_workflow_endpoints_offline_honest(client: TestClient) -> None:
     assert r.status_code == 202
     ch = _await_run(client, r.json()["run_id"])
     assert ch["status"] == "failed" and "claim-x" in ch["error"]
+
+
+def test_report_feedback_passthrough_pins_version_chain(app_env: tuple[TestClient, Path]) -> None:
+    """ReportIn.feedback 必须透传 build_report（P0-C T3；防 pydantic 静默丢字段）。
+
+    同 (case, report_type) 连续报告 → 同 artifact 追加版本：output 留
+    revised_from（上一 revision_id）+ feedback 原文（offline 路径诚实 abstained）。
+    """
+    from oh_contracts.case import ElementExtraction
+    from oh_storage.research_store import ResearchStore
+
+    client, root = app_env
+    client.post("/api/cases", json=CASE)
+    store = ResearchStore.open(root / "research.sqlite")
+    store.add_document_revision(
+        "rev-fb",
+        "doc-fb",
+        source_id="wscn",
+        body="美联储官员表示通胀正在放缓。",
+        fetched_at="2026-09-03T12:00:00+00:00",
+        content_hash="c:fb",
+        language="zh",
+    )
+    store.link_case_document("case-t1", "rev-fb", "2026-09-03T12:00:00+00:00")
+    store.add_extraction(
+        ElementExtraction(
+            extraction_id="ext-fb",
+            case_id="case-t1",
+            document_revision_id="rev-fb",
+            element_key="actor",
+            normalized_value="美联储",
+        )
+    )
+    store.close()
+
+    r1 = client.post(
+        "/api/cases/case-t1/report", json={"report_type": "veracity", "title": "核实报告"}
+    )
+    out1 = _await_run(client, r1.json()["run_id"])
+    assert out1["output"]["artifact_id"] and out1["output"]["revision_id"]
+
+    r2 = client.post(
+        "/api/cases/case-t1/report",
+        json={
+            "report_type": "veracity",
+            "title": "核实报告",
+            "feedback": "请补充九月决议的概率区间并引用挑战问题",
+        },
+    )
+    out2 = _await_run(client, r2.json()["run_id"])
+    assert out2["output"]["feedback"] == "请补充九月决议的概率区间并引用挑战问题"
+    assert out2["output"]["artifact_id"] == out1["output"]["artifact_id"]
+    assert out2["output"]["revised_from"] == out1["output"]["revision_id"]
+    assert out2["output"]["prompt_version"] == "report-v1"
 
 
 def test_async_protocol_idempotent_cancel(app_env: tuple[TestClient, Path]) -> None:
@@ -393,7 +474,17 @@ def test_review_decision_paths(client: TestClient) -> None:
             "question": "美联储叙事是否转向？",
         },
     )
-    run_id = client.post("/api/monitors/mon-d1/runs").json()["run_id"]
+    r = client.post("/api/monitors/mon-d1/runs")
+    run_id = r.json()["run_id"]
+    _await_monitor_run(client, "mon-d1", run_id)
+    # 执行器自动 update（bronze 空 → 0 命中）先行 ignore，避免污染尾部 pending 断言
+    auto = [
+        u["update_id"]
+        for u in client.get("/api/monitors/mon-d1/updates").json()
+        if u["update_id"].startswith("mupd-")
+    ]
+    for uid in auto:
+        client.post(f"/api/monitors/updates/{uid}/review", json={"decision": "ignore"})
 
     def _update(uid: str) -> dict:
         return {
@@ -649,13 +740,16 @@ def test_monitor_scheduler_health(client: TestClient) -> None:
             ).status_code
             == 200
         )
-    run_id = client.post("/api/monitors/mon-sch/runs").json()["run_id"]
+    r = client.post("/api/monitors/mon-sch/runs")
+    run_id = r.json()["run_id"]
+    run = _await_monitor_run(client, "mon-sch", run_id)  # 真实执行闭环（bronze 空 → succeeded）
+    assert run["output"]["hits"] == 0
     r = client.get("/api/monitors/mon-sch/scheduler").json()
     assert r["monitor_id"] == "mon-sch" and r["schedule"] == "6h"
     assert r["scheduler_health"] == "scheduled"
     assert r["last_run"] == {
         "run_id": run_id,
-        "status": "queued",
+        "status": "succeeded",
         "started_at": "2026-09-03T12:00:00+00:00",
     }
     assert r["next_run_estimate"] == "2026-09-03T18:00:00+00:00"
@@ -865,3 +959,114 @@ def test_review_extraction_hitl(app_env: tuple[TestClient, Path]) -> None:
         ).status_code
         == 404
     )
+
+
+def test_closed_case_lifecycle_gate(app_env: tuple[TestClient, Path]) -> None:
+    """统一状态机纪律：closed Case 禁止 attach/claim/workflow/commit（409）。"""
+    client, _ = app_env
+    case = dict(CASE, case_id="case-cg")
+    assert client.post("/api/cases", json=case).status_code == 200
+    r = client.post(
+        "/api/cases/case-cg/documents",
+        json={
+            "document_id": "doc-cg",
+            "document_revision_id": "rev-cg",
+            "source_id": "wscn",
+            "body": "央行暗示可能调整利率路径。",
+            "content_hash": "c:cg",
+            "language": "zh",
+        },
+    )
+    assert r.status_code == 200
+    assert client.post("/api/cases/case-cg/close").status_code == 200
+
+    # attach / claim / dissect / compare / report / challenge 全部 409
+    assert (
+        client.post(
+            "/api/cases/case-cg/documents",
+            json={
+                "document_id": "doc-cg2",
+                "document_revision_id": "rev-cg2",
+                "source_id": "wscn",
+                "body": "补充材料。",
+                "content_hash": "c:cg2",
+                "language": "zh",
+            },
+        ).status_code
+        == 409
+    )
+    assert (
+        client.post(
+            "/api/cases/case-cg/claims",
+            json={"statement": "某主张", "kind": "factual", "created_by": "user"},
+        ).status_code
+        == 409
+    )
+    for kind, body in (
+        ("dissect", {"document_revision_id": "rev-cg"}),
+        ("translate", {"document_revision_id": "rev-cg"}),
+        ("compare", {"document_revision_ids": ["rev-cg", "rev-cg2"]}),
+        ("report", {"report_type": "structured_summary", "title": "报告"}),
+        ("challenge", {"claim_id": "claim-x"}),
+    ):
+        resp = client.post(f"/api/cases/case-cg/{kind}", json=body)
+        assert resp.status_code == 409, f"{kind} should be 409, got {resp.status_code}"
+
+    # commit 关联 closed case 的 artifact → 409
+    r = client.post(
+        "/api/artifacts",
+        json={
+            "artifact_id": "art-cg",
+            "case_id": "case-cg",
+            "klass": "research_report",
+            "title": "报告",
+        },
+    )
+    assert r.status_code == 200
+    client.post(
+        "/api/artifacts/art-cg/revisions",
+        json={"revision_id": "rev-art-cg", "content": {"s": 1}, "status": "draft"},
+    )
+    r = client.post(
+        "/api/artifacts/art-cg/commit",
+        json={"commit_id": "cmt-cg", "revision_id": "rev-art-cg", "commit_note": "x"},
+    )
+    assert r.status_code == 409
+    # 未知 case → 404（gate 先于写）
+    assert (
+        client.post("/api/cases/case-none/dissect", json={"document_revision_id": "r"}).status_code
+        == 404
+    )
+
+
+def test_failed_run_retry_allowed(app_env: tuple[TestClient, Path]) -> None:
+    """失败任务可重试：active_run 只认 queued/running，failed 不阻塞重新 POST。"""
+    client, root = app_env
+    case = dict(CASE, case_id="case-rt")
+    assert client.post("/api/cases", json=case).status_code == 200
+    client.post(
+        "/api/cases/case-rt/documents",
+        json={
+            "document_id": "doc-rt",
+            "document_revision_id": "rev-rt",
+            "source_id": "wscn",
+            "body": "正文。",
+            "content_hash": "c:rt",
+            "language": "zh",
+        },
+    )
+    r1 = client.post("/api/cases/case-rt/dissect", json={"document_revision_id": "rev-rt"}).json()
+    # 直接把 run 置为 failed（模拟终态失败）
+    import sqlite3
+
+    conn = sqlite3.connect(root / "research.sqlite")
+    conn.execute(
+        "UPDATE analysis_runs SET status='failed', error='simulated' WHERE run_id=?",
+        (r1["run_id"],),
+    )
+    conn.commit()
+    conn.close()
+    # 同参数重试 → 新 run（不因 failed 复用）
+    r2 = client.post("/api/cases/case-rt/dissect", json={"document_revision_id": "rev-rt"}).json()
+    assert r2["run_id"] != r1["run_id"]
+    assert r2["reused"] is False

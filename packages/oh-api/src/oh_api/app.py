@@ -279,10 +279,39 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             lambda: _bronze().iter_records(),
             events_fn=lambda: _store().events_asof(_now()),
             alias_fn=lambda: [a for eid in _registry().ids() for a in _registry().get(eid).aliases],
+            # P1-A 五类型精确定位：案例/监测器/实体清单注入（小集合线性扫描）
+            cases_fn=lambda: [
+                {
+                    "case_id": c.case_id,
+                    "title": c.title,
+                    "question": c.question,
+                    "status": c.status,
+                }
+                for c in _research().list_cases()
+            ],
+            monitors_fn=lambda: [
+                {
+                    "monitor_id": m.monitor_id,
+                    "question": m.question,
+                    "target_ref": m.target_ref,
+                    "status": m.status,
+                }
+                for m in _research().list_monitors()
+            ],
+            entities_fn=lambda: [
+                {"entity_id": e.entity_id, "aliases": list(e.aliases)} for e in DEFAULT_ENTITIES
+            ],
         )
     )
     app.include_router(build_metrics_router(lambda: _product_events()))
-    app.include_router(build_object_router(lambda: _research(), _now))
+    app.include_router(
+        build_object_router(
+            lambda: _research(),
+            _now,
+            # P0-B Monitor 执行闭环：按线程惰性构建 bronze 迭代器（后台线程内重取）
+            lambda: _bronze().iter_records(),
+        )
+    )
     app.include_router(
         build_workflow_router(lambda: _workflows(), lambda: _research(), now_fn=_now)
     )
@@ -292,7 +321,9 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
     def _reap_on_startup() -> int:
         store = ResearchStore.open(paths.root / "research.sqlite")
         try:
-            return store.reap_stale_runs(finished_at=_now().isoformat())
+            n1 = store.reap_stale_runs(finished_at=_now().isoformat())
+            n2 = store.reap_stale_monitor_runs(finished_at=_now().isoformat())
+            return n1 + n2
         finally:
             store.close()
 
@@ -548,47 +579,74 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         dissected = research.dissected_keys()
         silver = _store()
         now = _now()
-        rows: list[dict[str, Any]] = []
-        for rec in _bronze().iter_records():
-            norm = rec.normalized or {}
-            if source_id and rec.source_id not in source_id:
-                continue
-            rec_lang = str(norm.get("language") or "")
-            if language and rec_lang != language:
-                continue
-            pub = rec.published_at or rec.fetched_at
-            if days > 0 and pub is not None and (now - pub).days > days:
-                continue
-            title = str(norm.get("title") or "")
-            body = str(norm.get("body") or "")
-            if q and q.lower() not in (title + "\n" + body).lower():
-                continue
-            if element and value:
-                d = silver.get_dissection(rec.item_key)
-                els = d.get("elements") if isinstance(d, dict) else None
-                hit = any(
-                    isinstance(e, dict)
-                    and e.get("element") == element
-                    and value.lower() in str(e.get("content") or "").lower()
-                    for e in (els or [])
-                )
-                if not hit:
+
+        def _search(query: str) -> list[dict[str, Any]]:
+            rows: list[dict[str, Any]] = []
+            for rec in _bronze().iter_records():
+                norm = rec.normalized or {}
+                if source_id and rec.source_id not in source_id:
                     continue
-            rows.append(
-                {
-                    "item_key": rec.item_key,
-                    "source_id": rec.source_id,
-                    "title": _strip_tags(title),
-                    "url": str(norm.get("url") or ""),
-                    "language": rec_lang,
-                    "published_at": pub.isoformat() if hasattr(pub, "isoformat") else str(pub),
-                    "body_preview": _strip_tags(body)[:200],
-                    "cased": rec.item_key in cased,
-                    "dissected": rec.item_key in dissected,
-                }
-            )
-        rows.sort(key=lambda r: str(r["published_at"]), reverse=True)
-        return {"n": len(rows), "rows": rows[:limit]}
+                rec_lang = str(norm.get("language") or "")
+                if language and rec_lang != language:
+                    continue
+                pub = rec.published_at or rec.fetched_at
+                if days > 0 and pub is not None and (now - pub).days > days:
+                    continue
+                title = str(norm.get("title") or "")
+                body = str(norm.get("body") or "")
+                if query and query.lower() not in (title + "\n" + body).lower():
+                    continue
+                if element and value:
+                    d = silver.get_dissection(rec.item_key)
+                    els = d.get("elements") if isinstance(d, dict) else None
+                    hit = any(
+                        isinstance(e, dict)
+                        and e.get("element") == element
+                        and value.lower() in str(e.get("content") or "").lower()
+                        for e in (els or [])
+                    )
+                    if not hit:
+                        continue
+                rows.append(
+                    {
+                        "item_key": rec.item_key,
+                        "source_id": rec.source_id,
+                        "title": _strip_tags(title),
+                        "url": str(norm.get("url") or ""),
+                        "language": rec_lang,
+                        "published_at": pub.isoformat() if hasattr(pub, "isoformat") else str(pub),
+                        "body_preview": _strip_tags(body)[:200],
+                        "cased": rec.item_key in cased,
+                        "dissected": rec.item_key in dissected,
+                    }
+                )
+            rows.sort(key=lambda r: str(r["published_at"]), reverse=True)
+            return rows[:limit]
+
+        rows = _search(q.strip())
+        q_effective = q.strip()
+        # 诚实降级（P0-D 主路径保障）：实体规范化名（如"中国财政部"）常不等于
+        # bronze 原文措辞（正文写"财政部"）；全名 0 命中且为 CJK 长词时，按去尾/
+        # 去头双向生成子串候选，长度降序逐个重试（上限 4 次），q_effective 如实
+        # 披露实际生效的检索词。
+        has_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in q_effective)
+        if not rows and len(q_effective) >= 3 and has_cjk:
+            words = q_effective.split() or [q_effective]
+            candidates: list[str] = []
+            for w in words:
+                if len(w) < 2:
+                    continue
+                for i in range(1, len(w) - 1):
+                    candidates.append(w[:-i])
+                    candidates.append(w[i:])
+                candidates.append(w[1:])
+            for cand in sorted(dict.fromkeys(candidates), key=len, reverse=True)[:4]:
+                trial = _search(cand)
+                if trial:
+                    rows = trial
+                    q_effective = cand
+                    break
+        return {"n": len(rows), "rows": rows, "q_effective": q_effective}
 
     @app.post("/api/agent/translate", response_model=TranslationItem)
     async def agent_translate(body: dict[str, Any]) -> TranslationItem:

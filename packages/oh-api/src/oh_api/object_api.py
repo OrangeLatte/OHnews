@@ -10,7 +10,7 @@ import asyncio
 import json
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import unquote
@@ -33,6 +33,7 @@ from oh_contracts.monitoring import (
     MonitorRun,
     MonitorUpdate,
 )
+from oh_contracts.schemas import BronzeRecord
 from oh_storage.research_store import ResearchStore
 from pydantic import BaseModel, Field
 
@@ -237,9 +238,28 @@ def _diff_sections(secs_a: list, secs_b: list) -> list[dict]:
     return out
 
 
+def _ensure_case_open(store: ResearchStore, case_id: str) -> None:
+    """Case 生命周期门：closed Case 禁止一切写操作（统一状态机纪律）。"""
+    case = store.get_case(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"case not found: {case_id}")
+    if case.status == "closed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"case {case_id} is closed (read-only); reopen not supported",
+        )
+
+
 def build_object_router(
-    research_fn: Callable[[], ResearchStore], now_fn: Callable[[], datetime]
+    research_fn: Callable[[], ResearchStore],
+    now_fn: Callable[[], datetime],
+    bronze_iter_factory: Callable[[], Iterable[BronzeRecord]] | None = None,
 ) -> APIRouter:
+    """对象命令路由。
+
+    bronze_iter_factory：每线程惰性构建的 bronze 记录迭代器工厂（Monitor 执行
+    闭环 P0-B）；None → 空流（Monitor 运行诚实 0 命中，不伪造数据）。
+    """
     router = APIRouter()
 
     def _now() -> str:
@@ -247,6 +267,9 @@ def build_object_router(
 
     def _store() -> ResearchStore:
         return research_fn()
+
+    def _bronze_records() -> Iterable[BronzeRecord]:
+        return bronze_iter_factory() if bronze_iter_factory is not None else iter(())
 
     # ---------- cases ----------
 
@@ -319,6 +342,7 @@ def build_object_router(
 
     @router.post("/api/cases/{case_id}/claims")
     def create_claim(case_id: str, body: ClaimIn) -> dict:
+        _ensure_case_open(_store(), case_id)
         """建 Claim：B6 门（research_report 提交前 Challenge 必经）的前提路径。"""
         store = _store()
         if not store.get_case(case_id):
@@ -341,6 +365,7 @@ def build_object_router(
 
     @router.post("/api/cases/{case_id}/documents")
     def attach_document(case_id: str, doc: DocumentIn) -> dict:
+        _ensure_case_open(_store(), case_id)
         store = _store()
         if not store.get_case(case_id):
             raise HTTPException(404, f"case not found: {case_id}")
@@ -478,6 +503,8 @@ def build_object_router(
         # abstained 报告（engine=offline 降级稿）允许存在为草稿，但归档被拦；
         # 无 run_id 的 legacy 版本不拦（历史数据兼容）。
         art = store.get_artifact_by_revision(commit_in.revision_id)
+        if art is not None and art.case_id:
+            _ensure_case_open(store, art.case_id)
         if art is not None and art.klass == "research_report":
             rev_row = store.get_artifact_revision(commit_in.revision_id)
             src_run_id = str((rev_row or {}).get("run_id") or "")
@@ -511,6 +538,7 @@ def build_object_router(
                     revision_id=commit_in.revision_id,
                     user_note=commit_in.user_note,
                     committed_at=_now(),
+                    created_by="user",
                 ),
             )
         except KeyError as exc:
@@ -577,12 +605,64 @@ def build_object_router(
         return _store().monitor_runs_for(monitor_id)
 
     @router.post("/api/monitors/{monitor_id}/runs")
-    def add_monitor_run(monitor_id: str) -> dict:
-        run_id = f"mrun-{now_fn().strftime('%Y%m%d%H%M%S%f')}"
-        _store().add_monitor_run(
+    def add_monitor_run(monitor_id: str) -> JSONResponse:
+        """Run now（P0-B 真实执行闭环）：落 queued run → 202 → 后台线程真实执行。
+
+        幂等：同 monitor 已有 queued/running run → 202 reused=True 复用，不重复登记。
+        后台线程内 store/bronze 均按线程重取（sqlite 连接禁止跨线程）。
+        """
+        store = _store()
+        if store.get_monitor(monitor_id) is None:
+            raise HTTPException(404, monitor_id)
+        active = store.active_monitor_run(monitor_id)
+        if active is not None:
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "run_id": active["run_id"],
+                    "status": active["status"],
+                    "reused": True,
+                    "poll": f"/api/monitors/{monitor_id}/runs",
+                },
+            )
+        run_id = f"mrun-{now_fn().strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:6]}"
+        store.add_monitor_run(
             MonitorRun(run_id=run_id, monitor_id=monitor_id, status="queued", started_at=_now())
         )
-        return {"run_id": run_id}
+
+        def _exec() -> None:
+            # 惰性导入：避免应用启动链加载 agent 层（与 app.py 同纪律）
+            from oh_agents.monitor_executor import run_monitor
+
+            try:
+                run_monitor(
+                    monitor_id,
+                    run_id,
+                    bronze_iter_factory=_bronze_records,
+                    store_factory=research_fn,
+                    now=now_fn,
+                )
+            except Exception as exc:  # 兜底：执行器已自愈，这里只防连接级失败
+                try:
+                    research_fn().finish_monitor_run(
+                        run_id,
+                        status="failed",
+                        finished_at=_now(),
+                        error=str(exc) or type(exc).__name__,
+                    )
+                except Exception:  # noqa: BLE001 - 连接级失败不反噬线程
+                    pass
+
+        threading.Thread(target=_exec, daemon=True, name=f"mon-{run_id}").start()
+        return JSONResponse(
+            status_code=202,
+            content={
+                "run_id": run_id,
+                "status": "queued",
+                "reused": False,
+                "poll": f"/api/monitors/{monitor_id}/runs",
+            },
+        )
 
     @router.get("/api/monitors/{monitor_id}/scheduler")
     def monitor_scheduler(monitor_id: str) -> dict:
@@ -691,7 +771,23 @@ def build_object_router(
 
     @router.post("/api/monitors/{monitor_id}/confirm-snapshot")
     def confirm_snapshot(monitor_id: str) -> dict:
-        ok = _store().confirm_monitor_snapshot(monitor_id, _now())
+        """确认快照（基线推进 HITL 终点）：门——最近一次 run 必须 succeeded。
+
+        无任何 run、或最近 run failed/queued/running → 422（无成功运行结果
+        不得推进基线；诚实拒绝并给根因）。
+        """
+        store = _store()
+        if store.get_monitor(monitor_id) is None:
+            raise HTTPException(404, monitor_id)
+        runs = store.monitor_runs_for(monitor_id, limit=1)
+        if not runs or runs[0]["status"] != "succeeded":
+            state = runs[0]["status"] if runs else "no_run"
+            raise HTTPException(
+                422,
+                "no successful run result; confirm snapshot requires a succeeded monitor run"
+                f" (last run: {state})",
+            )
+        ok = store.confirm_monitor_snapshot(monitor_id, _now())
         if not ok:
             raise HTTPException(404, monitor_id)
         return {"monitor_id": monitor_id, "confirmed_at": _now()}
@@ -821,6 +917,8 @@ class ReportIn(BaseModel):
     item_key: str = ""
     # 分析输出语言（zh/en）；build_report(**model_dump()) 透传
     analysis_locale: str = ""
+    # 用户对上一版草稿的反馈（P0-C T3）：非空 → 修订版（revised_from + feedback 留存）
+    feedback: str = ""
 
 
 class ChallengeIn(BaseModel):
@@ -916,6 +1014,7 @@ def build_workflow_router(
 
     @router.post("/api/cases/{case_id}/dissect")
     def dissect(case_id: str, body: DissectIn) -> JSONResponse:
+        _ensure_case_open(_store(), case_id)
         return _launch(
             "dissect",
             kind="dissect",
@@ -933,6 +1032,7 @@ def build_workflow_router(
 
     @router.post("/api/cases/{case_id}/translate")
     def translate(case_id: str, body: TranslateIn) -> JSONResponse:
+        _ensure_case_open(_store(), case_id)
         return _launch(
             "translate",
             kind="translate",
@@ -950,6 +1050,7 @@ def build_workflow_router(
 
     @router.post("/api/cases/{case_id}/compare")
     def compare(case_id: str, body: CompareIn) -> JSONResponse:
+        _ensure_case_open(_store(), case_id)
         return _launch(
             "compare",
             kind="compare",
@@ -962,6 +1063,7 @@ def build_workflow_router(
 
     @router.post("/api/cases/{case_id}/report")
     def report(case_id: str, body: ReportIn) -> JSONResponse:
+        _ensure_case_open(_store(), case_id)
         return _launch(
             "report",
             kind="report",
@@ -974,6 +1076,7 @@ def build_workflow_router(
 
     @router.post("/api/cases/{case_id}/challenge")
     def challenge(case_id: str, body: ChallengeIn) -> JSONResponse:
+        _ensure_case_open(_store(), case_id)
         return _launch(
             "challenge",
             kind="challenge",
