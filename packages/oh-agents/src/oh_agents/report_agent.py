@@ -42,6 +42,10 @@ _REPORT_SYSTEM = (
     "某分节找不到任何可引用证据时，evidence_refs 留空并在 body 写明「证据不足」。"
 )
 
+# Prompt 版本标注：随 revision content / run output 落库（版本保留 Prompt 版本，P0-C T2）。
+# 修改 _REPORT_SYSTEM 注入纪律时必须同步递增（report-v2, report-v3, ...）。
+REPORT_PROMPT_VERSION = "report-v1"
+
 
 class ReportOutputP(BaseModel):
     """LLM 结构化输出：2-4 个分节；空产出 schema 层拒绝以触发重试。"""
@@ -63,6 +67,7 @@ class ReportState(TypedDict, total=False):
     dissection_json: str
     evidence_json: str
     analysis_locale: str
+    feedback: str
     sections: list[ReportSection]
     report: AgentReport
     llm_failed: str
@@ -109,10 +114,17 @@ def build_report_graph(
                 f"{state.get('dissection_json', '{}')}\n"
                 f"原文摘录：\n{(state.get('text') or '')[:_MAX_SOURCE_CHARS]}"
             )
+        # 用户反馈修订（P0-C T3）：非空时注入逐条回应纪律（与普通报告同一校验路径）
+        if state.get("feedback"):
+            user = (
+                f"{user}\n用户对上一版草稿的反馈（生成修订版时必须逐条回应）：{state['feedback']}"
+            )
         # analysis_locale 显式指定时约束输出语言；空则维持默认（不追加）
         lang_line = output_language_line(state.get("analysis_locale", ""))
         if lang_line:
             user = f"{user}\n{lang_line}"
+        # Prompt 版本标注随请求注入（溯源：产出版本可对回确切 prompt 纪律）
+        user = f"{user}\n（Prompt 版本：{REPORT_PROMPT_VERSION}）"
         try:
             async with asyncio.timeout(90.0):
                 parsed, ref, usage = await router.invoke(

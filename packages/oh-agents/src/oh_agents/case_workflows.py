@@ -20,7 +20,7 @@ from oh_contracts.artifacts import Artifact, ArtifactRevision, UserCommit
 from oh_contracts.case import AnalysisRun, ComparisonSet, ElementExtraction, EvidenceSpan
 
 from .dissection_agent import build_dissection_graph
-from .report_agent import build_report_graph
+from .report_agent import REPORT_PROMPT_VERSION, build_report_graph
 from .translation_agent import build_translation_graph
 
 
@@ -609,6 +609,21 @@ class CaseWorkflows:
         }
         return pack, inputs
 
+    def _latest_report_artifact(self, case_id: str, report_type: str) -> tuple[dict, dict] | None:
+        """同 (case, report_type) 最近一个可续写的报告 artifact 及其最新版本。
+
+        禁覆盖语义（P0-C T1）：重复生成同一类型报告 → 追加新 revision 而非新建
+        artifact/覆盖旧版；legacy 迁移版本只读不可续写（contracts 契约）。
+        artifacts_for_case 按 created_at DESC 返回，取首个匹配项。
+        """
+        for a in self._research.artifacts_for_case(case_id):
+            if a.get("klass") != "research_report" or a.get("report_type") != report_type:
+                continue
+            revs = self._research.artifact_revisions(str(a["artifact_id"]))
+            if revs and not revs[-1]["legacy"]:
+                return a, revs[-1]
+        return None
+
     async def build_report(
         self,
         case_id: str,
@@ -618,6 +633,7 @@ class CaseWorkflows:
         text: str = "",
         item_key: str = "",
         analysis_locale: str = "",
+        feedback: str = "",
         run_id: str | None = None,
     ) -> dict:
         """报告 → Artifact(draft revision)；入库需经 commit_artifact（HITL 后）。
@@ -626,6 +642,11 @@ class CaseWorkflows:
         杜绝「报告只看到字段名」的空转；材料为空（无文档或无拆解）→
         run failed 不产 draft（诚实失败，不假 succeeded）。
         analysis_locale 非空时注入 user prompt 约束分析输出语言（P1-8）。
+        feedback 非空时为修订版（P0-C T3）：反馈注入 prompt 要求逐条回应，
+        新 revision 留存 revised_from（上一 revision_id）+ feedback 原文；
+        与普通报告同一 abstained/failed/三重校验路径，无豁免。
+        版本链：同 (case, report_type) 再生成 → 同 artifact 追加新 draft
+        revision（append-only，禁止覆盖旧版；current 指针仅 commit 时置换）。
         """
         if report_type not in _REPORT_TYPE_TO_KIND:
             raise ValueError(f"未知 report_type: {report_type}")
@@ -677,6 +698,8 @@ class CaseWorkflows:
         }
         if analysis_locale:
             state_in["analysis_locale"] = analysis_locale
+        if feedback:
+            state_in["feedback"] = feedback
         state = await self._report_graph.ainvoke(state_in)
         report = state.get("report")
         _usage = state.get("usage")
@@ -691,49 +714,70 @@ class CaseWorkflows:
             final_error = "; ".join(state.get("errors", [])) or "llm_empty_output"
         else:
             final_status, final_error = "succeeded", ""
-        artifact = Artifact(
-            artifact_id=self._rid("art"),
-            case_id=case_id,
-            klass="research_report",
-            title=title,
-            report_type=report_type,  # type: ignore[arg-type]
-            created_at=self._now(),
-        )
-        self._research.create_artifact(artifact)
+        base = self._latest_report_artifact(case_id, report_type)
+        prev_revision_id = ""
+        if base is not None:
+            # 版本链续写：复用既有 artifact，append-only 新 revision（禁覆盖旧版）
+            artifact_id = str(base[0]["artifact_id"])
+            prev_revision_id = str(base[1]["revision_id"])
+        else:
+            artifact = Artifact(
+                artifact_id=self._rid("art"),
+                case_id=case_id,
+                klass="research_report",
+                title=title,
+                report_type=report_type,  # type: ignore[arg-type]
+                created_at=self._now(),
+            )
+            self._research.create_artifact(artifact)
+            artifact_id = artifact.artifact_id
+        content: dict[str, Any] = {
+            "report_id": report.report_id,
+            "kind": report.kind,
+            "sections": [s.model_dump(mode="json") for s in report.sections],
+            "engine": report.engine,
+            "model_hint": report.model_hint,
+            "inputs": inputs,
+            "report_type": report_type,
+            "prompt_version": REPORT_PROMPT_VERSION,
+        }
+        if prev_revision_id:
+            content["revised_from"] = prev_revision_id
+        if feedback:
+            content["feedback"] = feedback
         revision = ArtifactRevision(
             revision_id=self._rid("rev"),
-            artifact_id=artifact.artifact_id,
+            artifact_id=artifact_id,
             run_id=run.run_id,
-            content={
-                "report_id": report.report_id,
-                "kind": report.kind,
-                "sections": [s.model_dump(mode="json") for s in report.sections],
-                "engine": report.engine,
-                "model_hint": report.model_hint,
-                "inputs": inputs,
-            },
+            content=content,
             status="draft",
             created_at=self._now(),
         )
         self._research.add_artifact_revision(revision)
+        output: dict[str, Any] = {
+            "status": final_status,
+            "artifact_id": artifact_id,
+            "revision_id": revision.revision_id,
+            "engine": report.engine,
+            "inputs": inputs,
+            "prompt_version": REPORT_PROMPT_VERSION,
+        }
+        if prev_revision_id:
+            output["revised_from"] = prev_revision_id
+        if feedback:
+            output["feedback"] = feedback
         self._finish_run(
             run,
             final_status,
             error=final_error,
             usage=_usage,
-            output_artifact_id=artifact.artifact_id,
-            output={
-                "status": final_status,
-                "artifact_id": artifact.artifact_id,
-                "revision_id": revision.revision_id,
-                "engine": report.engine,
-                "inputs": inputs,
-            },
+            output_artifact_id=artifact_id,
+            output=output,
         )
         return {
             "run_id": run.run_id,
             "status": final_status,
-            "artifact_id": artifact.artifact_id,
+            "artifact_id": artifact_id,
             "revision_id": revision.revision_id,
         }
 

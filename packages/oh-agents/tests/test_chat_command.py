@@ -54,12 +54,19 @@ def _agent_run(store: ResearchStore, run_id: str = "run-1") -> None:
     )
 
 
-def _doc(store: ResearchStore, case_id: str, rev_id: str, doc_id: str, seq: int = 0) -> None:
+def _doc(
+    store: ResearchStore,
+    case_id: str,
+    rev_id: str,
+    doc_id: str,
+    seq: int = 0,
+    source_id: str = "gov",
+) -> None:
     """挂载文档；added_at 随 seq 递增保证「最近挂载」断言确定。"""
     store.add_document_revision(
         rev_id,
         doc_id,
-        source_id="gov",
+        source_id=source_id,
         body="正文内容",
         fetched_at=T,
         content_hash=f"hash-{rev_id}",
@@ -111,9 +118,11 @@ class ScriptRouter:
 
 
 def test_classify_intent_rules() -> None:
-    """规则兜底：中文/英文领域词 → 十意图；未命中一律 question。
+    """规则兜底：中文/英文领域词 → 十三意图；未命中一律 question。
 
     T3：疑问句 + Case 上下文指代词 → answer_case_question（优先于 status）。
+    阶段3-2 T1：explain/monitor_ops/archive_query 查询类优先级在 status 之前
+    （「监测器状态」归 monitor_ops），且 explain 先于 Case 指代判定。
     """
     assert classify_intent("帮我拆解这篇文章") == "dissect"
     assert classify_intent("比较两个版本的口径差异") == "compare"
@@ -129,6 +138,17 @@ def test_classify_intent_rules() -> None:
     assert classify_intent("当前 Case 只有几篇文章？") == "answer_case_question"
     assert classify_intent("这个 Case 有哪些主张？") == "answer_case_question"
     assert classify_intent("how many documents in this case?") == "answer_case_question"
+    # 阶段3-2 T1：六类意图映射补全
+    assert classify_intent("解释一下 NDI") == "explain"
+    assert classify_intent("这个沙漏是什么？") == "explain"
+    assert classify_intent("what is NDI?") == "explain"
+    assert classify_intent("创建一个监测美联储的监控") == "monitor_ops"
+    assert classify_intent("查看监测器状态") == "monitor_ops"  # 先于 status
+    assert classify_intent("check monitor status?") == "monitor_ops"
+    assert classify_intent("归档了哪些报告") == "archive_query"
+    assert classify_intent("show me the archive") == "archive_query"
+    # 硬验收问法：不含 explain 词，仍归 answer_case_question
+    assert classify_intent("当前 Case 有几篇文档，多源验证是否成立？") == "answer_case_question"
 
 
 # ---------------------------------------------------------------- abstention
@@ -711,3 +731,276 @@ def test_command_confirmed_channel_executes(tmp_path: Path) -> None:
     assert any(c["type"] == "tool_call" for c in result["cards"])
     assert not any(c["type"] == "confirm_action" for c in result["cards"])
     assert len(wf.calls) == 1 and wf.calls[0][0] == "compare"
+
+
+# ---------------------------------------------------------------- 阶段3-2 T1
+
+
+def _run(message: str, tmp_path: Path, **kw: object) -> dict:
+    """run_chat_command 最小接线（research=真实 store，其余默认桩空）。"""
+    research = kw.pop("research", None) or _research(tmp_path)
+    return asyncio.run(
+        run_chat_command(
+            message,
+            [],
+            bronze=None,
+            store=None,
+            gold=None,
+            registry=None,
+            research=research,
+            case_id=str(kw.pop("case_id", "case-1")),
+            **kw,
+        )
+    )
+
+
+def test_command_explain_topic_read_only(tmp_path: Path) -> None:
+    """explain：命中 NDI 条目 → 语义解释文本；零工作流零写库。"""
+    research = _research(tmp_path)
+    _case(research)
+    wf = FakeWorkflows(research)
+    result = _run("解释一下 NDI", tmp_path, research=research, workflows=wf)
+    assert result["intent"] == "explain"
+    assert result["message_type"] == "answer"
+    assert "叙事分歧" in result["reply"] and "预测" not in result["reply"].split("不是")[0]
+    assert wf.calls == []
+    assert research.analysis_runs() == []
+
+
+def test_command_explain_unknown_topic_honest(tmp_path: Path) -> None:
+    """explain：未命中条目 → 诚实「暂无解释条目」，不编造定义。"""
+    result = _run("解释一下量子色动力学", tmp_path)
+    assert result["intent"] == "explain"
+    assert "暂无解释条目" in result["reply"]
+    assert "HelpIcon" in result["reply"]
+
+
+def test_command_monitor_ops_summary_card(tmp_path: Path) -> None:
+    """monitor_ops 查询：monitor_summary 卡（monitor 数+待复核数）；只读零写库。"""
+    from oh_contracts.monitoring import Monitor, MonitorRun, MonitorUpdate
+
+    research = _research(tmp_path)
+    _case(research)
+    research.create_monitor(
+        Monitor(
+            monitor_id="mon-1",
+            target_type="topic",
+            target_ref="fed",
+            question="美联储表态",
+            created_at=T,
+        )
+    )
+    research.add_monitor_run(MonitorRun(run_id="mrun-1", monitor_id="mon-1", started_at=T))
+    research.add_monitor_update(
+        MonitorUpdate(
+            update_id="upd-1", run_id="mrun-1", monitor_id="mon-1", summary="新增表态", created_at=T
+        )
+    )
+    result = _run("查看监测器状态", tmp_path, research=research)
+    assert result["intent"] == "monitor_ops"
+    assert result["message_type"] == "answer"
+    card = next(c for c in result["cards"] if c["type"] == "monitor_summary")
+    assert card["n_monitors"] == 1 and card["n_pending_updates"] == 1
+    assert card["monitors"][0]["monitor_id"] == "mon-1"
+    # 只读：无新 run、无新 update
+    assert research.analysis_runs() == []
+    assert research.counts()["monitor_updates"] == 1
+
+
+def test_command_monitor_create_not_executed_in_chat(tmp_path: Path) -> None:
+    """monitor_ops 创建：chat 内零写库（monitors 表计数不变），指引 /monitors?create=1。"""
+    research = _research(tmp_path)
+    _case(research)
+    result = _run("创建一个监测美联储的监控", tmp_path, research=research)
+    assert result["intent"] == "monitor_ops"
+    assert result["message_type"] == "answer"
+    actions = next(c for c in result["cards"] if c["type"] == "optional_actions")
+    assert actions["needs_confirmation"] is False
+    assert actions["actions"][0]["href"] == "/monitors?create=1"
+    assert "不在对话内直接执行" in result["reply"] or "不在对话内" in result["reply"]
+    # 伪闭环禁令：监测器未被 chat 创建
+    assert research.counts()["monitors"] == 0
+    assert research.analysis_runs() == []
+
+
+def test_command_archive_query_summary(tmp_path: Path) -> None:
+    """archive_query：空档案诚实说明；有已确认条目 → archive_summary 卡（最近 3 条）。"""
+    from oh_contracts.artifacts import Artifact, ArtifactRevision, UserCommit
+
+    research = _research(tmp_path)
+    _case(research)
+    result = _run("归档了哪些报告", tmp_path, research=research)
+    card = next(c for c in result["cards"] if c["type"] == "archive_summary")
+    assert card["n_items"] == 0 and card["items"] == []
+    assert "暂无已确认条目" in result["reply"]
+    # 造一份已确认档案（UserCommit 门）
+    research.create_artifact(
+        Artifact(
+            artifact_id="art-1",
+            case_id="case-1",
+            klass="research_report",
+            title="报告A",
+            created_at=T,
+        )
+    )
+    research.add_artifact_revision(
+        ArtifactRevision(revision_id="rev-1", artifact_id="art-1", created_at=T)
+    )
+    research.commit_revision(
+        "rev-1", UserCommit(commit_id="c-1", revision_id="rev-1", committed_at=T)
+    )
+    result2 = _run("归档了哪些报告", tmp_path, research=research)
+    card2 = next(c for c in result2["cards"] if c["type"] == "archive_summary")
+    assert card2["n_items"] == 1
+    assert card2["items"][0]["title"] == "报告A"
+    assert card2["items"][0]["klass"] == "research_report"
+    assert "报告A" in result2["reply"]
+    # 只读
+    assert research.analysis_runs() == []
+
+
+# ---------------------------------------------------------------- 阶段3-2 T2/T3
+
+
+def test_command_confirm_card_has_data_scope(tmp_path: Path) -> None:
+    """T2：confirm_action 卡 changes 含数据范围描述（compare：仅本 Case 内版本）。"""
+    research = _research(tmp_path)
+    _case(research)
+    _doc(research, "case-1", "drev-a", "doc-a", seq=1)
+    _doc(research, "case-1", "drev-b", "doc-b", seq=2, source_id="wire")
+    result = _run("比较这两篇文档", tmp_path, research=research)
+    conf = next(c for c in result["cards"] if c["type"] == "confirm_action")
+    assert any(c.startswith("数据范围") and "不读取 Case 外数据" in c for c in conf["changes"])
+    # 未确认：零写库
+    assert research.analysis_runs() == []
+
+
+def test_command_status_case_context_card(tmp_path: Path) -> None:
+    """T3：status 意图附 case_context 卡（02 计数/03 信源集合/04 监测概览）。"""
+    from oh_contracts.artifacts import Artifact
+    from oh_contracts.monitoring import Monitor
+
+    research = _research(tmp_path)
+    _case(research)
+    _doc(research, "case-1", "drev-a", "doc-a", seq=1, source_id="gov")
+    _doc(research, "case-1", "drev-b", "doc-b", seq=2, source_id="gov")  # 同信源
+    research.create_artifact(
+        Artifact(
+            artifact_id="art-1", case_id="case-1", klass="element_map", title="元素图", created_at=T
+        )
+    )
+    research.create_monitor(
+        Monitor(
+            monitor_id="mon-1",
+            target_type="case",
+            target_ref="case-1",
+            question="case 变化",
+            case_id="case-1",
+            created_at=T,
+        )
+    )
+    result = _run("看看运行状态", tmp_path, research=research)
+    card = next(c for c in result["cards"] if c["type"] == "case_context")
+    assert card["n_documents"] == 2
+    assert card["n_sources"] == 1 and card["source_ids"] == ["gov"]
+    assert card["n_claims"] == 0
+    assert card["n_artifacts"] == 1
+    assert card["n_monitors"] == 1 and card["n_pending_updates"] == 0
+    # 只读
+    assert research.analysis_runs() == []
+
+
+# ---------------------------------------------------------------- 阶段3-2 T4/T5
+
+
+class FourPartRouter:
+    """LLM 四分回答（answer_case_question 路径）：返回带四分字段的 ChatOutput。"""
+
+    def __init__(self) -> None:
+        self.systems: list[str] = []
+
+    async def invoke(self, tier, system, user, schema):
+        self.systems.append(system)
+        return (
+            ChatOutput(
+                reply="共 2 篇文档，多源验证具备条件。",
+                known_facts=["文档 2 篇", "去重信源 2 个（gov、wire）"],
+                inferences=["推断：满足文档≥2 且去重信源≥2"],
+                missing_evidence=[],
+                suggested_actions=["跨源比较"],
+            ),
+            object(),
+            None,
+        )
+
+
+def test_hard_acceptance_multi_source_holds(tmp_path: Path) -> None:
+    """T5 硬验收（多源）：2 篇不同信源 → 直接答数量 + 多源验证成立 + 依据回链；零新任务。"""
+    research = _research(tmp_path)
+    _case(research)
+    _doc(research, "case-1", "drev-a", "doc-a", seq=1, source_id="gov")
+    _doc(research, "case-1", "drev-b", "doc-b", seq=2, source_id="wire")
+    wf = FakeWorkflows(research)
+    result = _run(
+        "当前 Case 有几篇文档，多源验证是否成立？", tmp_path, research=research, workflows=wf
+    )
+    assert result["intent"] == "answer_case_question"
+    assert result["message_type"] == "answer"
+    assert "2 篇文档" in result["reply"]
+    assert "多源验证具备条件" in result["reply"]
+    # 四分卡：known_facts 引用文档级证据（可点击回链语义）
+    bd = next(c for c in result["cards"] if c["type"] == "answer_breakdown")
+    assert bd["known_facts"] and bd["inferences"]
+    refs = bd["evidence_refs"]
+    assert {r["source_id"] for r in refs} == {"gov", "wire"}
+    assert {r["document_revision_id"] for r in refs} == {"drev-a", "drev-b"}
+    assert result["answer_breakdown"]["evidence_refs"] == refs
+    # 零新任务零写库
+    assert wf.calls == []
+    assert research.analysis_runs() == []
+
+
+def test_hard_acceptance_single_source_not_multi(tmp_path: Path) -> None:
+    """T5 硬验收（单源）：1 篇 → 诚实「仅单一信源，不构成多源验证」+ 缺失证据说明。"""
+    research = _research(tmp_path)
+    _case(research)
+    _doc(research, "case-1", "drev-a", "doc-a", seq=1, source_id="gov")
+    result = _run("当前 Case 有几篇文档，多源验证是否成立？", tmp_path, research=research)
+    assert result["intent"] == "answer_case_question"
+    assert "1 篇文档" in result["reply"]
+    assert "仅单一信源，不构成多源验证" in result["reply"]
+    bd = result["answer_breakdown"]
+    assert any("第二个独立信源" in m for m in bd["missing_evidence"])
+    assert research.analysis_runs() == []
+
+
+def test_hard_acceptance_two_docs_same_source_not_multi(tmp_path: Path) -> None:
+    """T5 边界：2 篇同信源 → 去重信源=1，不构成多源验证（去重标准生效）。"""
+    research = _research(tmp_path)
+    _case(research)
+    _doc(research, "case-1", "drev-a", "doc-a", seq=1, source_id="gov")
+    _doc(research, "case-1", "drev-b", "doc-b", seq=2, source_id="gov")
+    result = _run("当前 Case 有几篇文档，多源验证是否成立？", tmp_path, research=research)
+    assert "不构成多源验证" in result["reply"]
+
+
+def test_answer_breakdown_llm_path(tmp_path: Path) -> None:
+    """T4 LLM 路径：FakeRouter 返回四分 → 卡与顶层字段来自模型四分，evidence_refs 保底。"""
+    research = _research(tmp_path)
+    _case(research)
+    _doc(research, "case-1", "drev-a", "doc-a", seq=1, source_id="gov")
+    _doc(research, "case-1", "drev-b", "doc-b", seq=2, source_id="wire")
+    router = FourPartRouter()
+    result = _run("当前 Case 有几篇文档？", tmp_path, research=research, router=router)
+    assert result["reply"] == "共 2 篇文档，多源验证具备条件。"
+    bd = result["answer_breakdown"]
+    assert bd["known_facts"] == ["文档 2 篇", "去重信源 2 个（gov、wire）"]
+    assert bd["inferences"] == ["推断：满足文档≥2 且去重信源≥2"]
+    assert bd["suggested_actions"] == ["跨源比较"]
+    card = next(c for c in result["cards"] if c["type"] == "answer_breakdown")
+    assert card["known_facts"] == bd["known_facts"]
+    # LLM 拿到的 system prompt 含四分要求
+    assert "known_facts" in router.systems[-1]
+    # evidence_refs 始终来自真实 Case 数据（不信任模型编造）
+    assert {r["document_revision_id"] for r in bd["evidence_refs"]} == {"drev-a", "drev-b"}
+    assert research.analysis_runs() == []

@@ -80,6 +80,17 @@ def _NOW():
     return "2026-09-02T12:00:00+00:00"
 
 
+class _Clock:
+    """递增秒级时钟：保证多次 build_report 的 created_at 严格递增（版本序确定）。"""
+
+    def __init__(self) -> None:
+        self.n = 0
+
+    def __call__(self) -> str:
+        self.n += 1
+        return f"2026-09-02T12:00:{self.n:02d}+00:00"
+
+
 def _add_revision(store, *, rev_id: str, body: str = _TEXT, language: str = "zh") -> str:
     store.add_document_revision(
         rev_id,
@@ -432,6 +443,88 @@ def test_report_context_integrity_triple_check(store, case_id) -> None:
     # 篡改路径不产新 artifact（不冒充成功）
     row = store._conn.execute("SELECT COUNT(*) FROM artifacts").fetchone()
     assert row[0] == 1
+
+
+def test_report_rebuild_appends_revision_never_overwrites(store, case_id) -> None:
+    """T1 禁覆盖锁定：同 (case, report_type) 连续两次 build_report → 同 artifact 追加。
+
+    artifact_revisions 恰 2 行；v1（首行）content 与 created_at 不变（无 UPDATE
+    content 覆盖路径）；两行 revision_id 不同；current_revision_id commit 前
+    不动指针（Artifact 契约：current 指向最近一次被 Commit 的版本）。
+    """
+    _seed_report_evidence(store, case_id)
+    wf = CaseWorkflows(research=store, router=MultiRouter(), now_fn=_Clock())
+    v1 = asyncio.run(wf.build_report(case_id, report_type="veracity", title="核实报告"))
+    revs_before = store.artifact_revisions(v1["artifact_id"])
+    art_before = store.get_artifact(v1["artifact_id"])
+    assert len(revs_before) == 1
+    v2 = asyncio.run(wf.build_report(case_id, report_type="veracity", title="核实报告"))
+    # 落同一 artifact：不新建、不覆盖（append-only）
+    assert v2["artifact_id"] == v1["artifact_id"]
+    assert v2["revision_id"] != v1["revision_id"]
+    revs = store.artifact_revisions(v1["artifact_id"])
+    assert len(revs) == 2
+    assert revs[0]["revision_id"] == v1["revision_id"]
+    assert revs[0]["content"] == revs_before[0]["content"]
+    assert revs[0]["created_at"] == revs_before[0]["created_at"]
+    # commit 前指针不动（未指向 v2 草稿；与第一次构建后保持一致）
+    art_after = store.get_artifact(v1["artifact_id"])
+    assert art_after is not None and art_after.current_revision_id == art_before.current_revision_id
+    # 同 case+type 不因重跑而增殖 artifact
+    rows = [a for a in store.artifacts_for_case(case_id) if a["report_type"] == "veracity"]
+    assert len(rows) == 1
+    # T2：Prompt 版本标注（revision content 顶层 + run output 双写）
+    assert revs[1]["content"]["prompt_version"] == "report-v1"
+    run2 = store.get_analysis_run(v2["run_id"])
+    assert run2 is not None and run2["output"]["prompt_version"] == "report-v1"
+
+
+def test_report_feedback_revision_records_lineage_and_prompt(store, case_id) -> None:
+    """T3 反馈→Revised 闭环：feedback 注入 prompt；修订版留 revised_from+feedback 原文。
+
+    诚实语义：反馈修订与普通报告同一 abstained/三重校验路径（失败 router →
+    abstained 且照常留痕，无豁免）。
+    """
+    _seed_report_evidence(store, case_id)
+    router = MultiRouter()
+    clock = _Clock()
+    wf = CaseWorkflows(research=store, router=router, now_fn=clock)
+    v1 = asyncio.run(wf.build_report(case_id, report_type="veracity", title="核实报告"))
+    feedback = "第二节只复述了拆解元素，请针对九月决议给出概率区间并引用挑战问题。"
+    v2 = asyncio.run(
+        wf.build_report(case_id, report_type="veracity", title="核实报告", feedback=feedback)
+    )
+    assert v2["status"] == "succeeded"
+    assert v2["artifact_id"] == v1["artifact_id"]
+    revs = store.artifact_revisions(v1["artifact_id"])
+    assert [r["revision_id"] for r in revs] == [v1["revision_id"], v2["revision_id"]]
+    # 版本保留：revised_from 指向上一版 + feedback 原文 + prompt 版本（仅新版携带）
+    assert revs[1]["content"]["revised_from"] == v1["revision_id"]
+    assert revs[1]["content"]["feedback"] == feedback
+    assert revs[1]["content"]["prompt_version"] == "report-v1"
+    assert "revised_from" not in revs[0]["content"]
+    assert "feedback" not in revs[0]["content"]
+    run2 = store.get_analysis_run(v2["run_id"])
+    assert run2 is not None
+    assert run2["output"]["revised_from"] == v1["revision_id"]
+    assert run2["output"]["feedback"] == feedback
+    # 反馈注入 prompt：逐条回应纪律 + 反馈原文
+    assert "用户对上一版草稿的反馈" in router.prompts[-1]
+    assert "逐条回应" in router.prompts[-1]
+    assert "九月决议" in router.prompts[-1]
+    # 无特殊豁免：失败 router → 反馈修订同样 abstained（照常追加版本并留痕）
+    wf_bad = CaseWorkflows(research=store, router=MultiRouter(fail=True), now_fn=clock)
+    v3 = asyncio.run(
+        wf_bad.build_report(case_id, report_type="veracity", title="核实报告", feedback="再修一次")
+    )
+    assert v3["status"] == "abstained"
+    revs3 = store.artifact_revisions(v1["artifact_id"])
+    assert len(revs3) == 3
+    assert revs3[2]["content"]["revised_from"] == v2["revision_id"]
+    assert revs3[2]["content"]["feedback"] == "再修一次"
+    # abstained 修订的归档门：源 run 非 succeeded（commit 端点 422 的数据基础）
+    run3 = store.get_analysis_run(v3["run_id"])
+    assert run3 is not None and run3["status"] == "abstained"
 
 
 def test_challenge_claim_requires_existing_claim(store, case_id) -> None:
