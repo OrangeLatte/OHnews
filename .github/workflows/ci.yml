@@ -28,7 +28,7 @@ jobs:
       - name: Sync workspace
         run: uv sync --frozen
 
-      - name: Lint
+      - name: Lint #lint代码规范
         run: |
           uv run ruff check packages
           uv run ruff format --check packages
