@@ -20,17 +20,21 @@ from pydantic import BaseModel, field_validator, model_validator
 
 from .agent_base import AgentSessions, make_checkpointer, output_language_line
 
+# 拆解 prompt 版本（纪律改动须同步递增；run output 双写供审计）
+DISSECT_PROMPT_VERSION = "dissect-v1"
+
 _DISSECT_SYSTEM = (
     "你是新闻拆解专家。对给定文章做结构化拆解，仅输出 JSON。"
     "元素闭集："
     + ",".join(ELEMENT_KEYS)
     + "。每个元素给 content（一句中文提炼）、confidence（0-1 置信度，按下方校准规则）"
-    "与可选 spans（原文 start/end 字符偏移）。"
+    "与可选 spans（原文 start/end 字符偏移，并给 quote=该偏移切片的逐字原文用于锚点校验）。"
     "span 覆盖纪律：每个元素的 spans 必须标注支撑它的完整原文片段——"
     "覆盖整句或完整短语（通常 20-120 字符），不要只标最小词组；"
     "元素结论若综合了文中某一段叙述，就把该段完整标注；"
     "一个元素可给多个 spans（不同位置的支撑片段各标一个）；"
     "目标是让读者通过色块读懂全文结构，而非零散点缀。"
+    "坐标与 quote 必须精确对应原文（偏移漂移或引文改写的 span 会被丢弃）；"
     "文中未体现的元素直接省略，禁止编造；引文必须来自原文；"
     "禁止输出文中不存在的实体、机构、数字（禁造证据；找不到就诚实缺该元素）。"
     "信源纪律：source_reliability 只分析文中引用了哪些来源（cited sources），"
@@ -125,6 +129,7 @@ def build_dissection_graph(
         lang_line = output_language_line(state.get("analysis_locale", ""))
         if lang_line:
             user = f"{user}\n{lang_line}"
+        user = f"{user}\n（Prompt 版本：{DISSECT_PROMPT_VERSION}）"
         try:
             async with asyncio.timeout(llm_timeout):
                 parsed, ref, usage = await router.invoke(

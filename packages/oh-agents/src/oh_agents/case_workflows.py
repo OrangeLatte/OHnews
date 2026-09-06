@@ -19,9 +19,9 @@ from oh_contracts.agent_runtime import ModelUsage
 from oh_contracts.artifacts import Artifact, ArtifactRevision, UserCommit
 from oh_contracts.case import AnalysisRun, ComparisonSet, ElementExtraction, EvidenceSpan
 
-from .dissection_agent import build_dissection_graph
+from .dissection_agent import DISSECT_PROMPT_VERSION, build_dissection_graph
 from .report_agent import REPORT_PROMPT_VERSION, build_report_graph
-from .translation_agent import build_translation_graph
+from .translation_agent import TRANSLATE_PROMPT_VERSION, build_translation_graph
 
 
 def _dumps(data: dict[str, Any]) -> str:
@@ -49,6 +49,28 @@ def _content_hash(text: str) -> str:
 
 
 _MAX_REPORT_BODY_CHARS = 6000
+
+# 证据坐标重建（P0-2）：span 锚点双重校验的上下文窗口（字符数）与覆盖率告警阈值。
+_SPAN_CONTEXT_CHARS = 30
+_COVERAGE_WARN_BELOW = 0.5
+
+# W3 跨源比较（R5）：同事件概率阈值（Jaccard 均值 → high/medium/low），模块级统一管理。
+SAME_EVENT_HIGH = 0.45
+SAME_EVENT_LOW = 0.25
+
+
+def _parse_iso_dt(value: str) -> _dt.datetime | None:
+    """ISO 字符串 → datetime；空串/无法解析诚实返回 None（不编造时间）。"""
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = _dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_dt.UTC)
+    return parsed
 
 
 class CaseWorkflows:
@@ -211,29 +233,49 @@ class CaseWorkflows:
             final_error = "; ".join(state.get("errors", [])) or "llm_empty_output"
         else:
             final_status, final_error = "succeeded", ""
-        extraction_ids = self._persist_elements(
+        # 发布集置换：仅成功运行顶替既有 current 集合（先 supersede 再写入）；
+        # abstained run 的 offline 兜底行写 superseded，不降级既有成功拆解。
+        published = final_status == "succeeded"
+        if published:
+            self._research.supersede_extractions(document_revision_id)
+        extraction_ids, persist_stats = self._persist_elements(
             case_id=case_id,
             document_revision_id=document_revision_id,
             text=str(rev.get("body") or ""),
             dissection=d,
             analysis_run_id=run.run_id,
+            published=published,
         )
+        output: dict[str, Any] = {
+            "engine": d.engine,
+            "extraction_ids": extraction_ids,
+            "n_elements": len(d.elements),
+            "prompt_version": DISSECT_PROMPT_VERSION,
+            "discarded_spans": persist_stats["discarded_spans"],
+            "corrected_spans": persist_stats.get("corrected_spans", 0),
+            "coverage": persist_stats["coverage"],
+        }
+        if persist_stats["coverage"]["coverage_pct"] < _COVERAGE_WARN_BELOW:
+            # 诚实告警不失败：直接证据覆盖率过低时仍 succeeded，但留痕供验收核对
+            output["coverage_warning"] = (
+                f"direct span coverage {persist_stats['coverage']['coverage_pct']}"
+                f" < {_COVERAGE_WARN_BELOW}"
+            )
         self._finish_run(
             run,
             final_status,
             error=final_error,
             usage=_usage,
-            output={
-                "engine": d.engine,
-                "extraction_ids": extraction_ids,
-                "n_elements": len(d.elements),
-            },
+            output=output,
         )
         return {
             "run_id": run.run_id,
             "status": final_status,
             "engine": d.engine,
             "extraction_ids": extraction_ids,
+            "coverage": persist_stats["coverage"],
+            "discarded_spans": persist_stats["discarded_spans"],
+            "corrected_spans": persist_stats.get("corrected_spans", 0),
             "dissection": d.model_dump(mode="json"),
         }
 
@@ -245,33 +287,91 @@ class CaseWorkflows:
         text: str,
         dissection: Any,
         analysis_run_id: str,
-    ) -> list[str]:
+        published: bool = True,
+    ) -> tuple[list[str], dict[str, Any]]:
         """拆解元素 → EvidenceSpan + ElementExtraction（引用具体版本与 run）。
 
         confidence 优先取模型自报校准值（prompt 约束推断类不得 1.0）；
         模型未自报时维持旧语义：llm=1.0 / offline=0.0。
+        published=False（abstained run 的 offline 兜底）时元素行落
+        set_status=superseded（隐藏，不顶替既有成功集合）。
+        幂等防重：同 run 内 (element_key, 首个有效 span 坐标, normalized_value)
+        重复的元素只落一条（同一次运行产物，跳过 INSERT 不违不可变语义）。
+
+        证据坐标重建（P0-2）锚点纪律：
+        - span 坐标越界（start<0 / end>len(text) / end<=start）→ 丢弃；
+        - 模型自报 quote 非空且与坐标切片无子串关系（quote∉slice 且 slice∉quote）
+          → 丢弃（坐标漂移不得伪装成原文高亮）；全部丢弃计入 discarded_spans；
+        - 元素声明了 spans 但全部被丢弃 → uncertainty_reason 追加
+          span_anchor_failed（诚实呈现「无合法原文位置」，不产伪造高亮）；
+        - 每个 direct span 写入 prefix/suffix（原文前后各 30 字符切片，
+          供锚点双重校验）；
+        - 返回 (extraction_ids, stats)；stats 含 discarded_spans 与
+          coverage（正文非空字符的直接证据覆盖率，covered/total 为 0-1 分数，
+          total=0 时 coverage_pct=0.0）。
         """
         ids: list[str] = []
+        written: set[tuple[str, int, int, str]] = set()
+        discarded = 0
+        corrected = 0
+        covered = bytearray(len(text))
         for el in dissection.elements:
+            raw_spans = [
+                (int(sp.start), int(sp.end), str(getattr(sp, "quote", "") or "")) for sp in el.spans
+            ]
+            in_range = [
+                (start, end, quote)
+                for start, end, quote in raw_spans
+                if 0 <= start < len(text) and start < end <= len(text)
+            ]
+            discarded += len(raw_spans) - len(in_range)
+            valid_spans: list[tuple[int, int]] = []
+            for start, end, model_quote in in_range:
+                if model_quote:
+                    slice_text = text[start:end]
+                    if model_quote not in slice_text:
+                        # 坐标切片不含引文 → 坐标漂移。服务端重锚定：
+                        # 引文在正文中唯一出现时用 find 结果修正坐标（quote 比 offset 可靠）。
+                        hits: list[int] = []
+                        pos = text.find(model_quote)
+                        while pos != -1:
+                            hits.append(pos)
+                            pos = text.find(model_quote, pos + 1)
+                        if len(hits) == 1:
+                            start, end = hits[0], hits[0] + len(model_quote)
+                            corrected += 1
+                        else:
+                            discarded += 1
+                            continue
+                valid_spans.append((start, end))
+            first = valid_spans[0] if valid_spans else (-1, -1)
+            dedupe_key = (el.element, first[0], first[1], el.content)
+            if dedupe_key in written:
+                continue
+            written.add(dedupe_key)
             span_ids: list[str] = []
-            for sp in el.spans:
-                start, end = int(sp.start), int(sp.end)
-                if start >= len(text) or end > len(text) or start >= end:
-                    continue
+            for start, end in valid_spans:
                 span = EvidenceSpan(
                     span_id=self._rid("span"),
                     document_revision_id=document_revision_id,
                     char_start=start,
                     char_end=end,
                     quote=text[start:end],
+                    prefix=text[max(0, start - _SPAN_CONTEXT_CHARS) : start],
+                    suffix=text[end : end + _SPAN_CONTEXT_CHARS],
                 )
                 self._research.add_span(span)
                 span_ids.append(span.span_id)
+                covered[start:end] = b"\x01" * (end - start)
             if el.confidence is not None:
                 confidence, uncertainty = float(el.confidence), ""
             else:
                 confidence = 1.0 if dissection.engine == "llm" else 0.0
                 uncertainty = "" if dissection.engine == "llm" else "offline 兜底拆解"
+            if el.spans and not span_ids:
+                uncertainty = (
+                    f"{uncertainty};span_anchor_failed" if uncertainty else "span_anchor_failed"
+                )
             extraction = ElementExtraction(
                 extraction_id=self._rid("ext"),
                 case_id=case_id,
@@ -283,9 +383,23 @@ class CaseWorkflows:
                 uncertainty_reason=uncertainty,
                 analysis_run_id=analysis_run_id,
             )
-            self._research.add_extraction(extraction)
+            self._research.add_extraction(
+                extraction, set_status="current" if published else "superseded"
+            )
             ids.append(extraction.extraction_id)
-        return ids
+        total_chars = sum(1 for ch in text if not ch.isspace())
+        covered_chars = sum(1 for i, flag in enumerate(covered) if flag and not text[i].isspace())
+        coverage_pct = round(covered_chars / total_chars, 4) if total_chars else 0.0
+        stats = {
+            "discarded_spans": discarded,
+            "corrected_spans": corrected,
+            "coverage": {
+                "covered_chars": covered_chars,
+                "total_chars": total_chars,
+                "coverage_pct": coverage_pct,
+            },
+        }
+        return ids, stats
 
     # ---------- W2 语言副本 NormalizeLanguage ----------
 
@@ -359,6 +473,7 @@ class CaseWorkflows:
                 "duplicate": False,
                 "translation_revision_id": new_rev_id,
                 "target_language": target_language,
+                "prompt_version": TRANSLATE_PROMPT_VERSION,
             },
         )
         return {
@@ -383,10 +498,13 @@ class CaseWorkflows:
 
         先做事件相关性门槛（eligibility）：实体/主题重叠率过低时拒绝默认
         同事件交叉验证（blocked=True，不落 ComparisonSet——不编造跨事件
-        比较），建议用户明确要求跨事件类比后再执行。通过后逐元素四分：
-        agreement（全部有值且一致）/ conflicts（事实冲突 vs 叙事差异）/
-        missing（任一版本缺值——绝不计入一致或冲突）；summary 由同一份
-        分类结果计算，保证与前端统计同源。
+        比较），建议用户明确要求跨事件类比后再执行。eligibility 五因子
+        完整分解：entity_overlap / topic_similarity / time_distance_hours /
+        same_event_score / same_event_probability + comparison_mode，blocked
+        与 succeeded 两分支同构（前端拦截卡可展示「为什么被拦」）。
+        通过后逐元素四分：agreement（全部有值且一致）/ conflicts（事实冲突
+        vs 叙事差异）/ missing（任一版本缺值——绝不计入一致或冲突）；summary
+        由同一份分类结果计算，保证与前端统计同源。
         """
         if len(document_revision_ids) < 2:
             raise ValueError("compare_sources 需要至少 2 个 document_revision")
@@ -400,7 +518,12 @@ class CaseWorkflows:
         matrix: dict[str, dict[str, str]] = {}
         entity_tokens: list[set[str]] = []
         topic_tokens: list[set[str]] = []
+        published: list[_dt.datetime] = []
         for rev_id in document_revision_ids:
+            rev = self._research.get_document_revision(rev_id) or {}
+            pub = _parse_iso_dt(str(rev.get("published_at") or ""))
+            if pub is not None:
+                published.append(pub)
             for row in self._research.extractions_for_revision(rev_id):
                 key = str(row["element_key"])
                 matrix.setdefault(key, {})[rev_id] = str(row.get("normalized_value") or "")
@@ -423,15 +546,24 @@ class CaseWorkflows:
         top_score = _mean_jaccard(topic_tokens)
         scores = [s for s in (ent_score, top_score) if s is not None]
         avg = sum(scores) / len(scores) if scores else 0.0
-        if avg >= 0.45:
+        # time_distance_hours：两两发布时间最近对的小时差；任一端缺失/无法解析 → None（诚实）
+        time_distance_hours: float | None = None
+        if len(published) >= 2:
+            ordered = sorted(published)
+            time_distance_hours = min(
+                (b - a).total_seconds() / 3600.0 for a, b in zip(ordered, ordered[1:], strict=False)
+            )
+        if avg >= SAME_EVENT_HIGH:
             probability = "high"
-        elif avg < 0.25:
+        elif avg < SAME_EVENT_LOW:
             probability = "low"
         else:
             probability = "medium"
         eligibility = {
             "entity_overlap": ent_score,
             "topic_similarity": top_score,
+            "time_distance_hours": time_distance_hours,
+            "same_event_score": avg,
             "same_event_probability": probability,
             "comparison_mode": (
                 "same_event_cross_validation"
@@ -523,6 +655,7 @@ class CaseWorkflows:
             "agreement": agreement,
             "conflicts": conflicts,
             "missing": missing,
+            "eligibility": eligibility,
         }
 
     # ---------- W4 报告 BuildReport ----------
@@ -532,10 +665,13 @@ class CaseWorkflows:
 
         返回 (evidence_pack, inputs 清单)；inputs 供验收方核对
         「报告输入与页面 ResearchState 一致」，truncated 标记正文截断。
+        每条 extraction 携带 human_status（R6 只引已审核纪律的数据源），
+        n_unreviewed_extractions 统计未复核元素数（=0 表示全部经人工审核）。
         """
         truncated = False
         documents: list[dict[str, Any]] = []
         n_extractions = 0
+        n_unreviewed = 0
         for doc in self._research.case_documents(case_id):
             rev_id = str(doc["document_revision_id"])
             rev = self._research.get_document_revision(rev_id) or {}
@@ -567,6 +703,7 @@ class CaseWorkflows:
                     }
                 )
             n_extractions += len(elements)
+            n_unreviewed += sum(1 for el in elements if el["human_status"] in ("", "unreviewed"))
             entry["extraction_elements"] = elements
             documents.append(entry)
         claims = [
@@ -597,11 +734,16 @@ class CaseWorkflows:
             "challenge_runs": challenge_runs,
             "compare_runs": compare_runs,
             # 内部一致性锚点：随 evidence_json 序列化，供 build_report 三重校验
-            "_counts": {"n_documents": len(documents), "n_extractions": n_extractions},
+            "_counts": {
+                "n_documents": len(documents),
+                "n_extractions": n_extractions,
+                "n_unreviewed_extractions": n_unreviewed,
+            },
         }
         inputs = {
             "n_documents": len(documents),
             "n_extractions": n_extractions,
+            "n_unreviewed_extractions": n_unreviewed,
             "n_claims": len(claims),
             "n_challenge_runs": len(challenge_runs),
             "n_compare_runs": len(compare_runs),
@@ -784,7 +926,12 @@ class CaseWorkflows:
     # ---------- W5 挑战 ChallengeClaim ----------
 
     def challenge_claim(self, case_id: str, claim_id: str, *, run_id: str | None = None) -> dict:
-        """确定性交叉核对（rule 引擎）：同案其他主张 + 提取分歧 → 质询清单。"""
+        """确定性交叉核对（rule 引擎）：同案其他主张 + 提取分歧 → 质询清单。
+
+        挑战 run 成功仅代表任务执行完成；主张状态由 verdict 规则写回
+        （contradicted / supported / insufficient），最终确认权在用户
+        （user_confirmed 须经 POST /claims/{id}/confirm 显式给出）。
+        """
         run = self._begin_run(
             case_id,
             "challenge",
@@ -814,19 +961,74 @@ class CaseWorkflows:
         ]
         if counter_evidence:
             questions.append(f"案内存在 {len(counter_evidence)} 条反驳向证据，须逐条核对。")
+
+        target_spans = self._research.spans_by_ids(target.span_ids)
+        supporting = [
+            {
+                "span_id": sp.span_id,
+                "quote": sp.quote,
+                "document_revision_id": sp.document_revision_id,
+            }
+            for sp in target_spans
+            if sp.polarity != "refutes"
+        ]
+        revs = sorted({sp.document_revision_id for sp in target_spans})
+        n_docs = len(self._research.case_documents(case_id))
+        if counter_evidence:
+            verdict = "contradicted"
+            rationale = (
+                f"案内存在 {len(counter_evidence)} 条反驳向证据（polarity=refutes），"
+                "主张被挑战；请核对反证后给出用户判定。"
+            )
+        elif len(supporting) >= 2:
+            verdict = "supported"
+            rationale = (
+                f"案内未找到反驳向证据，且有 {len(supporting)} 个独立支持锚点；"
+                "引擎判定为已获案内证据支持，仍需用户终审。"
+            )
+        else:
+            verdict = "insufficient"
+            rationale = (
+                f"案内未找到反驳向证据，但支持锚点仅 {len(supporting)} 个"
+                "（<2），证据不足，不能判定成立。"
+            )
+        # 引擎 verdict 写回主张状态（unverified/draft → verdict）；user_confirmed 只能由用户给出
+        self._research.update_claim_status(claim_id, verdict)
+        not_found = (
+            ""
+            if counter_evidence
+            else "案内未找到反驳向证据（检索范围：同案全部证据锚点，按 polarity=refutes 过滤）。"
+        )
         self._finish_run(
             run,
             "succeeded",
             output={
                 "claim_id": claim_id,
+                "search_question": f"「{target.statement[:80]}」是否成立？（限本 Case 证据）",
+                "search_scope": (
+                    f"Case {case_id}：{n_docs} 篇文档 · {len(others)} 条其他主张 ·"
+                    f" {len(target_spans)} 个目标证据锚"
+                ),
+                "queries_used": [
+                    "polarity=refutes 反证检索（同案全部 span）",
+                    f"支持锚点计数（span_ids={len(target.span_ids)}）",
+                    "同案主张交叉比对（related_claims）",
+                ],
+                "sources_checked": revs,
+                "supporting": supporting,
+                "opposing": counter_evidence,
+                "not_found": not_found,
+                "verdict": verdict,
+                "rationale": rationale,
                 "questions": questions,
-                "counter_evidence": counter_evidence,
                 "related_claims": [c.claim_id for c in others],
             },
         )
         return {
             "run_id": run.run_id,
             "claim_id": claim_id,
+            "verdict": verdict,
+            "rationale": rationale,
             "questions": questions,
             "counter_evidence": counter_evidence,
             "related_claims": [c.claim_id for c in others],

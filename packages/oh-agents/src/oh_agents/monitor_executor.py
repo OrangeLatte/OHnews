@@ -17,7 +17,7 @@ import json
 import re
 import time
 from collections.abc import Callable, Iterable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -39,6 +39,29 @@ def _parse_iso(ts: str | None) -> datetime | None:
         return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _window_start(window: str, now_dt: datetime) -> tuple[datetime | None, bool]:
+    """监测窗口起点解析：\"14d\"/\"7d\"/\"12h\"/\"30d\" → now - 时长。
+
+    返回 (起点, 是否生效)。不可解析（含空串）→ (None, False)——调用方
+    必须诚实标记 window_applied=False 并全量检索，不得假装过滤过。
+    """
+    w = (window or "").strip().lower()
+    if not w:
+        return None, False
+    try:
+        if w.endswith("d"):
+            days = float(w[:-1])
+        elif w.endswith("h"):
+            days = float(w[:-1]) / 24.0
+        else:
+            return None, False
+    except ValueError:
+        return None, False
+    if days <= 0:
+        return None, False
+    return now_dt - timedelta(days=days), True
 
 
 def _monitor_terms(monitor: Monitor) -> list[str]:
@@ -89,6 +112,8 @@ def run_monitor(
 
         terms = [t.casefold() for t in _monitor_terms(monitor)]
         snapshot_at = _parse_iso(monitor.last_confirmed_snapshot_at)
+        now_dt = now()
+        window_start, window_applied = _window_start(monitor.window, now_dt)
         deadline = time.monotonic() + timeout_s
 
         hits: list[BronzeRecord] = []
@@ -101,6 +126,11 @@ def run_monitor(
                 rec = next(records)
             except StopIteration:
                 break
+            if window_applied:
+                # 窗口语义：严格按设置窗口过滤。published_at 缺失 → 无法声称
+                # 在窗口内（PIT 纪律，未知时间不参与窗口统计）。
+                if rec.published_at is None or rec.published_at < window_start:
+                    continue
             text = _record_text(rec)
             if not any(term in text for term in terms):
                 continue
@@ -113,22 +143,27 @@ def run_monitor(
                     new_hits.append(rec)
 
         total, n_new = len(hits), len(new_hits)
+        win_note = f"窗口 {monitor.window} 内" if window_applied else "窗口不可解析，已全量检索"
         store.add_monitor_update(
             MonitorUpdate(
                 update_id=f"mupd-{uuid4().hex[:12]}",
                 run_id=run_id,
                 monitor_id=monitor_id,
                 summary=(
-                    f"相对上次确认快照：新增 {n_new} 篇相关文档"
-                    f"（窗口 {monitor.window}，命中共 {total} 篇）"
+                    f"相对上次确认快照：新增 {n_new} 篇相关文档（{win_note}共命中 {total} 篇）"
                     if snapshot_at is not None
-                    else f"首次运行：命中 {total} 篇相关文档"
+                    else f"首次运行：{win_note}命中 {total} 篇相关文档"
                 ),
-                delta={"new_articles": n_new, "total_hits": total, "window": monitor.window},
+                delta={
+                    "new_articles": n_new,
+                    "total_hits": total,
+                    "window": monitor.window,
+                    "window_applied": window_applied,
+                },
                 evidence_refs=[r.item_key for r in new_hits[:_EVIDENCE_CAP]],
                 suggested_case_action="new_candidate" if n_new > 0 else "none",
                 reviewed=False,
-                created_at=now().isoformat(),
+                created_at=now_dt.isoformat(),
             )
         )
         output = {
@@ -136,6 +171,9 @@ def run_monitor(
             "hits": total,
             "new_articles": n_new,
             "window": monitor.window,
+            "window_applied": window_applied,
+            "window_start": window_start.isoformat() if window_start else None,
+            "window_end": now_dt.isoformat(),
         }
         store.finish_monitor_run(
             run_id,

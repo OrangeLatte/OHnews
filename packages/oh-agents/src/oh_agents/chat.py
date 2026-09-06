@@ -1666,6 +1666,8 @@ async def run_chat_command(
         **base,
         **result,  # reply/citations/tools_used/rounds 以真实运行结果为准
         "cards": cards,
+        # 审计：本轮实际注入 LLM 的 Case 上下文材料（空串=无注入，诚实披露）
+        "context_package": ctx,
         # 无模型离线聚合=诚实弃权（与端点既有语义一致）
         "message_type": "answer" if router is not None else "abstention",
     }

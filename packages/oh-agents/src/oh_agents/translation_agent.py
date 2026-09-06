@@ -19,6 +19,9 @@ from pydantic import BaseModel
 
 from .agent_base import AgentSessions, make_checkpointer
 
+# 翻译 prompt 版本（纪律改动须同步递增；run output 双写供审计）
+TRANSLATE_PROMPT_VERSION = "translate-v1"
+
 _LLM_TIMEOUT = 90.0
 
 # 裁决 1：不同语言 → 不同翻译学家规则（prompt 拼段）
@@ -94,6 +97,7 @@ def build_translation_graph(
         user = (
             f"目标语言：{state.get('target_language', 'en')}\n"
             f"标题：{state.get('title', '')}\n正文：\n{state.get('text', '')}"
+            f"\n（Prompt 版本：{TRANSLATE_PROMPT_VERSION}）"
         )
         try:
             async with asyncio.timeout(_LLM_TIMEOUT):

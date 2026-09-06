@@ -40,11 +40,14 @@ _REPORT_SYSTEM = (
     "每个分节必须给出 evidence_refs：只能引用输入材料中真实出现的 id"
     "（extraction_id/claim_id/document_revision_id），禁止虚构 id；"
     "某分节找不到任何可引用证据时，evidence_refs 留空并在 body 写明「证据不足」。"
+    "审核纪律：默认只引用 human_status=confirmed 的元素；"
+    "若引用未审核（unreviewed）元素，必须在 section 正文中逐项注明『（未审核）』，"
+    "不得混用不标注。"
 )
 
 # Prompt 版本标注：随 revision content / run output 落库（版本保留 Prompt 版本，P0-C T2）。
 # 修改 _REPORT_SYSTEM 注入纪律时必须同步递增（report-v2, report-v3, ...）。
-REPORT_PROMPT_VERSION = "report-v1"
+REPORT_PROMPT_VERSION = "report-v2"
 
 
 class ReportOutputP(BaseModel):
