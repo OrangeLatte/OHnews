@@ -91,6 +91,7 @@ export default function MonitorsPage() {
   // 懒加载（打开详情时 fetch），失败诚实显示，不编造。
   const [sched, setSched] = useState<Record<string, MonitorSchedulerRow>>({});
   const [schedErr, setSchedErr] = useState<Record<string, boolean>>({});
+  const [verdicts, setVerdicts] = useState<Record<string, Record<string, number>>>({});
   const [runBusy, setRunBusy] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -173,6 +174,30 @@ export default function MonitorsPage() {
       alive = false;
     };
   }, [openId, runs]);
+
+  // 关联 Case 判断摘要懒加载（R7-3）：monitor.case_id → claims verdict 计数。
+  useEffect(() => {
+    if (!openId || verdicts[openId]) return;
+    const mon = rows.find((r) => r.monitor_id === openId);
+    if (!mon?.case_id) return;
+    let alive = true;
+    objectApi
+      .caseDetail(mon.case_id)
+      .then((d) => {
+        if (!alive) return;
+        const counts: Record<string, number> = {};
+        for (const c of d.claims ?? []) {
+          counts[c.status] = (counts[c.status] ?? 0) + 1;
+        }
+        setVerdicts((s) => ({ ...s, [openId]: counts }));
+      })
+      .catch(() => {
+        if (alive) setVerdicts((s) => ({ ...s, [openId]: {} }));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [openId, rows, verdicts]);
 
   // 调度健康懒加载：打开详情时 fetch 一次；无实时 scheduler 进程由 note 诚实标注。
   useEffect(() => {
@@ -634,9 +659,33 @@ export default function MonitorsPage() {
                       {t("monitors.triggers")}: {open.trigger_conditions.join(" · ")}
                     </p>
                   )}
-                  {/* 调度健康小卡（懒加载；失败诚实显示，不编造） */}
-                  <div className="mt-3 rounded-lg border bg-muted/30 p-2.5">
-                    <div className="flex flex-wrap items-center gap-2">
+                   {/* 关联 Case 判断摘要（R7-3）：监控增量可能影响已有判断 → Review Judgment */}
+                   {open.case_id && verdicts[openId] ? (
+                     Object.keys(verdicts[openId]).length > 0 ? (
+                       <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-50/50 p-2.5 text-xs dark:bg-amber-950/20">
+                         <div className="flex flex-wrap items-center gap-1.5">
+                           <h4 className="font-semibold">{t("monitors.reviewJudgment")}</h4>
+                           {Object.entries(verdicts[openId]).map(([s, n]) => (
+                             <span key={s} className="rounded bg-background px-1.5 py-0.5 font-mono">
+                               {t(`case.claimStatus.${s}`)} {n}
+                             </span>
+                           ))}
+                         </div>
+                         <p className="mt-1 text-muted-foreground">
+                           {t("monitors.reviewJudgmentHint")}{" "}
+                           <Link
+                             href={`/cases/${encodeURIComponent(open.case_id)}?mode=history`}
+                             className="underline"
+                           >
+                             {t("monitors.linkedCase")}
+                           </Link>
+                         </p>
+                       </div>
+                     ) : null
+                   ) : null}
+                   {/* 调度健康小卡（懒加载；失败诚实显示，不编造） */}
+                   <div className="mt-3 rounded-lg border bg-muted/30 p-2.5">
+                     <div className="flex flex-wrap items-center gap-2">
                       <h4 className="text-xs font-semibold">{t("monitors.scheduler.title")}</h4>
                       {schedFailed ? (
                         <span className="text-xs text-amber-700 dark:text-amber-400">

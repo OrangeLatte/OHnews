@@ -32,7 +32,7 @@ import {
   type SourceOption,
 } from "@/components/case/case-shared";
 import ReadMode from "@/components/case/read-mode";
-import ElementMatrix from "@/components/case/element-matrix";
+import ElementMatrix, { type MatrixCompareOut } from "@/components/case/element-matrix";
 import CompareView from "@/components/case/compare-view";
 import ReportView from "@/components/case/report-view";
 import HistoryView from "@/components/case/history-view";
@@ -49,6 +49,11 @@ function readModeFromUrl(): Mode | null {
 /** P0-C 证据回链：Archive 报告的 rev- 证据 chip 以 ?doc=<document_revision_id> 深链 READ 文档。 */
 function readDocParamFromUrl(): string {
   return new URLSearchParams(window.location.search).get("doc") ?? "";
+}
+
+/** R6 类型化深链：Archive 报告的 claim- 证据 chip 以 ?claim=<claim_id> 高亮 HISTORY 主张卡。 */
+function readClaimParamFromUrl(): string {
+  return new URLSearchParams(window.location.search).get("claim") ?? "";
 }
 
 function subscribeUrl(cb: () => void): () => void {
@@ -87,6 +92,8 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
   const [dissecting, setDissecting] = useState<string | null>(null);
   const [cmpOut, setCmpOut] = useState<WorkflowOut | null>(null);
   const [reportOut, setReportOut] = useState<WorkflowOut | null>(null);
+  // R6 ?claim= 深链：读一次保留（URL 不清除），透传 HistoryView 高亮主张卡
+  const [highlightClaim, setHighlightClaim] = useState("");
 
   const urlMode = useSyncExternalStore(subscribeUrl, getUrlMode, getServerUrlMode);
   const currentMode: Mode = urlMode ?? "read";
@@ -185,6 +192,8 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
           const hit = wanted !== "" && list.some((r) => r.document_revision_id === wanted);
           setActiveDoc(hit ? wanted : list[0].document_revision_id);
         }
+        // ?claim= 深链（R6 类型化回链）：异步回调内读一次（SSR 安全，无同步 setState）
+        setHighlightClaim(readClaimParamFromUrl());
         // ResearchState 接线（阶段2 单一状态真源）：Case 上下文 + 激活文档 + report 草稿产物
         setCaseContext(caseId, d.case.question);
         setActiveDocs(
@@ -286,6 +295,28 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
     [t],
   );
 
+  // MAP 四视图：来源等级映射（source_id → tier，/api/sources 已随首屏加载）
+  const sourceTier = useMemo(
+    () => Object.fromEntries(sources.map((s) => [s.source_id, s.tier])),
+    [sources],
+  );
+
+  // MAP 四视图分类真源：会话内最新 compare 结果优先；否则取最近一次 compare run
+  // （succeeded/abstained）的 output——blocked 无分类 → 诚实 null（不回退更早的历史分类）；
+  // detail 由 CompareView 完成后 refreshDetail 保持新鲜
+  const matrixCompareOut = useMemo<MatrixCompareOut>(() => {
+    if (cmpOut && !cmpOut.blocked) return cmpOut;
+    const hit = (detail?.analysis_runs ?? []).find(
+      (r) =>
+        r.kind === "compare" &&
+        (r.status === "succeeded" || r.status === "abstained") &&
+        !!r.output,
+    );
+    if (!hit) return null;
+    const out = (hit.output ?? null) as WorkflowOut | null;
+    return out && !out.blocked ? out : null;
+  }, [cmpOut, detail]);
+
   if (loading) {
     return (
       <div className="space-y-4">
@@ -383,7 +414,15 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
       ) : null}
 
       {currentMode === "map" ? (
-        <ElementMatrix docs={docs} busy={busy} dissecting={dissecting} onDissect={runDissect} />
+        <ElementMatrix
+          caseId={caseId}
+          docs={docs}
+          busy={busy}
+          dissecting={dissecting}
+          onDissect={runDissect}
+          sourceTier={sourceTier}
+          compareOut={matrixCompareOut}
+        />
       ) : null}
 
       {currentMode === "compare" ? (
@@ -396,6 +435,8 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
           setBusy={setBusy}
           cmpOut={cmpOut}
           setCmpOut={setCmpOut}
+          historyRuns={detail?.analysis_runs}
+          refreshDetail={refreshDetail}
         />
       ) : null}
 
@@ -418,6 +459,8 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
           busy={busy}
           setBusy={setBusy}
           refreshDetail={refreshDetail}
+          highlightClaim={highlightClaim}
+          docs={docs}
         />
       ) : null}
     </div>

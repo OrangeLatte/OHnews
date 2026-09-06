@@ -24,6 +24,7 @@ export function ExtendWizard({ onRegistered }: { onRegistered: () => void }) {
   const [url, setUrl] = useState("");
   const [draft, setDraft] = useState<SourceSuggestion | null>(null);
   const [rationale, setRationale] = useState("");
+  const [preview, setPreview] = useState<Record<string, string> | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -52,6 +53,7 @@ export function ExtendWizard({ onRegistered }: { onRegistered: () => void }) {
       .then((res) => {
         setDraft(res.suggestion);
         setRationale(res.rationale);
+        setPreview(res.preview ?? null);
         setBusy(false);
         setStep(1);
       })
@@ -169,6 +171,13 @@ export function ExtendWizard({ onRegistered }: { onRegistered: () => void }) {
                 <span className="font-medium">{tr("sources.wizardRationale", "Why this suggestion")}: </span>
                 {rationale}
               </p>
+            ) : null}
+            {preview ? (
+              <ul className="space-y-1 rounded-lg border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
+                {Object.entries(preview).map(([k, v]) => (
+                  <li key={k}>{v}</li>
+                ))}
+              </ul>
             ) : null}
             {err ? <p className="text-xs text-[#dc2626]">{err}</p> : null}
             <div className="flex justify-between">

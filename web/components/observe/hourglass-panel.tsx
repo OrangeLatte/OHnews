@@ -580,7 +580,19 @@ export function HourglassPanel({
                       ) : null}
                       <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
                         <span>{ot("observe.topChanges.delta", "Numeric change")}:</span>
-                        <span className="rounded-[6px] border px-1 tabular-nums">{changeDelta(c, ndi)}</span>
+                        <span
+                          className="rounded-[6px] border px-1 tabular-nums"
+                          title={
+                            changeDelta(c, ndi) === "—"
+                              ? ot(
+                                  "observe.topChanges.deltaNone",
+                                  "No numeric reading for this change kind (e.g. narrative shifts are expressed as frame share) — shown honestly instead of a fabricated number.",
+                                )
+                              : undefined
+                          }
+                        >
+                          {changeDelta(c, ndi)}
+                        </span>
                         <span className="opacity-70">
                           {c.strength_word} · {c.urgency}
                         </span>

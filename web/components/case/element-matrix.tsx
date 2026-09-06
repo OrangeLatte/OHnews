@@ -3,8 +3,10 @@
 /**
  * MAP 模式：质性编码矩阵（NVivo/Atlas.ti 式）。
  * 行 = 案内出现过的元素，列 = 案内文档；单元格 = 主导值摘要 + 元素色点 + 计数，
- * hover tooltip 全值，点击展开底部详情面板（值/引用/复核状态）。
- * 行/列 header 点击排序；上方每元素文档覆盖率统计条；空格灰斜纹。
+ * hover tooltip 全值，点击展开底部详情面板（值/来源等级/语言/证据数/锚点深链/
+ * 复核状态）。行/列 header 点击排序；上方每元素文档覆盖率统计条；空格灰斜纹。
+ * 四视图 chips（全部/共识/分歧/缺失）：分类真源 = 最近一次 compare run 的
+ * output；无 compare 结果时后三视图诚实禁用（不造分类）。
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -23,22 +25,44 @@ import {
   type DocRow,
   docLabel,
 } from "@/components/case/case-shared";
+import { elementEdge } from "@/lib/element-tokens";
 
 type CellSelection = { element: string; rid: string } | null;
 type ElemSort = "default" | "az";
 type DocSort = "default" | "az";
+type MatrixView = "all" | "consensus" | "conflict" | "missing";
+
+/** MAP 四视图分类真源：compare run output 的四分结果（结构兼容 WorkflowOut 子集）。 */
+export type MatrixCompareOut = {
+  agreement?: string[];
+  conflicts?: Record<string, Record<string, string>>;
+  missing?: string[];
+} | null;
 
 const dominant = (rows: ExtractionRow[]): ExtractionRow | null =>
   rows.length === 0 ? null : rows.reduce((a, b) => (b.confidence > a.confidence ? b : a));
 
 type Props = {
+  caseId: string;
   docs: DocRow[];
   busy: boolean;
   dissecting: string | null;
   onDissect: (rid: string) => void;
+  /** source_id → tier（来源等级），workspace 从 /api/sources 建 map 传入 */
+  sourceTier: Record<string, string>;
+  /** 最近一次 compare run 的四分结果；null = 无 compare 结果（后三视图禁用） */
+  compareOut: MatrixCompareOut;
 };
 
-export default function ElementMatrix({ docs, busy, dissecting, onDissect }: Props) {
+export default function ElementMatrix({
+  caseId,
+  docs,
+  busy,
+  dissecting,
+  onDissect,
+  sourceTier,
+  compareOut,
+}: Props) {
   const t = useT();
   const [exMap, setExMap] = useState<Record<string, ExtractionRow[]>>({});
   const [loading, setLoading] = useState(true);
@@ -46,6 +70,7 @@ export default function ElementMatrix({ docs, busy, dissecting, onDissect }: Pro
   const [elemSort, setElemSort] = useState<ElemSort>("default");
   const [docSort, setDocSort] = useState<DocSort>("default");
   const [reloadKey, setReloadKey] = useState(0);
+  const [view, setView] = useState<MatrixView>("all");
 
   // 全文档并行拉取 extractions（Promise.all）；dissect 完成后 bump reloadKey 重取
   useEffect(() => {
@@ -105,6 +130,28 @@ export default function ElementMatrix({ docs, busy, dissecting, onDissect }: Pro
       : list.sort((a, b) => elementOrderIndex(a) - elementOrderIndex(b));
   }, [byCell, elemSort]);
 
+  // 四视图分类集合（真源 = compare run output；null → 后三视图禁用）
+  const viewSets = useMemo(
+    () => ({
+      agree: new Set(compareOut?.agreement ?? []),
+      conflict: new Set(Object.keys(compareOut?.conflicts ?? {})),
+      missing: new Set(compareOut?.missing ?? []),
+      hasResult: compareOut !== null,
+    }),
+    [compareOut],
+  );
+
+  const shownRows = useMemo(() => {
+    if (view === "all") return rows;
+    const set = view === "consensus" ? viewSets.agree : view === "conflict" ? viewSets.conflict : viewSets.missing;
+    return rows.filter((r) => set.has(r));
+  }, [rows, view, viewSets]);
+
+  const selectView = (v: MatrixView) => {
+    setView(v);
+    setSelected(null);
+  };
+
   const coverage = useMemo(
     () =>
       rows.map((element) => ({
@@ -123,6 +170,10 @@ export default function ElementMatrix({ docs, busy, dissecting, onDissect }: Pro
           rows: cellRows(selected.element, selected.rid),
         }
       : null;
+  const selTier = selectedDetail?.doc
+    ? (sourceTier[selectedDetail.doc.source_id] ?? "—")
+    : "—";
+  const selLanguage = selectedDetail?.doc?.language || "—";
 
   if (docs.length === 0) {
     return (
@@ -167,6 +218,33 @@ export default function ElementMatrix({ docs, busy, dissecting, onDissect }: Pro
           ) : null}
         </div>
       </section>
+
+      {/* 四视图切换 chips：分类真源 = 最近一次 compare run output */}
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t("case.modeTitle.map")}>
+        {(
+          [
+            ["all", "case.matrixView.all"],
+            ["consensus", "case.matrixView.consensus"],
+            ["conflict", "case.matrixView.conflict"],
+            ["missing", "case.matrixView.missing"],
+          ] as const
+        ).map(([v, key]) => {
+          const disabled = v !== "all" && !viewSets.hasResult;
+          return (
+            <button
+              key={v}
+              type="button"
+              disabled={disabled}
+              onClick={() => selectView(v)}
+              aria-pressed={view === v}
+              title={disabled ? t("case.matrixViewNeedCompare") : undefined}
+              className={`rounded-md border px-2 py-1 text-xs ${view === v ? "border-sky-500 bg-sky-500/5 font-medium" : ""} ${disabled ? "cursor-not-allowed text-muted-foreground/50" : "hover:bg-muted"}`}
+            >
+              {t(key)}
+            </button>
+          );
+        })}
+      </div>
 
       {/* 元素 × 文档矩阵 */}
       <section className="overflow-x-auto rounded-xl border" aria-label={t("case.modeTitle.map")}>
@@ -216,7 +294,7 @@ export default function ElementMatrix({ docs, busy, dissecting, onDissect }: Pro
               </tr>
             </thead>
             <tbody>
-              {rows.map((element) => (
+              {shownRows.map((element) => (
                 <tr key={element} className="border-b last:border-b-0">
                   <th className="sticky left-0 z-10 bg-background p-2 text-left font-medium">
                     <ElementChip elementKey={element} />
@@ -252,7 +330,10 @@ export default function ElementMatrix({ docs, busy, dissecting, onDissect }: Pro
                             <span
                               aria-hidden
                               className="h-2 w-2 shrink-0 rounded-sm"
-                              style={{ backgroundColor: elementColor(element) }}
+                              style={{
+                                backgroundColor: elementColor(element),
+                                border: `1px solid ${elementEdge(element)}`,
+                              }}
                             />
                             <span className="min-w-0 flex-1 truncate">{dom.normalized_value}</span>
                             {list.length > 1 ? <span className="shrink-0 opacity-60">×{list.length}</span> : null}
@@ -263,10 +344,10 @@ export default function ElementMatrix({ docs, busy, dissecting, onDissect }: Pro
                   })}
                 </tr>
               ))}
-              {rows.length === 0 ? (
+              {shownRows.length === 0 ? (
                 <tr>
                   <td colSpan={cols.length + 1} className="p-6 text-center text-muted-foreground">
-                    {t("case.notDissected")}
+                    {view === "all" ? t("case.notDissected") : t("case.noMatch")}
                   </td>
                 </tr>
               ) : null}
@@ -286,6 +367,12 @@ export default function ElementMatrix({ docs, busy, dissecting, onDissect }: Pro
             <span className="text-xs text-muted-foreground">
               @ {selectedDetail.doc?.source_id ?? selected.rid}
             </span>
+            <span className="text-xs text-muted-foreground">
+              {t("case.matrixSourceTier")}: <span className="font-mono">{selTier}</span>
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {t("case.matrixLanguage")}: <span className="font-mono">{selLanguage}</span>
+            </span>
             <button
               type="button"
               onClick={() => setSelected(null)}
@@ -298,36 +385,59 @@ export default function ElementMatrix({ docs, busy, dissecting, onDissect }: Pro
             <p className="text-xs text-muted-foreground">{t("case.cellMissing")}</p>
           ) : (
             <ul className="space-y-2">
-              {selectedDetail.rows.map((e) => (
-                <li key={e.extraction_id} className="rounded-lg border p-2 text-xs">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="min-w-0 flex-1">{e.normalized_value}</span>
-                    <span className="text-muted-foreground">
-                      {t("case.confidence")} {(e.confidence * 100).toFixed(0)}%
-                    </span>
-                    <span className={`rounded px-1 py-0.5 ${reviewPillClass(e.human_status)}`}>
-                      {e.human_status}
-                    </span>
-                  </div>
-                  {e.uncertainty_reason ? (
-                    <p className="mt-1 italic text-muted-foreground">
-                      {t("case.uncertainty")}: {e.uncertainty_reason}
-                    </p>
-                  ) : null}
-                  {(e.spans ?? []).length > 0 ? (
-                    <ul className="mt-1 space-y-0.5">
-                      {(e.spans ?? []).map((s) => (
-                        <li
-                          key={`${e.extraction_id}-${s.span_id}`}
-                          className="border-l-2 border-muted-foreground/40 pl-2 text-muted-foreground"
+              {selectedDetail.rows.map((e) => {
+                const span0 = e.spans?.[0] ?? null;
+                const anchorHref = span0
+                  ? `/cases/${encodeURIComponent(caseId)}?mode=read&doc=${encodeURIComponent(e.document_revision_id)}`
+                  : null;
+                return (
+                  <li key={e.extraction_id} className="rounded-lg border p-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 flex-1">{e.normalized_value}</span>
+                      <span className="text-muted-foreground">
+                        {t("case.confidence")} {(e.confidence * 100).toFixed(0)}%
+                      </span>
+                      <span className={`rounded px-1 py-0.5 ${reviewPillClass(e.human_status)}`}>
+                        {e.human_status}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                      <span>
+                        {t("case.matrixEvidenceCount")}:{" "}
+                        <span className="font-mono">{(e.spans ?? []).length}</span>
+                      </span>
+                      {anchorHref ? (
+                        <a
+                          href={anchorHref}
+                          title={t("case.matrixAnchorLink")}
+                          className="font-mono underline decoration-dotted underline-offset-2 hover:text-foreground"
                         >
-                          “{s.quote}”
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </li>
-              ))}
+                          {t("case.matrixAnchorLink")} ↗ {span0?.span_id}
+                        </a>
+                      ) : (
+                        <span className="rounded bg-muted px-1 py-0.5 italic">{t("case.inferredBadge")}</span>
+                      )}
+                    </div>
+                    {e.uncertainty_reason ? (
+                      <p className="mt-1 italic text-muted-foreground">
+                        {t("case.uncertainty")}: {e.uncertainty_reason}
+                      </p>
+                    ) : null}
+                    {(e.spans ?? []).length > 0 ? (
+                      <ul className="mt-1 space-y-0.5">
+                        {(e.spans ?? []).map((s) => (
+                          <li
+                            key={`${e.extraction_id}-${s.span_id}`}
+                            className="border-l-2 border-muted-foreground/40 pl-2 text-muted-foreground"
+                          >
+                            “{s.quote}”
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

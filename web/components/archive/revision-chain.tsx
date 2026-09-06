@@ -44,6 +44,18 @@ function asStringArray(v: unknown): string[] {
   return Array.isArray(v) ? v.map((x) => String(x)) : [];
 }
 
+/** R6 T4 版本 inputs 摘要（research_report content.inputs）：仅取数值字段，缺失诚实显示 —。 */
+function revInputsOf(content: unknown): { docs: string; exts: string; claims: string } | null {
+  if (content == null || typeof content !== "object" || Array.isArray(content)) return null;
+  const inputs = (content as { inputs?: unknown }).inputs;
+  if (inputs == null || typeof inputs !== "object") return null;
+  const n = (k: string): string => {
+    const v = (inputs as Record<string, unknown>)[k];
+    return typeof v === "number" && Number.isFinite(v) ? String(v) : "—";
+  };
+  return { docs: n("n_documents"), exts: n("n_extractions"), claims: n("n_claims") };
+}
+
 function titleOf(v: unknown): string {
   if (v == null || typeof v !== "object") return "";
   return String((v as { title?: unknown }).title ?? "");
@@ -176,6 +188,7 @@ export function RevisionChain({
     <ul className="relative space-y-2 border-l border-dashed border-border pl-4">
       {revisions.map((r, i) => {
         const hasPayload = r.content != null && (!(typeof r.content === "object") || Object.keys(r.content as object).length > 0);
+        const revInputs = revInputsOf(r.content);
         const open = openRev === r.revision_id;
         const prev = i > 0 ? revisions[i - 1] : null;
         const diffKey = prev ? `${prev.revision_id}->${r.revision_id}` : "";
@@ -195,6 +208,15 @@ export function RevisionChain({
               <span className="font-mono text-xs text-muted-foreground">{r.revision_id}</span>
               <span className="text-xs text-muted-foreground">· {relTime(r.created_at, lang)}</span>
               {r.legacy && <span className="text-xs text-muted-foreground">· legacy</span>}
+              {revInputs && (
+                <span
+                  className="font-mono text-[10px] text-muted-foreground"
+                  title={t("archive.inputsSummary")}
+                >
+                  {t("case.inDocs")} {revInputs.docs} · {t("case.inExtractions")} {revInputs.exts} ·{" "}
+                  {t("case.inClaims")} {revInputs.claims}
+                </span>
+              )}
               {hasPayload && (
                 <button
                   type="button"

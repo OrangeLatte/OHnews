@@ -9,6 +9,7 @@ import Link from "next/link";
 import { ELEMENT_COLORS } from "@/components/case/annotated-text";
 import { HelpIcon } from "@/components/help/help-icon";
 import { ELEMENT_HELP_KEYS } from "@/lib/help/registry";
+import { elementBg, elementEdge, elementShort } from "@/lib/element-tokens";
 import { friendlyError } from "@/lib/error-friendly";
 import { useT } from "@/lib/i18n/use-t";
 
@@ -48,7 +49,7 @@ export function elementOrderIndex(key: string): number {
 }
 
 export function elementColor(key: string): string {
-  return ELEMENT_COLORS[key] ?? "#e2e8f0";
+  return elementBg(key);
 }
 
 /** 元素 snake_case → help registry camelCase 键（未注册返回 null）。 */
@@ -103,8 +104,12 @@ export function ElementDot({ elementKey }: { elementKey: string }) {
   return (
     <span
       aria-hidden
+      title={elementKey}
       className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
-      style={{ backgroundColor: elementColor(elementKey) }}
+      style={{
+        backgroundColor: elementBg(elementKey),
+        border: `1px solid ${elementEdge(elementKey)}`,
+      }}
     />
   );
 }
@@ -112,9 +117,17 @@ export function ElementDot({ elementKey }: { elementKey: string }) {
 export function ElementChip({ elementKey, count }: { elementKey: string; count?: number }) {
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-800 dark:text-zinc-900"
-      style={{ backgroundColor: elementColor(elementKey) }}
+      className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold"
+      style={{
+        backgroundColor: elementBg(elementKey),
+        border: `1px solid ${elementEdge(elementKey)}`,
+        color: elementEdge(elementKey),
+      }}
+      title={elementKey}
     >
+      <span aria-hidden className="font-mono text-[10px]">
+        {elementShort(elementKey)}
+      </span>
       {elementKey}
       {count !== undefined && count > 1 ? <span className="opacity-70">×{count}</span> : null}
     </span>

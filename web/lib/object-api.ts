@@ -172,12 +172,29 @@ export type WorkflowOut = {
   duplicate?: boolean;
   extraction_ids?: string[];
   questions?: string[];
+  verdict?: string;
+  rationale?: string;
+  search_question?: string;
+  search_scope?: string;
+  sources_checked?: string[];
+  supporting?: unknown[];
+  not_found?: string;
   counter_evidence?: { span_id: string; quote: string }[];
   conflicts?: Record<string, Record<string, string>>;
   agreement?: string[];
   missing?: string[];
   blocked?: boolean;
-  eligibility?: { probability?: string; comparison_mode?: string; avg_overlap?: number };
+  eligibility?: {
+    entity_overlap?: number | null;
+    topic_similarity?: number | null;
+    time_distance_hours?: number | null;
+    same_event_score?: number | null;
+    same_event_probability?: string;
+    comparison_mode?: string;
+    /** 旧字段保留兼容（历史 output 可能携带） */
+    probability?: string;
+    avg_overlap?: number;
+  };
   gaps?: string[];
   summary?: string;
   n_sections?: number;
@@ -377,6 +394,12 @@ export const objectApi = {
     launch(post<LaunchOut>(`/cases/${encodeURIComponent(caseId)}/challenge`, { claim_id })),
   createClaim: (caseId: string, body: { statement: string; kind: string; span_ids?: string[] }) =>
     post<unknown>(`/cases/${encodeURIComponent(caseId)}/claims`, body),
+  confirmClaim: (claimId: string) =>
+    post<{ claim_id: string; status: string }>(`/claims/${encodeURIComponent(claimId)}/confirm`, {}),
+  caseBeliefs: (caseId: string) =>
+    get<BeliefList>(`/cases/${encodeURIComponent(caseId)}/beliefs`),
+  createBelief: (caseId: string, body: BeliefBody) =>
+    post<BeliefRow>(`/cases/${encodeURIComponent(caseId)}/beliefs`, body),
   archive: (klass?: string) =>
     get<ArchiveRow[]>(`/artifacts${klass ? `?klass=${encodeURIComponent(klass)}` : ""}`),
   artifactRevisions: (artifactId: string) =>
@@ -503,4 +526,30 @@ export type MonitorUpdateRow = {
   /** API 层派生键（旧后端可能缺省 → 视为 unreviewed） */
   review_status?: "unreviewed" | "accepted" | "ignored";
   decision_case_id?: string;
+};
+
+/** R10 判断变化线：Belief Snapshot（beliefs.sqlite，服务端锚定时间并派生 change_type）。 */
+export type BeliefStance = "maintain" | "adjust" | "reverse" | "uncertain";
+
+export type BeliefRow = {
+  snapshot_id: string;
+  change_id: string;
+  subject_id: string;
+  subject_label: string;
+  stance: BeliefStance;
+  confidence: number;
+  rationale: string;
+  change_type: "new" | "revised";
+  believed_at: string;
+};
+
+export type BeliefList = { n: number; beliefs: BeliefRow[] };
+
+export type BeliefBody = {
+  change_id: string;
+  subject_id: string;
+  subject_label?: string;
+  stance: BeliefStance;
+  confidence: number;
+  rationale?: string;
 };

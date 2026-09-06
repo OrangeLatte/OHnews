@@ -3,43 +3,100 @@
 import { useMemo } from "react";
 import { useT } from "@/lib/i18n/use-t";
 
-// 18 元素闭集色板（snake_case，与 DB element_key 一致）；柔和底色保证黑字可读。
-export const ELEMENT_COLORS: Record<string, string> = {
-  actor: "#fde68a",
-  target: "#fecaca",
-  hard_fact: "#bbf7d0",
-  action: "#bfdbfe",
-  causal_link: "#ddd6fe",
-  timeline: "#fbcfe8",
-  condition: "#c7d2fe",
-  magnitude: "#fed7aa",
-  location: "#a7f3d0",
-  source_attribution: "#e9d5ff",
-  perspective: "#fca5a5",
-  uncertainty: "#a5f3fc",
-  intent: "#f9a8d4",
-  framing: "#d9f99d",
-  tone: "#fde4cf",
-  implicit_bias: "#f5d0fe",
-  missing_context: "#e2e8f0",
-  rhetorical_device: "#fef08a",
-};
+// 18 元素闭集色板（snake_case，与 DB element_key 一一对应；顺序即拆解展示序）。
+// 底色/图例/元素卡（case-shared elementColor）共用本表：颜色一致性由同一数据源保证。
+import {
+  ELEMENT_BG,
+  SHAPE_GLYPH,
+  elementEdge,
+  elementShape,
+  elementShort,
+} from "@/lib/element-tokens";
+
+/** 兼容导出：底色真源在 lib/element-tokens（bg/edge/short/shape 三层辨识）。 */
+export const ELEMENT_COLORS: Record<string, string> = ELEMENT_BG;
+
+/** 事实类元素：精确锚定（下划线层），重叠时优先于论证/结构类。 */
+export const FACT_CLASS_KEYS: ReadonlySet<string> = new Set([
+  "hard_fact",
+  "quant_data",
+  "data_scope",
+  "timeline",
+  "actor",
+  "target",
+  "action",
+]);
+
+/** 论证/结构类元素：整段论证锚定（左侧竖线层），重叠时让位于事实类。 */
+export const STRUCTURE_CLASS_KEYS: ReadonlySet<string> = new Set([
+  "argument_structure",
+  "causal_link",
+  "narrative_frame",
+]);
 
 export type AnnoSpan = {
+  /** evidence_spans.span_id（Show in text 按 data-span-id 定位；关键词伪 span 缺省）。 */
+  span_id?: string;
   char_start: number;
   char_end: number;
   element_key: string;
+  /** 所属 extraction_id（用户选中元素的重叠优先判定依据）。 */
+  extraction_id?: string;
 };
 
 type Props = {
   text: string;
   spans: AnnoSpan[];
   onSpanClick?: (elementKey: string) => void;
+  /** 闪炼定位的 span_id（Show in text 精确锚定；null 关闭）。 */
+  highlightSpanId?: string | null;
+  /** 用户当前选中的 extraction_id（重叠归属规则 a：选中元素优先）。 */
+  activeExtractionId?: string | null;
 };
 
 type Segment = { text: string; span: AnnoSpan | null };
 
-function buildSegments(text: string, spans: AnnoSpan[]): Segment[] {
+function classRank(elementKey: string): number {
+  if (FACT_CLASS_KEYS.has(elementKey)) return 0;
+  if (STRUCTURE_CLASS_KEYS.has(elementKey)) return 2;
+  return 1;
+}
+
+/**
+ * 重叠归属确定性规则（纯函数，与渲染解耦）。
+ * 同一字符区间被多个 span 覆盖时，按以下优先级唯一归属（元组逐位比较，全序确定）：
+ *   a) 用户选中元素（activeExtractionId）的 span 优先；
+ *   b) 事实类（FACT_CLASS_KEYS，精确事实）优先于其余元素，其余元素优先于
+ *      论证/结构类（STRUCTURE_CLASS_KEYS，整段论证）；
+ *   c) 跨度更短者优先（锚定更精确）；
+ *   d) 同长按 element_key 字母序，再按 span_id 字母序（同元素重复 span 兜底）。
+ */
+function compareSpans(
+  a: AnnoSpan,
+  b: AnnoSpan,
+  activeExtractionId: string | null | undefined,
+): number {
+  const aActive = a.extraction_id != null && a.extraction_id === activeExtractionId ? 0 : 1;
+  const bActive = b.extraction_id != null && b.extraction_id === activeExtractionId ? 0 : 1;
+  if (aActive !== bActive) return aActive - bActive;
+  const aCls = classRank(a.element_key);
+  const bCls = classRank(b.element_key);
+  if (aCls !== bCls) return aCls - bCls;
+  const aLen = a.char_end - a.char_start;
+  const bLen = b.char_end - b.char_start;
+  if (aLen !== bLen) return aLen - bLen;
+  if (a.element_key !== b.element_key) return a.element_key < b.element_key ? -1 : 1;
+  const aSid = a.span_id ?? "";
+  const bSid = b.span_id ?? "";
+  if (aSid !== bSid) return aSid < bSid ? -1 : 1;
+  return 0;
+}
+
+function buildSegments(
+  text: string,
+  spans: AnnoSpan[],
+  activeExtractionId: string | null | undefined,
+): Segment[] {
   const valid = spans.filter(
     (s) => Number.isFinite(s.char_start) && s.char_end > s.char_start && s.char_start >= 0 && s.char_end <= text.length,
   );
@@ -53,15 +110,11 @@ function buildSegments(text: string, spans: AnnoSpan[]): Segment[] {
   for (let i = 0; i < points.length - 1; i += 1) {
     const a = points[i];
     const b = points[i + 1];
-    // 重叠归属：取覆盖该段的 span 中跨度最长者（而非数组序先到先得），
-    // 保证多个元素重叠时各段归给最具代表性的元素。
+    // 重叠归属：覆盖该段的候选 span 中取 compareSpans 全序最小者（见其注释）。
     let cover: AnnoSpan | null = null;
-    let best = -1;
     for (const s of valid) {
       if (s.char_start <= a && b <= s.char_end) {
-        const len = s.char_end - s.char_start;
-        if (len > best) {
-          best = len;
+        if (!cover || compareSpans(s, cover, activeExtractionId) < 0) {
           cover = s;
         }
       }
@@ -71,9 +124,18 @@ function buildSegments(text: string, spans: AnnoSpan[]): Segment[] {
   return segments.filter((seg) => seg.text.length > 0);
 }
 
-export function AnnotatedText({ text, spans, onSpanClick }: Props) {
+export function AnnotatedText({
+  text,
+  spans,
+  onSpanClick,
+  highlightSpanId,
+  activeExtractionId,
+}: Props) {
   const t = useT();
-  const segments = useMemo(() => buildSegments(text, spans), [text, spans]);
+  const segments = useMemo(
+    () => buildSegments(text, spans, activeExtractionId),
+    [text, spans, activeExtractionId],
+  );
   if (!text) return null;
   const annotated = spans.length > 0;
   return (
@@ -93,36 +155,66 @@ export function AnnotatedText({ text, spans, onSpanClick }: Props) {
           );
         }
         const color = ELEMENT_COLORS[seg.span.element_key] ?? "#fef9c3";
+        const edge = elementEdge(seg.span.element_key);
+        const shape = elementShape(seg.span.element_key);
+        const flashed = highlightSpanId != null && seg.span.span_id === highlightSpanId;
         return (
           <mark
             key={i}
+            // tooltip 与元素卡 element_key 同一数据源（AnnoSpan.element_key），保证完全一致
             title={seg.span.element_key}
             onClick={() => onSpanClick?.(seg.span!.element_key)}
-            style={{ backgroundColor: color, cursor: onSpanClick ? "pointer" : "default" }}
-            className="rounded px-0.5 transition-opacity hover:opacity-80"
+            data-span-id={seg.span.span_id}
             data-element={seg.span.element_key}
+            style={{
+              backgroundColor: color,
+              cursor: onSpanClick ? "pointer" : "default",
+              border: `1px solid ${edge}`,
+              ...(shape === "underline"
+                ? {
+                    textDecoration: "underline",
+                    textDecorationThickness: "2px",
+                    textUnderlineOffset: "2px",
+                  }
+                : {}),
+              ...(shape === "leftbar" ? { borderLeft: `3px solid ${edge}`, paddingLeft: 2 } : {}),
+            }}
+            className={`rounded px-0.5 transition-opacity hover:opacity-80 ${
+              flashed ? "ring-2 ring-sky-500 ring-offset-1" : ""
+            }`}
           >
             {seg.text}
           </mark>
         );
       })}
       {annotated && (
-        <p className="mt-3 flex flex-wrap gap-1.5 border-t pt-2 text-xs text-muted-foreground">
-          {[...new Set(spans.map((s) => s.element_key))].map((k) => (
-            <span key={k} className="inline-flex items-center gap-1">
-              <span
-                aria-hidden
-                className="inline-block h-2.5 w-2.5 rounded-sm"
-                style={{ backgroundColor: ELEMENT_COLORS[k] ?? "#fef9c3" }}
-              />
-              {k}
-            </span>
-          ))}
-          <span className="inline-flex items-center gap-1">
+        <div className="mt-3 space-y-1 border-t pt-2 text-xs text-muted-foreground">
+          <p className="flex flex-wrap gap-1.5">
+            {[...new Set(spans.map((s) => s.element_key))].map((k) => (
+              <span key={k} className="inline-flex items-center gap-1" title={k}>
+                <span
+                  aria-hidden
+                  className="inline-block h-2.5 w-2.5 rounded-sm"
+                  style={{
+                    backgroundColor: ELEMENT_COLORS[k] ?? "#fef9c3",
+                    border: `1px solid ${elementEdge(k)}`,
+                  }}
+                />
+                <span aria-hidden className="font-mono text-[10px]">
+                  {SHAPE_GLYPH[elementShape(k)]}
+                </span>
+                <span className="font-mono text-[10px] font-semibold">{elementShort(k)}</span>
+                {k}
+              </span>
+            ))}
+          </p>
+          <p>{t("case.spanLegendDirect")}</p>
+          <p>{t("case.spanLegendInferred")}</p>
+          <p className="inline-flex items-center gap-1">
             <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-sm bg-muted/60" />
             {t("case.unannotatedLegend")}
-          </span>
-        </p>
+          </p>
+        </div>
       )}
     </div>
   );

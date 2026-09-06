@@ -25,6 +25,7 @@ import {
   type SourceOption,
   docLabel,
 } from "@/components/case/case-shared";
+import { elementEdge } from "@/lib/element-tokens";
 
 const MAX_KEYWORD_MARKS = 400;
 
@@ -85,7 +86,10 @@ export default function ReadMode({
   const [sortBy, setSortBy] = useState<SortKey>("element");
   const [keyword, setKeyword] = useState("");
   const [activeEl, setActiveEl] = useState<string | null>(null);
+  const [flashSpanId, setFlashSpanId] = useState<string | null>(null);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const textWrapRef = useRef<HTMLDivElement | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const activeRow = docs.find((d) => d.document_revision_id === activeDoc) ?? null;
   const activeExtractions = useMemo(
@@ -128,7 +132,15 @@ export default function ReadMode({
     const spans: AnnoSpan[] = [];
     for (const e of rows) {
       for (const s of e.spans ?? []) {
-        spans.push({ char_start: s.char_start, char_end: s.char_end, element_key: e.element_key });
+        // span_id/extraction_id 透传：Show in text 按 data-span-id 精确定位，
+        // 重叠归属按选中元素优先（与元素卡同一数据源，杜绝错色错位）。
+        spans.push({
+          span_id: s.span_id,
+          char_start: s.char_start,
+          char_end: s.char_end,
+          element_key: e.element_key,
+          extraction_id: e.extraction_id,
+        });
       }
     }
     return keyword ? [...spans, ...keywordSpans(bodyText, keyword)] : spans;
@@ -152,11 +164,28 @@ export default function ReadMode({
     setActiveDoc(rid);
     setElementFilter(null);
     setActiveEl(null);
+    setFlashSpanId(null);
   };
 
   const focusExtraction = useCallback((extractionId: string) => {
     setActiveEl(extractionId);
     cardRefs.current[extractionId]?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
+
+  /** Show in text：按 span_id 定位正文 data-span-id mark（非序号猜测），
+   * 滚动 + 闪炼正确 mark；无 span 的元素不给按钮（inferred 不伪装高亮）。 */
+  const showInText = useCallback((row: ExtractionRow) => {
+    const first = (row.spans ?? []).find((s) => s.char_end > s.char_start && s.char_start >= 0);
+    if (!first) return;
+    setActiveEl(row.extraction_id);
+    setFlashSpanId(first.span_id);
+    const host = textWrapRef.current;
+    if (host) {
+      const mark = host.querySelector<HTMLElement>(`[data-span-id="${CSS.escape(first.span_id)}"]`);
+      mark?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashSpanId(null), 2000);
   }, []);
 
   const onSpanClick = (elementKey: string) => {
@@ -327,8 +356,14 @@ export default function ReadMode({
                     </div>
                   </div>
                 ) : bodyText ? (
-                  <div className="max-h-[28rem] overflow-y-auto text-[13px] leading-7">
-                    <AnnotatedText text={bodyText} spans={textSpans} onSpanClick={onSpanClick} />
+                  <div ref={textWrapRef} className="max-h-[28rem] overflow-y-auto text-[13px] leading-7">
+                    <AnnotatedText
+                      text={bodyText}
+                      spans={textSpans}
+                      onSpanClick={onSpanClick}
+                      highlightSpanId={flashSpanId}
+                      activeExtractionId={activeEl}
+                    />
                   </div>
                 ) : (
                   <Skeleton className="h-32 w-full" />
@@ -349,7 +384,10 @@ export default function ReadMode({
                         <span
                           aria-hidden
                           className="inline-block h-2 w-2 rounded-sm"
-                          style={{ backgroundColor: elementColor(k) }}
+                          style={{
+                            backgroundColor: elementColor(k),
+                            border: `1px solid ${elementEdge(k)}`,
+                          }}
                         />
                         {k}
                         <span className="opacity-60">{n}</span>
@@ -414,6 +452,15 @@ export default function ReadMode({
                       >
                         <div className="flex items-start gap-2">
                           <ElementChip elementKey={e.element_key} />
+                          {(!e.spans || e.spans.length === 0) &&
+                          e.uncertainty_reason.includes("span_anchor_failed") ? (
+                            <span
+                              className="shrink-0 rounded border border-dashed px-1 py-0.5 text-[10px] text-muted-foreground"
+                              title={t("case.spanLegendInferred")}
+                            >
+                              {t("case.inferredBadge")}
+                            </span>
+                          ) : null}
                           <span className="min-w-0 flex-1">
                             {e.normalized_value}
                             <span className="ml-2 whitespace-nowrap text-muted-foreground">
@@ -422,7 +469,7 @@ export default function ReadMode({
                             {e.spans && e.spans.length > 0 ? (
                               <button
                                 type="button"
-                                onClick={() => focusExtraction(e.extraction_id)}
+                                onClick={() => showInText(e)}
                                 className="ml-2 underline decoration-dotted"
                               >
                                 {t("case.showInText")}

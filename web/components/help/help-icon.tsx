@@ -2,7 +2,7 @@
 
 /**
  * HelpIcon（Clean-slate Phase 1）：全站统一圆圈"？"解释图标。
- * 交互：桌面 hover/focus 打开；移动端 tap 打开/外点关闭；Esc 关闭。
+ * 交互：桌面 hover/focus 打开；点击固定（pinned，鼠标移开仍显示）；Esc/外点/再点关闭。
  * 可访问性：≥32px 触达区、aria-label、aria-expanded、aria-describedby、键盘可达。
  * 语言跟随 UI Locale（经 useT）；解释内容来自 lib/help/registry。
  */
@@ -65,6 +65,18 @@ function HelpPopover({
 export function HelpIcon({ helpKey }: { helpKey: string }) {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const pinnedRef = useRef(false);
+
+  const setPin = useCallback((v: boolean) => {
+    pinnedRef.current = v;
+    setPinned(v);
+  }, []);
+  const closeAll = useCallback(() => {
+    pinnedRef.current = false;
+    setPinned(false);
+    setOpen(false);
+  }, []);
   const [def, setDef] = useState<HelpDefinition | null>(null);
   const descId = useId();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -76,16 +88,19 @@ export function HelpIcon({ helpKey }: { helpKey: string }) {
   }, [helpKey]);
 
   const hide = useCallback(() => {
+    if (pinnedRef.current) return;
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setOpen(false), 120);
   }, []);
 
   const toggle = useCallback(() => {
     setOpen((v) => {
-      if (!v) setDef(helpDefinition(helpKey) ?? null);
-      return !v;
+      const next = !v;
+      setPin(next);
+      if (next) setDef(helpDefinition(helpKey) ?? null);
+      return next;
     });
-  }, [helpKey]);
+  }, [helpKey, setPin]);
 
   return (
     <span className="relative inline-flex align-middle">
@@ -103,7 +118,7 @@ export function HelpIcon({ helpKey }: { helpKey: string }) {
       >
         ?
       </button>
-      {open && def && <HelpPopover def={def} descId={descId} onClose={() => setOpen(false)} />}
+      {open && def && <HelpPopover def={def} descId={descId} onClose={closeAll} />}
     </span>
   );
 }

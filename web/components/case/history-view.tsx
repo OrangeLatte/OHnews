@@ -7,16 +7,17 @@
  * 下方保留：Claims 卡（challenge + 追问/反证回显）、claim 表单、monitor_decisions 虚线卡。
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { HelpIcon } from "@/components/help/help-icon";
 import { Skeleton, toast } from "@/components/ui/toast";
-import { objectApi, type CaseDetail, type WorkflowOut } from "@/lib/object-api";
+import { objectApi, type BeliefRow, type BeliefStance, type CaseDetail, type WorkflowOut } from "@/lib/object-api";
 import { useT } from "@/lib/i18n/use-t";
 import { runKindLabel, runStatusLabel } from "@/lib/i18n/labels";
 import {
   FriendlyErrorBox,
   ModeHeader,
   StatusPill,
+  type DocRow,
   runMeta,
   secondsSince,
 } from "@/components/case/case-shared";
@@ -49,6 +50,10 @@ type Props = {
   busy: boolean;
   setBusy: (v: boolean) => void;
   refreshDetail: () => void;
+  /** R6 ?claim= 深链：Archive 证据 chip 回跳时高亮并滚动定位该主张卡（读一次，URL 保留）。 */
+  highlightClaim?: string;
+  /** R10 事件时间线：案内文档（published_at 排序，缺日期诚实标注）。 */
+  docs?: DocRow[];
 };
 
 const matchFilter = (status: string, f: FilterKey): boolean => {
@@ -57,7 +62,15 @@ const matchFilter = (status: string, f: FilterKey): boolean => {
   return status === f;
 };
 
-export default function HistoryView({ caseId, detail, busy, setBusy, refreshDetail }: Props) {
+export default function HistoryView({
+  caseId,
+  detail,
+  busy,
+  setBusy,
+  refreshDetail,
+  highlightClaim = "",
+  docs = [],
+}: Props) {
   const t = useT();
   const [filter, setFilter] = useState<FilterKey>("all");
   const [openIds, setOpenIds] = useState<Record<string, boolean>>({});
@@ -101,6 +114,20 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
     const label = t(`case.claimKind.${k}`);
     return label === `case.claimKind.${k}` ? k : label;
   };
+  const CLAIM_TONE: Record<string, string> = {
+    draft: "bg-muted text-muted-foreground",
+    unverified: "bg-blue-100 text-blue-800",
+    supported: "bg-emerald-100 text-emerald-800",
+    contradicted: "bg-red-100 text-red-800",
+    insufficient: "bg-amber-100 text-amber-800",
+    disputed: "bg-purple-100 text-purple-800",
+    user_confirmed: "bg-emerald-600 text-white",
+  };
+  const claimStatusLabel = (k: string): string => {
+    const label = t(`case.claimStatus.${k}`);
+    return label === `case.claimStatus.${k}` ? k : label;
+  };
+  const CONFIRMABLE = ["supported", "contradicted", "insufficient", "disputed"];
 
   const toggleRun = (r: RunRow) => {
     const next = !isOpen(r);
@@ -145,6 +172,18 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
       .finally(() => setBusy(false));
   };
 
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const confirmClaimFn = (claimId: string) => {
+    setConfirmingId(claimId);
+    objectApi
+      .confirmClaim(claimId)
+      .then(() => {
+        toast.success(t("case.claimConfirmed"));
+        refreshDetail();
+      })
+      .catch((e: unknown) => toast.error(String(e)))
+      .finally(() => setConfirmingId(null));
+  };
   const runChallenge = (claimId: string) => {
     setBusy(true);
     objectApi
@@ -195,6 +234,24 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
   const claims = detail?.claims ?? [];
   const decisions = detail?.monitor_decisions ?? [];
   const nothing = runs.length === 0 && claims.length === 0 && decisions.length === 0;
+
+  // ?claim= 深链（R6）：主张卡由 detail 异步加载，轮询等元素出现后 scrollIntoView（上限 2s）；
+  // 纯 DOM 操作无 setState，不走 set-state-in-effect 禁区。
+  useEffect(() => {
+    if (!highlightClaim) return;
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      const el = document.getElementById(`claim-${highlightClaim}`);
+      if (el) {
+        el.scrollIntoView({ block: "center" });
+        window.clearInterval(timer);
+      } else if (attempts >= 20) {
+        window.clearInterval(timer);
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [highlightClaim]);
 
   return (
     <div className="space-y-4">
@@ -335,17 +392,61 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
         ) : null}
       </section>
 
+      {/* R10 事件时间线：新闻事件真实发生顺序（published_at），缺日期诚实标注 */}
+      {docs.length > 0 ? (
+        <section className="space-y-1.5" aria-label={t("case.eventTimeline")}>
+          <p className="text-[13px] font-semibold">{t("case.eventTimeline")}</p>
+          {[...docs]
+            .sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""))
+            .map((d) => (
+              <p
+                key={d.document_revision_id}
+                className="rounded-xl border px-2.5 py-1.5 text-xs"
+              >
+                <span className="font-medium">
+                  {d.published_at
+                    ? d.published_at.slice(0, 19).replace("T", " ")
+                    : t("case.noEventTime")}
+                </span>{" "}
+                · {d.source_id}
+                {d.language ? ` · ${d.language}` : ""}
+                {d.title ? <span className="text-muted-foreground"> · {d.title}</span> : null}
+              </p>
+            ))}
+        </section>
+      ) : null}
+
       {/* Claims */}
       <section className="space-y-2" aria-label={t("case.claimsTitle")}>
         <p className="text-[13px] font-semibold">{t("case.claimsTitle")}</p>
         {claims.map((c: ClaimRow) => {
           const res = challengeRes[c.claim_id];
+          const highlighted = c.claim_id === highlightClaim;
           return (
-            <div key={c.claim_id} className="rounded-xl border p-2.5 text-xs">
+            <div
+              key={c.claim_id}
+              id={`claim-${c.claim_id}`}
+              className={`rounded-xl border p-2.5 text-xs ${highlighted ? "ring-2 ring-sky-500" : ""}`}
+            >
               <p className="flex min-h-[36px] flex-wrap items-center gap-2">
                 <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{claimKindLabel(c.kind)}</span>
                 <span className="min-w-0 flex-1">{c.statement}</span>
-                <span className="text-muted-foreground">({c.status})</span>
+                <span
+                  className={`rounded px-1.5 py-0.5 font-medium ${CLAIM_TONE[c.status] ?? "bg-muted text-muted-foreground"}`}
+                >
+                  {claimStatusLabel(c.status)}
+                </span>
+                <span className="min-w-0 flex-1">{c.statement}</span>
+                {CONFIRMABLE.includes(c.status) ? (
+                  <button
+                    type="button"
+                    disabled={busy || confirmingId === c.claim_id}
+                    onClick={() => confirmClaimFn(c.claim_id)}
+                    className="rounded-md bg-emerald-600 px-2 py-1 text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {t("case.confirmClaim")}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   disabled={busy}
@@ -385,6 +486,38 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
                   ) : null}
                   {(res.questions ?? []).length === 0 && (res.counter_evidence ?? []).length === 0 ? (
                     <p className="mt-1 text-muted-foreground">—</p>
+                  ) : null}
+                  {res.verdict ? (
+                    <p className="mt-1">
+                      <span className="font-medium">{t("case.verdict")}:</span>{" "}
+                      <span className={`rounded px-1.5 py-0.5 ${CLAIM_TONE[String(res.verdict)] ?? "bg-muted"}`}>
+                        {claimStatusLabel(String(res.verdict))}
+                      </span>
+                      {res.rationale ? <span className="ml-1 text-muted-foreground">{String(res.rationale)}</span> : null}
+                    </p>
+                  ) : null}
+                  {res.search_question ? (
+                    <p className="mt-1 text-muted-foreground">
+                      {t("case.searchQuestion")}: {String(res.search_question)}
+                    </p>
+                  ) : null}
+                  {res.search_scope ? (
+                    <p className="text-muted-foreground">
+                      {t("case.searchScope")}: {String(res.search_scope)}
+                    </p>
+                  ) : null}
+                  {(res.sources_checked ?? []).length > 0 ? (
+                    <p className="text-muted-foreground">
+                      {t("case.sourcesChecked")}: {res.sources_checked!.length}
+                    </p>
+                  ) : null}
+                  {(res.supporting ?? []).length > 0 ? (
+                    <p className="mt-1 text-emerald-700">
+                      {t("case.supportingE")}: {res.supporting!.length}
+                    </p>
+                  ) : null}
+                  {res.not_found ? (
+                    <p className="mt-1 text-amber-700">⚠ {String(res.not_found)}</p>
                   ) : null}
                 </div>
               ) : null}
@@ -439,7 +572,135 @@ export default function HistoryView({ caseId, detail, busy, setBusy, refreshDeta
         </section>
       ) : null}
 
+      {/* R10 判断变化线：Belief Snapshot（maintain/adjust/reverse/uncertain） */}
+      <BeliefSection caseId={caseId} />
+
       {nothing ? <p className="text-sm text-muted-foreground">{t("case.emptyHistory")}</p> : null}
     </div>
+  );
+}
+
+/** R10 判断变化线：用户认知快照列表 + 新增表单（服务端锚定时间并派生 change_type）。 */
+function BeliefSection({ caseId }: { caseId: string }) {
+  const t = useT();
+  const [beliefs, setBeliefs] = useState<BeliefRow[] | null>(null);
+  const [stance, setStance] = useState<BeliefStance>("maintain");
+  const [confidence, setConfidence] = useState("0.6");
+  const [rationale, setRationale] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    objectApi
+      .caseBeliefs(caseId)
+      .then((r) => {
+        if (alive) setBeliefs(r.beliefs);
+      })
+      .catch(() => {
+        if (alive) setBeliefs([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [caseId]);
+
+  const submit = () => {
+    const conf = Number(confidence);
+    if (!Number.isFinite(conf) || conf < 0 || conf > 1) {
+      toast.info(t("case.beliefConfidenceHint"));
+      return;
+    }
+    setSaving(true);
+    objectApi
+      .createBelief(caseId, {
+        change_id: `claim-${caseId}`,
+        subject_id: caseId,
+        subject_label: caseId,
+        stance,
+        confidence: conf,
+        rationale,
+      })
+      .then(() => {
+        setRationale("");
+        setSaving(false);
+        toast.success(t("case.beliefAdded"));
+        return objectApi.caseBeliefs(caseId).then((r) => setBeliefs(r.beliefs));
+      })
+      .catch(() => {
+        setSaving(false);
+        toast.error(t("case.beliefFailed"));
+      });
+  };
+
+  const STANCE_TONE: Record<BeliefStance, string> = {
+    maintain: "bg-sky-100 text-sky-800",
+    adjust: "bg-amber-100 text-amber-800",
+    reverse: "bg-red-100 text-red-800",
+    uncertain: "bg-zinc-100 text-zinc-600",
+  };
+
+  return (
+    <section className="space-y-2" aria-label={t("case.beliefTitle")}>
+      <p className="text-[13px] font-semibold">{t("case.beliefTitle")}</p>
+      {beliefs === null ? (
+        <Skeleton className="h-16" />
+      ) : beliefs.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{t("case.beliefEmpty")}</p>
+      ) : (
+        <div className="space-y-1.5">
+          {beliefs.map((b) => (
+            <div key={b.snapshot_id} className="rounded-xl border px-2.5 py-1.5 text-xs">
+              <span
+                className={`mr-1.5 inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${STANCE_TONE[b.stance] ?? "bg-muted"}`}
+              >
+                {t(`case.beliefStance.${b.stance}`)}
+              </span>
+              <span className="text-muted-foreground">
+                {b.change_type === "new" ? t("case.beliefNew") : t("case.beliefRevised")} ·{" "}
+                {t("case.beliefConfidence")} {(b.confidence * 100).toFixed(0)}% ·{" "}
+                {b.believed_at?.slice(0, 19).replace("T", " ")}
+              </span>
+              {b.rationale ? <p className="mt-1 text-foreground">· {b.rationale}</p> : null}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <select
+          aria-label={t("case.beliefStanceLabel")}
+          value={stance}
+          onChange={(e) => setStance(e.target.value as BeliefStance)}
+          className="rounded-lg border bg-background px-2 py-1"
+        >
+          {(["maintain", "adjust", "reverse", "uncertain"] as BeliefStance[]).map((s) => (
+            <option key={s} value={s}>
+              {t(`case.beliefStance.${s}`)}
+            </option>
+          ))}
+        </select>
+        <input
+          aria-label={t("case.beliefConfidence")}
+          value={confidence}
+          onChange={(e) => setConfidence(e.target.value)}
+          className="w-16 rounded-lg border bg-background px-2 py-1"
+          placeholder="0-1"
+        />
+        <input
+          aria-label={t("case.beliefRationale")}
+          value={rationale}
+          onChange={(e) => setRationale(e.target.value)}
+          className="min-w-0 flex-1 rounded-lg border bg-background px-2 py-1"
+          placeholder={t("case.beliefRationalePh")}
+        />
+        <button
+          type="button"
+          onClick={submit}
+          disabled={saving}
+          className="rounded-lg bg-sky-600 px-2.5 py-1 font-medium text-white disabled:opacity-50"
+        >
+          {t("case.beliefAdd")}
+        </button>
+      </div>
+    </section>
   );
 }

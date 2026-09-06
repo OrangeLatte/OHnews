@@ -69,6 +69,16 @@ const revPill = (status: string): string =>
       ? "bg-zinc-500/10 text-zinc-600 dark:text-zinc-300"
       : "bg-amber-500/10 text-amber-700 dark:text-amber-300";
 
+type ReportRevState = "initialDraft" | "revised" | "fromFeedback" | "committedArchived";
+
+/** R6 T2 报告状态派生（纯 UI，不落库）：committed 归档 > 修订版(revised_from) > 反馈修订(feedback) > 初稿。 */
+function reportRevState(r: RevisionWithContent): ReportRevState {
+  if (r.status === "committed") return "committedArchived";
+  if (r.content?.revised_from) return "revised";
+  if (r.content?.feedback) return "fromFeedback";
+  return "initialDraft";
+}
+
 export default function ReportView({
   caseId,
   caseQuestion,
@@ -458,19 +468,28 @@ export default function ReportView({
               <Skeleton className="h-16 w-full" />
             ) : (
               <ul className="space-y-1">
-                {(revisions ?? []).map((r, i) => (
-                  <li key={r.revision_id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedRevId(r.revision_id)}
-                      className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-xs ${selectedRevId === r.revision_id ? "border-foreground" : "hover:bg-muted"}`}
-                    >
-                      <span className="font-mono">v{i + 1}</span>
-                      <span className={`rounded px-1 py-0.5 ${revPill(r.status)}`}>{revStatusLabel(t, r.status)}</span>
-                      <span className="ml-auto text-[11px] text-muted-foreground">{r.created_at?.slice(0, 10)}</span>
-                    </button>
-                  </li>
-                ))}
+                {(revisions ?? []).map((r, i) => {
+                  const st = reportRevState(r);
+                  return (
+                    <li key={r.revision_id}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRevId(r.revision_id)}
+                        className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-xs ${selectedRevId === r.revision_id ? "border-foreground" : "hover:bg-muted"}`}
+                      >
+                        <span className="font-mono">v{i + 1}</span>
+                        <span className={`rounded px-1 py-0.5 ${revPill(r.status)}`}>{revStatusLabel(t, r.status)}</span>
+                        <span
+                          title={t("case.reportStateHint")}
+                          className={`rounded px-1 py-0.5 ${st === "committedArchived" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}
+                        >
+                          {t(`case.reportState.${st}`)}
+                        </span>
+                        <span className="ml-auto text-[11px] text-muted-foreground">{r.created_at?.slice(0, 10)}</span>
+                      </button>
+                    </li>
+                  );
+                })}
                 {(revisions ?? []).length === 0 ? (
                   <li className="text-xs text-muted-foreground">{t("case.reportEmptyBody")}</li>
                 ) : null}

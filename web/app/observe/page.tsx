@@ -665,6 +665,7 @@ export default function ObservePage() {
                 <DivergencePanel
                   ndi={mainData?.ndi ?? []}
                   loading={mainData === null}
+                  warnings={mainData?.landscape?.quality_warnings?.length ?? 0}
                   onOpenDrawer={(entity, label, ndi, nSources) =>
                     openDrawer({ kind: "entity", entity, label, ndi, nSources })
                   }

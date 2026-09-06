@@ -213,6 +213,7 @@ export function suggestSource(url: string): Promise<{
   url: string;
   suggestion: SourceSuggestion;
   rationale: string;
+  preview?: Record<string, string>;
 }> {
   return postJson("/api/sources/suggest", { url });
 }

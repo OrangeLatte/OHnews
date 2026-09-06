@@ -20,10 +20,13 @@ const TONE_HEX: Record<string, string> = {
 export function DivergencePanel({
   ndi,
   loading,
+  warnings = 0,
   onOpenDrawer,
 }: {
   ndi: NdiRankRow[];
   loading: boolean;
+  /** 质量门弃权带条数（后端诚实弃权：样本不足/覆盖缺口），0 = 本窗口无弃权。 */
+  warnings?: number;
   /** 棒棒糖实体行点击 → 统一 Change Drawer（P1 图表联动）。 */
   onOpenDrawer: (entity: string, label?: string, ndi?: number | null, nSources?: number | null) => void;
 }) {
@@ -51,6 +54,20 @@ export function DivergencePanel({
   const h = ndi.length * rowH + 14;
   return (
     <div className="space-y-2">
+      <p
+        className={`rounded-[10px] border px-3 py-1.5 text-[11px] ${
+          warnings > 0 ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400" : "border-border text-muted-foreground"
+        }`}
+        title={ot(
+          "observe.divergence.abstainTitle",
+          "Abstention count = quality-gate warnings in this window (backend abstains honestly on insufficient sample / coverage gaps; it never fabricates readings).",
+        )}
+      >
+        {ot("observe.divergence.abstainRate", "Abstentions")}: {warnings}
+        {warnings > 0
+          ? ` · ${ot("observe.divergence.abstainNote", "backend withheld readings for insufficient sample")}`
+          : ` · ${ot("observe.divergence.abstainNone", "no abstention in this window")}`}
+      </p>
       <svg viewBox={`0 0 640 ${h}`} className="h-auto w-full" role="img" aria-label="NDI ranking">
         {ndi.map((r, i) => {
           const cy = 20 + i * rowH;
@@ -77,6 +94,7 @@ export function DivergencePanel({
               </text>
               <text x={632} y={cy + 4} textAnchor="end" fontSize="10" className="fill-muted-foreground">
                 n={r.n_sources ?? r.n ?? "—"}
+                <title>{ot("observe.divergence.nHint", "n = contributing sources for this entity's NDI reading; — means the payload omitted the count.")}</title>
               </text>
             </g>
           );
