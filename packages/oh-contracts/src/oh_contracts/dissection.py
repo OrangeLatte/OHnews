@@ -58,10 +58,16 @@ ElementKey = Literal[
 
 
 class DissectionSpan(_StrictBase):
-    """原文定位片段（前端颜色标注用）。start/end 为字符偏移，end>start。"""
+    """原文定位片段（前端颜色标注用）。start/end 为字符偏移，end>start。
+
+    quote 为模型自报的该偏移切片逐字原文（可选）：持久层用它做
+    「坐标切片 vs 自报引文」子串双重校验，无子串关系即丢弃该 span
+    （P0-2 锚点纪律：不得把漂移坐标伪装成原文高亮）。
+    """
 
     start: int = Field(ge=0)
     end: int = Field(gt=0)
+    quote: str = ""
 
     @model_validator(mode="after")
     def _end_after_start(self) -> "DissectionSpan":

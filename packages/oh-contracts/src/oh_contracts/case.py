@@ -16,8 +16,17 @@ from .strict import NonEmptyStr, _StrictBase
 
 CaseStatus = Literal["candidate", "active", "needs_attention", "suspended", "closed", "rejected"]
 CaseOrigin = Literal["observe", "article", "question", "watch_candidate", "agent_suggested"]
-ClaimReview = Literal["unverified", "supported", "refuted", "uncertain"]
+ClaimReview = Literal[
+    "draft",
+    "unverified",
+    "supported",
+    "contradicted",
+    "insufficient",
+    "disputed",
+    "user_confirmed",
+]
 SpanPolarity = Literal["supports", "refutes", "context"]
+SpanMark = Literal["direct", "inferred"]
 HumanStatus = Literal["unreviewed", "accepted", "revised", "rejected"]
 RunKind = Literal["dissect", "translate", "compare", "report", "challenge", "commit_check"]
 RunStatus = Literal[
@@ -65,7 +74,13 @@ class ResearchCase(_StrictBase):
 
 
 class EvidenceSpan(_StrictBase):
-    """原文中的精确证据片段（字符偏移锚定，永不覆盖原文）。"""
+    """原文中的精确证据片段（字符偏移锚定，永不覆盖原文）。
+
+    prefix/suffix 为原文中 span 前后各 ~30 字符切片（锚点双重校验原料，
+    不是 UI 渲染内容）；mark=direct 表示逐字锚定的原文高亮，
+    inferred 保留给「无合法原文位置」的下游扩展——当前持久层只写 direct，
+    无锚元素的诚实标记在 extraction 层（uncertainty_reason=span_anchor_failed）。
+    """
 
     span_id: str
     document_revision_id: str
@@ -73,6 +88,9 @@ class EvidenceSpan(_StrictBase):
     char_end: int = Field(gt=0)
     quote: str
     polarity: SpanPolarity = "supports"
+    prefix: str = ""
+    suffix: str = ""
+    mark: SpanMark = "direct"
 
     @model_validator(mode="after")
     def _end_after_start(self) -> "EvidenceSpan":
