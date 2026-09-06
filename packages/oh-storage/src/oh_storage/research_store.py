@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 from oh_storage.connection import connect
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 13
 
 _DDL_V1 = """
 CREATE TABLE IF NOT EXISTS cases (
@@ -366,6 +366,103 @@ ALTER TABLE monitor_runs ADD COLUMN output_json TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_commits ADD COLUMN created_by TEXT NOT NULL DEFAULT '';
 """,
     ),
+    (
+        11,
+        # 拆解数据版本化（R1）：set_status 引入「当前发布集」语义（current|superseded）。
+        # 迁移清理存量：每 document_revision 仅最新 analysis_run 批次保持 current，
+        # 其余（旧 run 批次 + 无运行归属遗留行）置 superseded——不可变留痕，不物理删除；
+        # 同一批次内幂等键重复（revision+element_key+span 坐标+normalized_value 全等）
+        # 保留 rowid 最小一条 current，其余物理删除（同 run 重复是同一次运行产物）。
+        """
+ALTER TABLE extractions ADD COLUMN set_status TEXT NOT NULL DEFAULT 'current';
+
+DROP TABLE IF EXISTS _v11_latest_run;
+DROP TABLE IF EXISTS _v11_span_sig;
+DROP TABLE IF EXISTS _v11_ext_sig;
+
+CREATE TEMP TABLE _v11_latest_run AS
+SELECT document_revision_id, analysis_run_id FROM (
+    SELECT document_revision_id, analysis_run_id,
+           ROW_NUMBER() OVER (
+               PARTITION BY document_revision_id
+               ORDER BY started_at DESC, first_rowid DESC
+           ) AS rn
+    FROM (
+        SELECT e.document_revision_id AS document_revision_id,
+               e.analysis_run_id AS analysis_run_id,
+               COALESCE(MAX(r.started_at), '') AS started_at,
+               MIN(e.rowid) AS first_rowid
+        FROM extractions e
+        LEFT JOIN analysis_runs r ON r.run_id = e.analysis_run_id
+        WHERE e.analysis_run_id != ''
+        GROUP BY e.document_revision_id, e.analysis_run_id
+    )
+) WHERE rn = 1;
+
+UPDATE extractions SET set_status = 'superseded'
+WHERE document_revision_id IN (SELECT document_revision_id FROM _v11_latest_run)
+  AND NOT EXISTS (
+      SELECT 1 FROM _v11_latest_run lr
+      WHERE lr.document_revision_id = extractions.document_revision_id
+        AND lr.analysis_run_id = extractions.analysis_run_id
+  );
+
+CREATE TEMP TABLE _v11_span_sig AS
+SELECT x.rid AS rid, GROUP_CONCAT(ss.char_start || ':' || ss.char_end) AS sig
+FROM (
+    SELECT e.rowid AS rid, je.value AS span_id
+    FROM extractions e
+    JOIN json_each(CASE WHEN json_valid(e.span_ids) THEN e.span_ids ELSE '[]' END) je
+) x
+JOIN evidence_spans ss ON ss.span_id = x.span_id
+GROUP BY x.rid;
+
+CREATE TEMP TABLE _v11_ext_sig AS
+SELECT e.rowid AS rid,
+       e.document_revision_id AS document_revision_id,
+       e.element_key AS element_key,
+       e.normalized_value AS normalized_value,
+       COALESCE(sg.sig, '') AS span_sig
+FROM extractions e
+LEFT JOIN _v11_span_sig sg ON sg.rid = e.rowid
+WHERE e.set_status = 'current';
+
+DELETE FROM extractions
+WHERE rowid IN (
+    SELECT rid FROM (
+        SELECT rid, ROW_NUMBER() OVER (
+            PARTITION BY document_revision_id, element_key, normalized_value, span_sig
+            ORDER BY rid
+        ) AS rn
+        FROM _v11_ext_sig
+    ) WHERE rn > 1
+);
+
+DROP TABLE IF EXISTS _v11_latest_run;
+DROP TABLE IF EXISTS _v11_span_sig;
+DROP TABLE IF EXISTS _v11_ext_sig;
+""",
+    ),
+    (
+        12,
+        # 证据坐标重建（P0-2）：evidence_spans 增加 anchor 双重校验与分层语义列。
+        # prefix/suffix = 原文中 span 前后各 ~30 字符切片（锚点校验原料，非 UI 渲染）；
+        # mark = direct（逐字锚定原文高亮）| inferred（无合法原文位置，当前持久层只写 direct，
+        # 无锚元素的诚实标记在 extractions.uncertainty_reason=span_anchor_failed）。
+        """
+ALTER TABLE evidence_spans ADD COLUMN prefix TEXT NOT NULL DEFAULT '';
+ALTER TABLE evidence_spans ADD COLUMN suffix TEXT NOT NULL DEFAULT '';
+ALTER TABLE evidence_spans ADD COLUMN mark TEXT NOT NULL DEFAULT 'direct';
+""",
+    ),
+    (
+        13,
+        # Claim 状态机 7 态闭集：旧 4 态值改名对齐（refuted→contradicted, uncertain→disputed）。
+        """
+UPDATE claims SET status='contradicted' WHERE status='refuted';
+UPDATE claims SET status='disputed' WHERE status='uncertain';
+""",
+    ),
 )
 
 # v3 新增的审计列不属于 MonitorUpdate 契约模型，行转换时剔除。
@@ -561,8 +658,9 @@ class ResearchStore:
     def add_span(self, span: EvidenceSpan) -> None:
         self._conn.execute(
             "INSERT INTO evidence_spans"
-            " (span_id, document_revision_id, char_start, char_end, quote, polarity)"
-            " VALUES (?,?,?,?,?,?)",
+            " (span_id, document_revision_id, char_start, char_end, quote, polarity,"
+            "  prefix, suffix, mark)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
             (
                 span.span_id,
                 span.document_revision_id,
@@ -570,6 +668,9 @@ class ResearchStore:
                 span.char_end,
                 span.quote,
                 span.polarity,
+                span.prefix,
+                span.suffix,
+                span.mark,
             ),
         )
         self._conn.commit()
@@ -608,15 +709,31 @@ class ResearchStore:
         ).fetchall()
         return [Claim(**{**dict(r), "span_ids": _loads(r["span_ids"], [])}) for r in rows]
 
+    def update_claim_status(self, claim_id: str, status: str) -> bool:
+        """Claim 状态机流转（引擎 verdict 写回或用户终审 user_confirmed）。"""
+        cur = self._conn.execute(
+            "UPDATE claims SET status = ? WHERE claim_id = ?", (status, claim_id)
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def get_claim(self, claim_id: str) -> Claim | None:
+        row = self._conn.execute("SELECT * FROM claims WHERE claim_id = ?", (claim_id,)).fetchone()
+        if row is None:
+            return None
+        return Claim(**{**dict(row), "span_ids": _loads(row["span_ids"], [])})
+
     # ---------- extractions ----------
 
-    def add_extraction(self, extraction: ElementExtraction) -> None:
+    def add_extraction(self, extraction: ElementExtraction, *, set_status: str = "current") -> None:
+        """写入拆解元素行；set_status 存储层概念（不入 ElementExtraction 契约）：
+        current=当前发布集成员，superseded=被后续成功运行置换/降级兜底（隐藏不删）。"""
         self._conn.execute(
             "INSERT INTO extractions"
             " (extraction_id, case_id, document_revision_id, element_key,"
             "  normalized_value, span_ids, confidence, uncertainty_reason,"
-            "  analysis_run_id, human_status)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "  analysis_run_id, human_status, set_status)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 extraction.extraction_id,
                 extraction.case_id,
@@ -628,15 +745,30 @@ class ResearchStore:
                 extraction.uncertainty_reason,
                 extraction.analysis_run_id,
                 extraction.human_status,
+                set_status,
             ),
         )
         self._conn.commit()
 
-    def extractions_for_revision(self, document_revision_id: str) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT * FROM extractions WHERE document_revision_id = ? ORDER BY element_key",
+    def supersede_extractions(self, document_revision_id: str) -> int:
+        """发布集置换第一步：该版本全部 current 行置 superseded，返回置换单数。"""
+        cur = self._conn.execute(
+            "UPDATE extractions SET set_status = 'superseded'"
+            " WHERE document_revision_id = ? AND set_status = 'current'",
             (document_revision_id,),
-        ).fetchall()
+        )
+        self._conn.commit()
+        return cur.rowcount
+
+    def extractions_for_revision(
+        self, document_revision_id: str, *, include_superseded: bool = False
+    ) -> list[dict]:
+        """某版本的拆解结果；默认只返回当前发布集（current），旧批次隐藏。"""
+        sql = "SELECT * FROM extractions WHERE document_revision_id = ?"
+        if not include_superseded:
+            sql += " AND set_status = 'current'"
+        sql += " ORDER BY element_key"
+        rows = self._conn.execute(sql, (document_revision_id,)).fetchall()
         return [{**dict(r), "span_ids": _loads(r["span_ids"], [])} for r in rows]
 
     def set_extraction_human_status(self, extraction_id: str, human_status: str) -> bool:

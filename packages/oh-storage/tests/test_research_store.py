@@ -58,8 +58,8 @@ def _revision(store: ResearchStore, revision_id: str = "rev-1") -> None:
 
 
 def test_schema_ensure_idempotent(store: ResearchStore) -> None:
-    assert store.ensure_schema() == 10
-    assert store.ensure_schema() == 10
+    assert store.ensure_schema() == 13
+    assert store.ensure_schema() == 13
 
 
 def test_case_lifecycle(store: ResearchStore) -> None:
@@ -327,7 +327,7 @@ def test_collection_plans_and_runs(tmp_path) -> None:
 def test_schema_v3_and_decision_audit(tmp_path: Path) -> None:
     """v3 迁移：MonitorUpdate 审计列存在；复核决策与关联 Case 留痕。"""
     store = ResearchStore.open(tmp_path / "research.sqlite")
-    assert store.ensure_schema() == 10
+    assert store.ensure_schema() == 13
     cols = {r["name"] for r in store._conn.execute("PRAGMA table_info(monitor_updates)")}
     assert {"decision", "decision_case_id"} <= cols
     store.create_monitor(
@@ -385,7 +385,7 @@ def test_schema_v7_monitor_status_cleanup(tmp_path: Path) -> None:
     store._conn.commit()
     store._conn.execute("PRAGMA user_version = 6")
 
-    assert store.ensure_schema() == 10
+    assert store.ensure_schema() == 13
     assert store.get_monitor("mon-dirty") is not None
     assert store.get_monitor("mon-dirty").status == "active"  # type: ignore[union-attr]
     # Update 审核状态不受影响：仍待复核
@@ -397,7 +397,7 @@ def test_schema_v9_monitor_run_output(tmp_path: Path) -> None:
     """v9 迁移：monitor_runs.output_json 列存在；finish_monitor_run 回写状态/输出，
     running 过渡不擦历史字段；monitor_runs_for 行带 output（空则 None）。"""
     store = ResearchStore.open(tmp_path / "research.sqlite")
-    assert store.ensure_schema() == 10
+    assert store.ensure_schema() == 13
     cols = {r["name"] for r in store._conn.execute("PRAGMA table_info(monitor_runs)")}
     assert "output_json" in cols
 
@@ -428,3 +428,154 @@ def test_schema_v9_monitor_run_output(tmp_path: Path) -> None:
     assert row["status"] == "succeeded" and row["finished_at"] == T1
     assert row["output"] == {"hits": 2, "new_articles": 1}
     store.close()
+
+
+def test_schema_v11_cleans_legacy_duplicate_dissections(tmp_path: Path) -> None:
+    """v11 迁移：旧库重复拆解清理——每 revision 仅最新 run 批次 current。
+
+    构造 2 run 数据（run-old 先、run-new 后）+ 同 run 幂等键重复行 +
+    无运行归属遗留行；user_version 回拨 10 重放迁移后：
+    current 只剩最新 run 且同 run 重复仅留 rowid 最小一条，
+    旧 run 行与无主行置 superseded（隐藏不删，不可变留痕）。
+    """
+    store = ResearchStore.open(tmp_path / "research.sqlite")
+    _revision(store, "rev-m")
+    store.add_span(
+        EvidenceSpan(
+            span_id="s-1",
+            document_revision_id="rev-m",
+            char_start=0,
+            char_end=3,
+            quote="央行暗",
+        )
+    )
+    store._conn.executemany(
+        "INSERT INTO analysis_runs (run_id, case_id, kind, status, started_at)"
+        " VALUES (?, 'case-1', 'dissect', 'succeeded', ?)",
+        (("run-old", T0), ("run-new", T1)),
+    )
+    store._conn.executemany(
+        "INSERT INTO extractions (extraction_id, case_id, document_revision_id,"
+        " element_key, normalized_value, span_ids, analysis_run_id)"
+        " VALUES (?, 'case-1', 'rev-m', ?, ?, ?, ?)",
+        [
+            ("ext-o1", "actor", "旧版主体", "[]", "run-old"),
+            ("ext-n1", "actor", "美联储", '["s-1"]', "run-new"),
+            ("ext-n2", "actor", "美联储", '["s-1"]', "run-new"),  # 同 run 重复 → 删除
+            ("ext-n3", "tone", "谨慎", "[]", "run-new"),
+            ("ext-x0", "summary", "无主遗留行", "[]", ""),  # revision 已有 run 批次 → superseded
+        ],
+    )
+    store._conn.commit()
+    store._conn.execute("PRAGMA user_version = 10")
+
+    assert store.ensure_schema() == 13
+    current = store.extractions_for_revision("rev-m")
+    assert {r["extraction_id"] for r in current} == {"ext-n1", "ext-n3"}
+    assert all(r["set_status"] == "current" for r in current)
+    everything = store.extractions_for_revision("rev-m", include_superseded=True)
+    superseded = {r["extraction_id"] for r in everything if r["set_status"] == "superseded"}
+    assert superseded == {"ext-o1", "ext-x0"}
+    # 同 run 重复行物理删除：5 行 → 4 行（不可变语义仅约束跨 run 批次）
+    assert len(everything) == 4
+    store.close()
+
+
+def test_schema_v12_span_anchor_columns(tmp_path: Path) -> None:
+    """v12 迁移（P0-2）：evidence_spans 增加 prefix/suffix/mark 锚点列。
+
+    新库直接建列；user_version 回拨 11 后重放（ADD COLUMN 不可重放，
+    列已存在必须防御跳过）；mark 默认 direct，prefix/suffix 随行往返。
+    """
+    store = ResearchStore.open(tmp_path / "research.sqlite")
+    assert store.ensure_schema() == 13
+    cols = {r[1] for r in store._conn.execute("PRAGMA table_info(evidence_spans)")}
+    assert {"prefix", "suffix", "mark"} <= cols
+    # 回拨重放防御：重复 ALTER 必须跳过而非报 duplicate column
+    store._conn.execute("PRAGMA user_version = 11")
+    assert store.ensure_schema() == 13
+    cols = {r[1] for r in store._conn.execute("PRAGMA table_info(evidence_spans)")}
+    assert {"prefix", "suffix", "mark"} <= cols
+    _revision(store, "rev-v12")
+    store.add_span(
+        EvidenceSpan(
+            span_id="s-v12",
+            document_revision_id="rev-v12",
+            char_start=2,
+            char_end=5,
+            quote="暗示可",
+            prefix="央行",
+            suffix="能在明年",
+        )
+    )
+    (span,) = store.spans_by_ids(["s-v12"])
+    assert span.quote == "暗示可"
+    assert span.prefix == "央行"
+    assert span.suffix == "能在明年"
+    assert span.mark == "direct"
+    # 旧写入路径（未显式给 prefix/suffix/mark）默认值兜底：direct + 空上下文
+    store.add_span(
+        EvidenceSpan(
+            span_id="s-v12b",
+            document_revision_id="rev-v12",
+            char_start=0,
+            char_end=2,
+            quote="央行",
+        )
+    )
+    (span_b,) = store.spans_by_ids(["s-v12b"])
+    assert span_b.prefix == "" and span_b.suffix == "" and span_b.mark == "direct"
+    store.close()
+
+
+def test_extraction_set_status_supersede_and_filter(store: ResearchStore) -> None:
+    """发布集语义：默认读 current；supersede 只作用于 current 且幂等。"""
+    _revision(store)
+    store.add_document_revision(
+        "rev-2",
+        "doc-2",
+        source_id="reuters",
+        body="第二版本。",
+        fetched_at=T0,
+        content_hash="c:def",
+    )
+    store.add_extraction(
+        ElementExtraction(
+            extraction_id="ext-1",
+            document_revision_id="rev-1",
+            element_key="actor",
+            normalized_value="美联储",
+            analysis_run_id="run-1",
+        )
+    )
+    store.add_extraction(
+        ElementExtraction(
+            extraction_id="ext-2",
+            document_revision_id="rev-1",
+            element_key="tone",
+            normalized_value="谨慎",
+            analysis_run_id="run-1",
+        )
+    )
+    store.add_extraction(
+        ElementExtraction(
+            extraction_id="ext-3",
+            document_revision_id="rev-2",
+            element_key="actor",
+            normalized_value="欧洲央行",
+            analysis_run_id="run-2",
+        ),
+        set_status="superseded",
+    )
+    assert [r["extraction_id"] for r in store.extractions_for_revision("rev-1")] == [
+        "ext-1",
+        "ext-2",
+    ]
+    assert store.extractions_for_revision("rev-2") == []
+    assert len(store.extractions_for_revision("rev-2", include_superseded=True)) == 1
+    assert store.supersede_extractions("rev-1") == 2
+    assert store.extractions_for_revision("rev-1") == []
+    assert len(store.extractions_for_revision("rev-1", include_superseded=True)) == 2
+    # 幂等：已无 current 可置换；不存在的版本同理
+    assert store.supersede_extractions("rev-1") == 0
+    assert store.supersede_extractions("rev-ghost") == 0
