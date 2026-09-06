@@ -109,6 +109,7 @@ export function HelpIcon({ helpKey }: { helpKey: string }) {
         aria-label={t("help.icon.aria", { k: helpKey })}
         aria-describedby={open ? descId : undefined}
         aria-expanded={open}
+        aria-pressed={pinned}
         className="inline-flex h-8 w-8 min-w-8 min-h-8 items-center justify-center rounded-full border border-muted-foreground/40 text-xs font-semibold text-muted-foreground hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
         onMouseEnter={show}
         onMouseLeave={hide}
