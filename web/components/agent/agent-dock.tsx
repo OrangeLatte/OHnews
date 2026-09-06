@@ -9,7 +9,38 @@
  * message_type 缺省按 answer 渲染。
  */
 
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { Component, useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction, type ReactNode } from "react";
+
+/**
+ * DockBoundary：标签内容树崩溃时的隔离层。
+ * 根因背景（第六轮验收 P0-1）：内容树运行时异常曾把整棵 React 树卸载，
+ * 折叠按钮退化为无 handler 的 SSR 静态节点（aria-expanded 恒 false、点击无效）。
+ * 壳（header/折叠按钮）保持在 boundary 外保活，只有标签内容可被 Retry 重置。
+ */
+class DockBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200">
+          <p className="font-semibold">Agent panel crashed</p>
+          <p className="mt-1 break-all opacity-80">{this.state.error.message}</p>
+          <button
+            type="button"
+            className="mt-2 rounded border border-red-400 px-2 py-1 hover:bg-red-100 dark:hover:bg-red-900/40"
+            onClick={() => this.setState({ error: null })}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import { AgentPanel } from "@/components/agent/agent-panel";
 import { AgentSystemExtra } from "@/components/agent/agent-system-extra";
 import { AgentPlan } from "@/components/agent/agent-plan";
@@ -604,6 +635,7 @@ export function AgentDock({
               </button>
             ))}
           </div>
+          <DockBoundary>
           {tab === "system" ? (
             <SystemTab />
           ) : tab === "plan" ? (
@@ -624,6 +656,7 @@ export function AgentDock({
               legacyCards={cards}
             />
           )}
+          </DockBoundary>
         </div>
       )}
     </aside>

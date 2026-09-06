@@ -60,6 +60,8 @@ type Props = {
     status: string;
     output?: unknown;
   }[];
+  /** P0-3 证据门槛：案内提取审核统计（ex 缓存派生；null=尚未加载任何提取） */
+  exStats?: { un: number; total: number; covered: number; docsAll: number } | null;
 };
 
 const revPill = (status: string): string =>
@@ -87,6 +89,7 @@ export default function ReportView({
   reportOut,
   setReportOut,
   historyRuns,
+  exStats,
 }: Props) {
   const t = useT();
   const [reportType, setReportType] = useState<ReportType>("structured_summary");
@@ -336,11 +339,34 @@ export default function ReportView({
         </p>
       ) : null}
 
+      {/* P0-3 证据门槛：未审核提取警示（不硬禁——默认只引已审核+逐项注明） */}
+      {exStats && exStats.un > 0 ? (
+        <p
+          className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300"
+          title={t("case.reportUnreviewedTitle")}
+        >
+          {t("case.reportUnreviewed", {
+            un: exStats.un,
+            total: exStats.total,
+            covered: exStats.covered,
+            docsAll: exStats.docsAll,
+          })}
+        </p>
+      ) : null}
+
       {runError ? <FriendlyErrorBox raw={runError} className="rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300" /> : null}
       {!runError && reportOut && (reportOut.status === "abstained" || reportOut.status === "failed") ? (
-        <p className="flex items-center gap-1 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
+        <p className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
           {t("case.abstainedHint")}
           <HelpIcon helpKey="state.abstained" />
+          <button
+            type="button"
+            onClick={runReport}
+            disabled={busy || reportRunning}
+            className="rounded-md border border-amber-500/60 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
+          >
+            {t("case.reportRetry")}
+          </button>
         </p>
       ) : null}
 

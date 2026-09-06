@@ -166,7 +166,7 @@ export function SearchBar() {
         if (item.id) router.push(`/cases/${encodeURIComponent(item.id)}`);
         return;
       case "monitor":
-        if (item.id) router.push(`/monitors?open=${encodeURIComponent(item.id)}`);
+        if (item.id) router.push(`/watch?tab=monitors&open=${encodeURIComponent(item.id)}`);
         return;
       default:
         void research(item);

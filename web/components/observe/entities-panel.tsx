@@ -11,7 +11,12 @@ import { useOt } from "@/components/observe/i18n-bridge";
 import { ndiTone, relParts } from "@/components/observe/rel-time";
 import { StatusDot } from "@/components/observe/status-dots";
 import { Skeleton } from "@/components/ui/toast";
-import type { EntityRow, EntityTimeline, NdiRankRow } from "@/lib/landscape-api";
+import type {
+  EntityGraphPayload,
+  EntityRow,
+  EntityTimeline,
+  NdiRankRow,
+} from "@/lib/landscape-api";
 import { useT } from "@/lib/i18n/use-t";
 
 const TONE_TEXT_KEY: Record<string, [string, string]> = {
@@ -33,11 +38,13 @@ function EntityGraph({
   entities,
   ndiMap,
   selEntity,
+  kg,
   onOpenDrawer,
 }: {
   entities: EntityRow[];
   ndiMap: Map<string, number>;
   selEntity: string;
+  kg?: EntityGraphPayload | null;
   onOpenDrawer: (id: string, label?: string, ndi?: number | null) => void;
 }) {
   const W = 640;
@@ -56,6 +63,28 @@ function EntityGraph({
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="entity graph">
+      {/* KG 真实关系边（silver entity_edges：co_occurs / acts_on 等） */}
+      {(kg?.edges ?? []).map((e, i) => {
+        const a = pos.get(e.src);
+        const b = pos.get(e.dst);
+        if (!a || !b) return null;
+        return (
+          <line
+            key={`kg-${i}`}
+            x1={a.x}
+            y1={a.y}
+            x2={b.x}
+            y2={b.y}
+            stroke="#2563eb"
+            strokeOpacity={0.5}
+            strokeWidth={Math.min(3.2, 0.8 + e.weight * 0.5)}
+          >
+            <title>
+              {`${e.src} —${e.kind}→ ${e.dst} · w ${e.weight}${e.n_evidence ? ` · evidence ${e.n_evidence}` : ""}`}
+            </title>
+          </line>
+        );
+      })}
       {/* parent → child 层级弦线 */}
       {entities.map((e) => {
         const a = pos.get(e.entity_id);
@@ -126,6 +155,7 @@ export function EntitiesPanel({
   timeline,
   days,
   ndi,
+  kg,
   onOpen,
   onOpenDrawer,
 }: {
@@ -135,6 +165,7 @@ export function EntitiesPanel({
   timeline: EntityTimeline | null;
   days: number;
   ndi: NdiRankRow[];
+  kg?: EntityGraphPayload | null;
   onOpen: (entityId: string) => void;
   /** 星座节点点击 → 统一 Change Drawer（P1 图表联动）；chips 仍走 onOpen 选中。 */
   onOpenDrawer: (entityId: string, label?: string, ndi?: number | null) => void;
@@ -153,9 +184,14 @@ export function EntitiesPanel({
 
       {entities !== null && entities.length > 0 ? (
         <div className="space-y-1">
-          <EntityGraph entities={entities} ndiMap={ndiMap} selEntity={selEntity} onOpenDrawer={onOpenDrawer} />
+          <EntityGraph entities={entities} ndiMap={ndiMap} selEntity={selEntity} kg={kg} onOpenDrawer={onOpenDrawer} />
           <p className="flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground">
-            <span>{ot("observe.entities.edgeNote", "edges = entity hierarchy (parent_id); no cross-entity relation data yet — shown honestly.")}</span>
+            <span>
+              {ot(
+                "observe.entities.edgeNote",
+                "Blue solid edges = typed co-occurrence/action relations from the knowledge graph (hover for kind/weight); gray dashed = entity hierarchy (parent_id).",
+              )}
+            </span>
             {(["ok", "warn", "conflict", "gap"] as const).map((tone) => (
               <span key={tone} className="flex items-center gap-1">
                 <span aria-hidden className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: TONE_HEX[tone] }} />

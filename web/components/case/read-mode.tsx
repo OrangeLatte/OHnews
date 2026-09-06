@@ -6,7 +6,7 @@
  * 复核过滤 toggle、元素卡排序（置信度/元素序）。
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnnotatedText, type AnnoSpan } from "@/components/case/annotated-text";
 import { HelpIcon } from "@/components/help/help-icon";
 import { Skeleton, toast } from "@/components/ui/toast";
@@ -55,6 +55,8 @@ type Props = {
   setActiveDoc: (rid: string) => void;
   ex: Record<string, ExtractionRow[]>;
   bodies: Record<string, string>;
+  /** P1-9 提取精确锚点：ext- 证据 chip 深链 ?span= → 挂载后定位正文该字符范围。 */
+  initialSpan?: string;
   busy: boolean;
   dissecting: string | null;
   onDissect: (rid: string) => void;
@@ -70,6 +72,7 @@ export default function ReadMode({
   setActiveDoc,
   ex,
   bodies,
+  initialSpan,
   busy,
   dissecting,
   onDissect,
@@ -89,6 +92,26 @@ export default function ReadMode({
   const [flashSpanId, setFlashSpanId] = useState<string | null>(null);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const textWrapRef = useRef<HTMLDivElement | null>(null);
+
+  // P1-9：?span= 深链定位。mark 渲染依赖文档与拆解数据到位，轮询 querySelector（上限 2s），
+  // 命中即滚入视口；纯 DOM 操作无 setState，SSR 首帧一致。
+  useEffect(() => {
+    if (!initialSpan) return;
+    let tries = 0;
+    const timer = window.setInterval(() => {
+      tries += 1;
+      const mark = textWrapRef.current?.querySelector<HTMLElement>(
+        `[data-span-id="${CSS.escape(initialSpan)}"]`,
+      );
+      if (mark) {
+        mark.scrollIntoView({ behavior: "smooth", block: "center" });
+        window.clearInterval(timer);
+      } else if (tries >= 10) {
+        window.clearInterval(timer);
+      }
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, [initialSpan]);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const activeRow = docs.find((d) => d.document_revision_id === activeDoc) ?? null;

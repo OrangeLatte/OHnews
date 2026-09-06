@@ -62,6 +62,24 @@ const matchFilter = (status: string, f: FilterKey): boolean => {
   return status === f;
 };
 
+/**
+ * P0-5：刷新后从 detail.analysis_runs 恢复该主张最近一次成功挑战的八项输出
+ * （challengeRes 只覆盖会话内触发；历史 run 不恢复会让挑战结果区消失）。
+ */
+function challengeOutputFromHistory(
+  runs: { kind?: string; status?: string; output?: unknown }[] | undefined,
+  claimId: string,
+): WorkflowOut | null {
+  if (!runs) return null;
+  for (const r of runs) {
+    if (r.kind !== "challenge" || r.status !== "succeeded" || !r.output) continue;
+    const o = r.output as Record<string, unknown>;
+    if (o.claim_id !== claimId) continue;
+    return o as unknown as WorkflowOut;
+  }
+  return null;
+}
+
 export default function HistoryView({
   caseId,
   detail,
@@ -420,7 +438,7 @@ export default function HistoryView({
       <section className="space-y-2" aria-label={t("case.claimsTitle")}>
         <p className="text-[13px] font-semibold">{t("case.claimsTitle")}</p>
         {claims.map((c: ClaimRow) => {
-          const res = challengeRes[c.claim_id];
+          const res = challengeRes[c.claim_id] ?? challengeOutputFromHistory(detail?.analysis_runs, c.claim_id);
           const highlighted = c.claim_id === highlightClaim;
           return (
             <div
@@ -436,7 +454,6 @@ export default function HistoryView({
                 >
                   {claimStatusLabel(c.status)}
                 </span>
-                <span className="min-w-0 flex-1">{c.statement}</span>
                 {CONFIRMABLE.includes(c.status) ? (
                   <button
                     type="button"

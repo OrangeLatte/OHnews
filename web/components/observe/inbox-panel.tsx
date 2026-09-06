@@ -60,6 +60,7 @@ type InboxRow = {
   body_preview: string;
   cased: boolean;
   dissected: boolean;
+  title_match?: boolean;
 };
 
 const INBOX_LIMIT = 50;
@@ -515,14 +516,14 @@ export function InboxPanel({
               <p className="mt-1 text-xs">
                 {ot(
                   "observe.inbox.emptyNext",
-                  "Next: widen the window in the left rail, or add sources in Sources hub.",
+                  "Next: widen the window in the left rail, or add sources in WATCH.",
                 )}
               </p>
               <a
                 className="mt-2 inline-block rounded-[6px] border px-3 py-1 text-xs transition-colors hover:bg-muted"
-                href="/sources"
+                href="/watch"
               >
-                {ot("observe.inbox.goSources", "Go to Sources →")}
+                {ot("observe.inbox.goSources", "Go to WATCH →")}
               </a>
             </>
           )}
@@ -607,6 +608,17 @@ export function InboxPanel({
                         ) : (
                           <span title={ot("observe.inbox.langUnknown", "language unannotated")}>—</span>
                         )}
+                        {r.title_match === false ? (
+                          <span
+                            className="rounded-[6px] border border-amber-500/40 px-1 text-amber-700 dark:text-amber-300"
+                            title={ot(
+                              "observe.inbox.bodyOnlyTitle",
+                              "Keyword appears only in the body text, not the headline — lower relevance, review before adding to a Case.",
+                            )}
+                          >
+                            {ot("observe.inbox.bodyOnly", "body mention only")}
+                          </span>
+                        ) : null}
                         <span aria-hidden>·</span>
                         {r.cased ? (
                           <span className="flex items-center gap-1" title={ot("observe.inbox.legendCased", "cased")}>

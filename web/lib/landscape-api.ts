@@ -36,6 +36,8 @@ export type QualifiedChange = {
   at: string | null;
   /** 旧载荷缺省 → undefined（诚实降级为既有"暂无"文案）。 */
   evidence_articles?: EvidenceArticle[];
+  /** 检测器数值读数（jsd/n_recent/n_base 等）；旧载荷缺省 → undefined（显示 —）。 */
+  metrics?: Record<string, number>;
 };
 
 export type QualityWarning = {
@@ -296,5 +298,28 @@ export async function fetchEntityTimeline(
 ): Promise<EntityTimeline> {
   const r = await fetch(`/api/timeline/${entityId}?days=${days}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`timeline/${entityId}: HTTP ${r.status}`);
+  return r.json();
+}
+
+/** KG v2 类型化实体边（/api/graph：silver entity_edges 只读投影）。 */
+export type GraphEdge = {
+  src: string;
+  dst: string;
+  kind: string;
+  weight: number;
+  first_seen: string;
+  last_seen: string;
+  n_evidence?: number;
+};
+
+export type EntityGraphPayload = {
+  generated_at: string;
+  nodes: { id: string; entity_type: string; strength: number; degree: number }[];
+  edges: GraphEdge[];
+};
+
+export async function fetchEntityGraph(): Promise<EntityGraphPayload> {
+  const r = await fetch("/api/graph", { cache: "no-store" });
+  if (!r.ok) throw new Error(`graph: HTTP ${r.status}`);
   return r.json();
 }

@@ -29,12 +29,14 @@ import { Skeleton, toast } from "@/components/ui/toast";
 import {
   fetchEmotion,
   fetchEntities,
+  fetchEntityGraph,
   fetchEntityTimeline,
   fetchLandscape,
   fetchMonitorStrip,
   fetchNdiRank,
   fetchSources,
   type EmotionRow,
+  type EntityGraphPayload,
   type EntityRow,
   type EntityTimeline,
   type Landscape,
@@ -107,6 +109,7 @@ export default function ObservePage() {
   const valueTimer = useRef<number | null>(null);
 
   const [entities, setEntities] = useState<EntityRow[] | null>(null);
+  const [kg, setKg] = useState<EntityGraphPayload | null>(null);
   const [selEntity, setSelEntity] = useState("");
   const [timeline, setTimeline] = useState<EntityTimeline | null>(null);
   const [entityErr, setEntityErr] = useState("");
@@ -217,6 +220,20 @@ export default function ObservePage() {
       alive = false;
     };
   }, [mode, entities]);
+
+  // KG 关系边：独立 effect（与 entities 同链时 setEntities 触发的 cleanup 会杀掉 setKg）
+  useEffect(() => {
+    if (mode !== "entities" || kg !== null) return;
+    let alive = true;
+    fetchEntityGraph()
+      .then((g) => {
+        if (alive) setKg(g);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [mode, kg]);
 
   // 实体时间轴：选中实体或窗口变化时重拉（stale-while-revalidate，顶部显示刷新中）
   useEffect(() => {
@@ -688,6 +705,7 @@ export default function ObservePage() {
                   timeline={timeline}
                   days={fetchDays}
                   ndi={mainData?.ndi ?? []}
+                  kg={kg}
                   onOpen={openEntity}
                   onOpenDrawer={(id, label, ndi) => openDrawer({ kind: "entity", entity: id, label, ndi })}
                 />

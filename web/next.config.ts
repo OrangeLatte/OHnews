@@ -22,9 +22,9 @@ const nextConfig: NextConfig = {
       { source: "/command", destination: "/observe", permanent: false },
       { source: "/today", destination: "/observe", permanent: false },
       { source: "/brief", destination: "/observe", permanent: false },
-      // 旧 WATCH 族 → MONITORS
-      { source: "/alerts", destination: "/monitors", permanent: false },
-      { source: "/watch", destination: "/monitors", permanent: false },
+      // 旧 WATCH 族 → /watch?tab=monitors（IA 迁移：/watch 现为真实页面，
+      // 原 /watch→/monitors 重定向已删除——否则 /watch ⇄ /monitors 死循环）
+      { source: "/alerts", destination: "/watch?tab=monitors", permanent: false },
       // 旧 INVESTIGATE/对话族 → CASES（对话并入全局 Agent Dock）
       { source: "/agent", destination: "/cases", permanent: false },
       { source: "/research", destination: "/cases", permanent: false },

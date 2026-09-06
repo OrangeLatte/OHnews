@@ -53,10 +53,20 @@ function fmtInt(n: number): string {
  * 仅 divergence_rise 可与 NDI 板实体/标签匹配时给出读数，其余显示 —。
  */
 function changeDelta(c: QualifiedChange, ndi: NdiRankRow[]): string {
-  if (c.kind !== "divergence_rise" || c.subjects.length === 0) return "—";
-  const subj = c.subjects[0];
-  const row = ndi.find((r) => r.entity === subj || r.label === subj);
-  return row ? `NDI ${row.ndi.toFixed(2)}` : "—";
+  if (c.kind === "divergence_rise" && c.subjects.length > 0) {
+    const subj = c.subjects[0];
+    const row = ndi.find((r) => r.entity === subj || r.label === subj);
+    if (row) return `NDI ${row.ndi.toFixed(2)}`;
+  }
+  const m = c.metrics ?? {};
+  if (c.kind === "narrative_shift" && typeof m.jsd === "number") {
+    const nr = typeof m.n_recent === "number" ? Math.round(m.n_recent) : null;
+    const nb = typeof m.n_base === "number" ? Math.round(m.n_base) : null;
+    const smp = nr !== null && nb !== null ? ` · ${nr}/${nb}` : "";
+    return `JSD ${m.jsd.toFixed(2)}${smp}`;
+  }
+  const first = Object.entries(m)[0];
+  return first ? `${first[0]} ${first[1]}` : "—";
 }
 
 /** 质量门通过率：合格变化 / 当前窗口文章（密度口径；分母 0 时弃权显示 —）。 */

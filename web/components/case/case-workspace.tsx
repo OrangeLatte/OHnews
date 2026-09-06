@@ -56,6 +56,11 @@ function readClaimParamFromUrl(): string {
   return new URLSearchParams(window.location.search).get("claim") ?? "";
 }
 
+/** P1-9 提取精确锚点：ext- chip 深链 ?span=<span_id> → READ 定位原文具体字符范围。 */
+function readSpanParamFromUrl(): string {
+  return new URLSearchParams(window.location.search).get("span") ?? "";
+}
+
 function subscribeUrl(cb: () => void): () => void {
   urlListeners.add(cb);
   window.addEventListener("popstate", cb);
@@ -94,6 +99,7 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
   const [reportOut, setReportOut] = useState<WorkflowOut | null>(null);
   // R6 ?claim= 深链：读一次保留（URL 不清除），透传 HistoryView 高亮主张卡
   const [highlightClaim, setHighlightClaim] = useState("");
+  const [initialSpan, setInitialSpan] = useState("");
 
   const urlMode = useSyncExternalStore(subscribeUrl, getUrlMode, getServerUrlMode);
   const currentMode: Mode = urlMode ?? "read";
@@ -155,6 +161,21 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
     ensureAllEx([activeDoc]);
   }, [activeDoc, ensureBody, ensureAllEx]);
 
+  // P0-3 报告证据门槛统计：基于已加载提取缓存派生（未覆盖全部文档时前端如实标注）
+  const exStats = useMemo(() => {
+    const rids = Object.keys(ex);
+    if (!rids.length) return null;
+    let un = 0;
+    let total = 0;
+    for (const rows of Object.values(ex)) {
+      for (const row of rows) {
+        total += 1;
+        if (!row.human_status || row.human_status === "unreviewed") un += 1;
+      }
+    }
+    return { un, total, covered: rids.length, docsAll: docs.length };
+  }, [ex, docs.length]);
+
   const reloadDocs = useCallback((): Promise<DocRow[]> => {
     return fetch(`/api/cases/${encodeURIComponent(caseId)}/documents`)
       .then((r) => r.json())
@@ -194,6 +215,8 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
         }
         // ?claim= 深链（R6 类型化回链）：异步回调内读一次（SSR 安全，无同步 setState）
         setHighlightClaim(readClaimParamFromUrl());
+        // ?span= 深链（P1-9 提取精确锚点）：同模式读一次，交 ReadMode 定位
+        setInitialSpan(readSpanParamFromUrl());
         // ResearchState 接线（阶段2 单一状态真源）：Case 上下文 + 激活文档 + report 草稿产物
         setCaseContext(caseId, d.case.question);
         setActiveDocs(
@@ -349,8 +372,19 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
     );
   }
 
+  const caseClosed = detail?.case?.status === "closed";
+  const roBusy = busy || caseClosed;
+
   return (
     <div className="space-y-4">
+      {caseClosed ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-800 dark:text-amber-200"
+        >
+          {t("case.closedReadonly")}
+        </div>
+      ) : null}
       {busy ? (
         <div className="fixed inset-x-0 top-0 z-40 h-0.5 overflow-hidden" role="progressbar" aria-label={t("case.running")}>
           <div className="h-full w-1/3 animate-[pulse_1s_ease-in-out_infinite] bg-sky-500" />
@@ -405,7 +439,8 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
           setActiveDoc={setActiveDoc}
           ex={ex}
           bodies={bodies}
-          busy={busy}
+          initialSpan={initialSpan}
+          busy={roBusy}
           dissecting={dissecting}
           onDissect={runDissect}
           onReview={reviewExtraction}
@@ -417,7 +452,7 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
         <ElementMatrix
           caseId={caseId}
           docs={docs}
-          busy={busy}
+          busy={roBusy}
           dissecting={dissecting}
           onDissect={runDissect}
           sourceTier={sourceTier}
@@ -431,7 +466,7 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
           docs={docs}
           ex={ex}
           ensureAllEx={ensureAllEx}
-          busy={busy}
+          busy={roBusy}
           setBusy={setBusy}
           cmpOut={cmpOut}
           setCmpOut={setCmpOut}
@@ -444,11 +479,12 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
         <ReportView
           caseId={caseId}
           caseQuestion={detail?.case.question ?? ""}
-          busy={busy}
+          busy={roBusy}
           setBusy={setBusy}
           reportOut={reportOut}
           setReportOut={setReportOut}
           historyRuns={detail?.analysis_runs}
+          exStats={exStats}
         />
       ) : null}
 
@@ -456,7 +492,7 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
         <HistoryView
           caseId={caseId}
           detail={detail}
-          busy={busy}
+          busy={roBusy}
           setBusy={setBusy}
           refreshDetail={refreshDetail}
           highlightClaim={highlightClaim}

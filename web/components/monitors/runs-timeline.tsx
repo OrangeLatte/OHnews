@@ -14,7 +14,7 @@ export type MonitorRunRow = {
   finished_at: string;
   error: string;
   /** P0-B：run 终态输出（命中数/增量数）；null = 无输出，诚实不显示。 */
-  output?: { hits?: number; new_articles?: number; stage?: string } | null;
+  output?: { hits?: number; new_articles?: number; stage?: string; window_applied?: boolean } | null;
 };
 
 export function runTone(status: string): Tone {
@@ -52,7 +52,7 @@ export function RunsTimeline({
   }
   return (
     <ul className="relative space-y-3 border-l border-dashed border-border pl-4">
-      {runs.map((r) => {
+      {runs.slice(-30).map((r) => {
         const tone = runTone(r.status);
         const label = t(`monitors.runStatus.${r.status}`);
         return (
@@ -75,6 +75,14 @@ export function RunsTimeline({
             {r.output && (
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {t("monitors.runHits", { n: r.output.hits ?? 0, m: r.output.new_articles ?? 0 })}
+                {r.output.window_applied === false && (
+                  <span
+                    className="ml-1 rounded border border-amber-500/50 px-1 py-px text-[10px] text-amber-700 dark:text-amber-300"
+                    title={t("monitors.staleScopeTitle")}
+                  >
+                    {t("monitors.staleScope")}
+                  </span>
+                )}
               </p>
             )}
             {r.error && <p className="mt-0.5 text-xs text-[#b91c1c] dark:text-[#f87171]">{r.error}</p>}

@@ -159,6 +159,7 @@ export type ReportInputs = {
   n_challenge_runs: number;
   n_compare_runs: number;
   truncated: boolean;
+  n_unreviewed_extractions?: number;
 };
 
 export type WorkflowOut = {

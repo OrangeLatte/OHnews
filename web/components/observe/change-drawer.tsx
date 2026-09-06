@@ -521,7 +521,7 @@ export function ChangeDrawer({
           </button>
           <button
             type="button"
-            onClick={() => router.push("/monitors?create=1")}
+            onClick={() => router.push("/watch?tab=monitors&create=1")}
             className="rounded-[6px] border px-2.5 py-1 text-xs transition-colors hover:bg-muted/60"
           >
             {t("observe.drawer.createMonitor")}

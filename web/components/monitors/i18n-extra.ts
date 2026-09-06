@@ -70,10 +70,10 @@ export const EXTRA: Record<string, Pair> = {
   "monitors.loadFailed": { en: "Failed to load monitors.", zh: "监测器加载失败。" },
   "monitors.emptyTitle": { en: "No monitors yet", zh: "尚无监测器" },
   "monitors.emptyBody": {
-    en: "Monitors watch a source / case stream and surface incremental updates for your HITL decision. Configure collection in SOURCES first; once data flows, monitors are attached to a source or Case.",
-    zh: "监测器观察信源 / Case 数据流，产生增量更新并等待你复核（HITL）。请先到 SOURCES 配置采集；数据流动后即可在信源或 Case 上挂载监测器。",
+    en: "Monitors watch a source / case stream and surface incremental updates for your HITL decision. Configure collection in WATCH (source management) first; once data flows, monitors are attached to a source or Case.",
+    zh: "监测器观察信源 / Case 数据流，产生增量更新并等待你复核（HITL）。请先到 WATCH·信源管理配置采集；数据流动后即可在信源或 Case 上挂载监测器。",
   },
-  "monitors.goSources": { en: "Go to SOURCES →", zh: "前往 SOURCES →" },
+  "monitors.goSources": { en: "Go to source management →", zh: "前往信源管理 →" },
   "monitors.allReviewed": { en: "All updates reviewed.", zh: "全部更新已复核。" },
   "monitors.reviewing": { en: "Recording decision…", zh: "记录决策中…" },
   "monitors.runStatus.succeeded": { en: "succeeded", zh: "成功" },

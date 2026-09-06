@@ -5,14 +5,13 @@ import { SearchBar } from "@/components/search/search-bar";
 import { LOCALES } from "@/lib/i18n/locales";
 import { useLocale, useT } from "@/lib/i18n/use-t";
 
-/* Clean-slate A7：旧四入口（NOW/INVESTIGATE/WATCH/MEMORY）判 REPLACE，导航换新六空间。
-   label 显示走 t(key)（P1-8 审计：中文 UI 不得仍显英文 OBSERVE/CASES；t 缺键回退 en）。 */
+/* IA 迁移：顶层收敛为四空间 NOW/INVESTIGATE/WATCH/MEMORY（旧 /sources /monitors
+   并入 /watch 双 tab，路由由薄壳 redirect 兜底）。label 走 t(key)（缺键回退 en）。 */
 const NAV: { href: string; no: string; key: string }[] = [
-  { href: "/observe", no: "01", key: "nav.observe" },
-  { href: "/cases", no: "02", key: "nav.cases" },
-  { href: "/sources", no: "03", key: "nav.sources" },
-  { href: "/monitors", no: "04", key: "nav.monitors" },
-  { href: "/archive", no: "05", key: "nav.archive" },
+  { href: "/observe", no: "01", key: "nav.now" },
+  { href: "/cases", no: "02", key: "nav.investigate" },
+  { href: "/watch", no: "03", key: "nav.watch" },
+  { href: "/archive", no: "04", key: "nav.memory" },
 ];
 
 function LangSwitcher() {
@@ -64,9 +63,6 @@ export function HeaderNav() {
           >
             <span className="paper-kicker !text-muted-foreground/70">{n.no}</span>
             <span className="paper-kicker !text-foreground">{t(n.key)}</span>
-            <span className="hidden text-[11px] text-muted-foreground lg:inline">
-              {t(n.key)}
-            </span>
           </Link>
         ))}
         <span className="ml-auto flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5">
