@@ -80,7 +80,7 @@ from oh_storage.bronze_parquet import ParquetBronzeWriter
 from oh_storage.connection import connect
 from oh_storage.research_store import ResearchStore
 from oh_storage.sqlite_store import SqliteStore
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 # --- SSE 总线 v0 ------------------------------------------------------------
 
@@ -158,6 +158,28 @@ class PlanRequestBody(BaseModel):
 
     case_id: str
     question: str = ""
+
+
+class TrackEventIn(BaseModel):
+    """前端埋点事件（阶段 1-e 闭集）。"""
+
+    event: Literal[
+        "briefing_viewed",
+        "change_opened",
+        "change_dismissed_as_noise",
+        "evidence_opened",
+        "source_opened",
+        "counter_evidence_requested",
+        "insufficient_evidence_seen",
+        "investigation_started",
+        "judgment_saved",
+        "judgment_change_type",
+        "watch_created",
+        "watch_update_reviewed",
+        "case_created",
+        "case_closed",
+    ]
+    session: str = Field(min_length=1)
 
 
 class _WatchLike:
@@ -1390,6 +1412,11 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
     @app.get("/api/archive/papers", response_model=list[AgentPaper])
     def archive_papers() -> list[AgentPaper]:
         return [AgentPaper.model_validate(x) for x in _archive().list_papers()]
+
+    @app.post("/api/track", status_code=204, include_in_schema=False)
+    async def track_sink(body: TrackEventIn) -> Response:
+        """遥测接收点：闭集校验后丢弃（纲领 §11：埋点不影响主路径）。"""
+        return Response(status_code=204)
 
     @app.get("/api/tracking")
     def tracking_list(kind: str | None = None) -> dict[str, Any]:
