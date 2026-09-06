@@ -119,20 +119,21 @@ def test_monitor_run_closed_loop(env: tuple[TestClient, Path]) -> None:
 
     run = _await_monitor_run(client, "mon-loop", run_id)
     assert run["status"] == "succeeded" and run["error"] == ""
-    assert run["output"] == {
-        "stage": "succeeded",
-        "hits": 2,
-        "new_articles": 2,
-        "window": "7d",
-    }
+    assert run["output"]["hits"] == 2 and run["output"]["window_applied"] is True
+    assert run["output"]["window_start"] is not None
 
     # 无快照 → 首次运行语义：全部命中计为增量
     pending = client.get("/api/monitors/mon-loop/updates").json()
     assert len(pending) == 1
     upd = pending[0]
     assert upd["run_id"] == run_id
-    assert upd["summary"] == "首次运行：命中 2 篇相关文档"
-    assert upd["delta"] == {"new_articles": 2, "total_hits": 2, "window": "7d"}
+    assert upd["summary"] == "首次运行：窗口 7d 内命中 2 篇相关文档"
+    assert upd["delta"] == {
+        "new_articles": 2,
+        "total_hits": 2,
+        "window": "7d",
+        "window_applied": True,
+    }
     assert sorted(upd["evidence_refs"]) == sorted([k_title, k_body])  # 增量文档 item_key
     assert upd["suggested_case_action"] == "new_candidate"
     assert upd["reviewed"] is False
@@ -171,17 +172,27 @@ def test_monitor_run_increment_after_snapshot(env: tuple[TestClient, Path]) -> N
     )
     run2 = client.post("/api/monitors/mon-inc/runs").json()["run_id"]
     run = _await_monitor_run(client, "mon-inc", run2)
-    assert run["output"] == {"stage": "succeeded", "hits": 3, "new_articles": 1, "window": "7d"}
+    assert run["output"]["hits"] == 3 and run["output"]["window_applied"] is True
 
     updates = {u["run_id"]: u for u in client.get("/api/monitors/mon-inc/updates").json()}
     assert set(updates) == {run1, run2}
     u2 = updates[run2]
-    assert u2["summary"] == "相对上次确认快照：新增 1 篇相关文档（窗口 7d，命中共 3 篇）"
-    assert u2["delta"] == {"new_articles": 1, "total_hits": 3, "window": "7d"}
+    assert u2["summary"] == "相对上次确认快照：新增 1 篇相关文档（窗口 7d 内共命中 3 篇）"
+    assert u2["delta"] == {
+        "new_articles": 1,
+        "total_hits": 3,
+        "window": "7d",
+        "window_applied": True,
+    }
     assert u2["evidence_refs"] == [fresh]
     assert u2["suggested_case_action"] == "new_candidate"
     # 快照前的 run1 update 不被改写（审计只追加）
-    assert updates[run1]["delta"] == {"new_articles": 2, "total_hits": 2, "window": "7d"}
+    assert updates[run1]["delta"] == {
+        "new_articles": 2,
+        "total_hits": 2,
+        "window": "7d",
+        "window_applied": True,
+    }
 
 
 def test_confirm_snapshot_gate(env: tuple[TestClient, Path]) -> None:

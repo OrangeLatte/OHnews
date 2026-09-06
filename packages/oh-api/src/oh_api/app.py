@@ -310,6 +310,8 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             _now,
             # P0-B Monitor 执行闭环：按线程惰性构建 bronze 迭代器（后台线程内重取）
             lambda: _bronze().iter_records(),
+            # R10 判断变化线：Belief 快照存储（belief.sqlite）
+            lambda: _beliefs(),
         )
     )
     app.include_router(
@@ -1708,6 +1710,17 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         }
         tld = host.rsplit(".", 1)[-1]
         language = tld_lang.get(tld, "en")
+        method_map = {
+            "rss": "RSS 轮询拉取（公开订阅端点）",
+            "json_api": "JSON API 定期拉取",
+            "html": "浏览器渲染抓取",
+        }
+        freq_map = {"rss": "建议 6h", "json_api": "建议 12h", "html": "建议 1d"}
+        robots = (
+            "RSS 公开端点；仍遵循 robots.txt 与站点条款"
+            if kind == "rss"
+            else "需渲染抓取；尊重 robots.txt 与访问限制，超时退避"
+        )
         return {
             "url": url,
             "suggestion": {
@@ -1718,6 +1731,15 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                 "params": {"url": url},
             },
             "rationale": "启发式建议（主机名/路径/域名后缀推断），注册前请人工确认等级与语言",
+            "preview": {
+                "subject": f"识别主体：{host}（建议 id：{core}）",
+                "method": f"采集方法：{method_map[kind]}",
+                "expected_frequency": f"预计频率：{freq_map[kind]}（可调整）",
+                "robots_policy": f"访问限制：{robots}",
+                "dedupe_strategy": "去重策略：item_key = 规范化 URL + 发布方 + 发布时间",
+                "ingest_plan": "落库方案：bronze parquet（raw+normalized）"
+                "→ silver 标注管线异步处理",
+            },
         }
 
     @app.post("/api/sources")

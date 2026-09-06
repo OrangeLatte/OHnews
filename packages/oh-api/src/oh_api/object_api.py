@@ -25,6 +25,7 @@ from oh_contracts.agent_runtime import (
     WorkspaceContext,
 )
 from oh_contracts.artifacts import Artifact, ArtifactRevision, UserCommit
+from oh_contracts.belief import BeliefCreate, BeliefSnapshot
 from oh_contracts.case import AnalysisRun, Claim, ResearchCase
 from oh_contracts.monitoring import (
     CollectionPlan,
@@ -254,6 +255,7 @@ def build_object_router(
     research_fn: Callable[[], ResearchStore],
     now_fn: Callable[[], datetime],
     bronze_iter_factory: Callable[[], Iterable[BronzeRecord]] | None = None,
+    beliefs_fn: Callable[[], Any] | None = None,
 ) -> APIRouter:
     """对象命令路由。
 
@@ -340,6 +342,38 @@ def build_object_router(
             "monitor_decisions": store.decisions_for_case(case_id),
         }
 
+    @router.post("/api/cases/{case_id}/beliefs", status_code=201)
+    def create_case_belief(case_id: str, body: BeliefCreate) -> BeliefSnapshot:
+        """判断变化线（R10）：用户认知快照，服务端锚定时间并派生 change_type。"""
+        _ensure_case_open(_store(), case_id)
+        factory = beliefs_fn
+        if factory is None:
+            raise HTTPException(503, "belief store unavailable")
+        snap = BeliefSnapshot(
+            snapshot_id=f"bs-{uuid4().hex[:12]}",
+            change_id=body.change_id,
+            subject_id=body.subject_id,
+            subject_label=body.subject_label,
+            stance=body.stance,
+            confidence=body.confidence,
+            rationale=body.rationale,
+            # change_type 派生：同一判断的首次快照=new，其后=revised（对照契约 docstring）。
+            change_type="new" if factory().latest_for_change(body.change_id) is None else "revised",
+            believed_at=now_fn(),
+        )
+        return factory().save(snap)
+
+    @router.get("/api/cases/{case_id}/beliefs")
+    def list_case_beliefs(case_id: str) -> dict:
+        store = _store()
+        if store.get_case(case_id) is None:
+            raise HTTPException(404, case_id)
+        factory = beliefs_fn
+        if factory is None:
+            raise HTTPException(503, "belief store unavailable")
+        rows = factory().timeline(case_id)
+        return {"n": len(rows), "beliefs": [r.model_dump(mode="json") for r in rows]}
+
     @router.post("/api/cases/{case_id}/claims")
     def create_claim(case_id: str, body: ClaimIn) -> dict:
         _ensure_case_open(_store(), case_id)
@@ -362,6 +396,23 @@ def build_object_router(
         )
         store.add_claim(claim)
         return claim.model_dump()
+
+    @router.post("/api/claims/{claim_id}/confirm")
+    def confirm_claim(claim_id: str) -> dict:
+        """用户终审：user_confirmed 只能由此显式给出（引擎 verdict 不可冒充确认）。"""
+        store = _store()
+        claim = store.get_claim(claim_id)
+        if claim is None:
+            raise HTTPException(404, f"claim not found: {claim_id}")
+        if claim.status == "user_confirmed":
+            return {"claim_id": claim_id, "status": "user_confirmed", "confirmed": True}
+        store.update_claim_status(claim_id, "user_confirmed")
+        return {
+            "claim_id": claim_id,
+            "case_id": claim.case_id,
+            "status": "user_confirmed",
+            "confirmed": True,
+        }
 
     @router.post("/api/cases/{case_id}/documents")
     def attach_document(case_id: str, doc: DocumentIn) -> dict:

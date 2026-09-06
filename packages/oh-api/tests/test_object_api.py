@@ -372,7 +372,7 @@ def test_report_feedback_passthrough_pins_version_chain(app_env: tuple[TestClien
     assert out2["output"]["feedback"] == "请补充九月决议的概率区间并引用挑战问题"
     assert out2["output"]["artifact_id"] == out1["output"]["artifact_id"]
     assert out2["output"]["revised_from"] == out1["output"]["revision_id"]
-    assert out2["output"]["prompt_version"] == "report-v1"
+    assert out2["output"]["prompt_version"] == "report-v2"
 
 
 def test_async_protocol_idempotent_cancel(app_env: tuple[TestClient, Path]) -> None:
@@ -656,6 +656,30 @@ def test_challenge_gate_and_history_enrichment(client: TestClient) -> None:
     assert any(
         r["kind"] == "challenge" and r["status"] == "succeeded" for r in detail["analysis_runs"]
     )
+
+
+def test_confirm_claim_user_gate(client: TestClient) -> None:
+    """R4：user_confirmed 只能由用户显式 confirm 给出；重复幂等；未知 404。"""
+    case = {**CASE, "case_id": "case-cg1"}
+    assert client.post("/api/cases", json=case).status_code == 200
+    r = client.post(
+        "/api/cases/case-cg1/claims",
+        json={"statement": "测试主张", "kind": "factual"},
+    )
+    assert r.status_code == 200
+    cid = r.json()["claim_id"]
+    assert r.json()["status"] == "unverified"
+
+    ok = client.post(f"/api/claims/{cid}/confirm")
+    assert ok.status_code == 200 and ok.json()["status"] == "user_confirmed"
+    # 幂等重复确认
+    again = client.post(f"/api/claims/{cid}/confirm")
+    assert again.status_code == 200 and again.json()["confirmed"] is True
+    # detail 中状态可读回
+    detail = client.get("/api/cases/case-cg1").json()
+    assert detail["claims"][0]["status"] == "user_confirmed"
+    # 未知 claim → 404
+    assert client.post("/api/claims/claim-none/confirm").status_code == 404
 
 
 def test_commit_blocks_non_succeeded_report_run(app_env: tuple[TestClient, Path]) -> None:
@@ -1070,3 +1094,41 @@ def test_failed_run_retry_allowed(app_env: tuple[TestClient, Path]) -> None:
     r2 = client.post("/api/cases/case-rt/dissect", json={"document_revision_id": "rev-rt"}).json()
     assert r2["run_id"] != r1["run_id"]
     assert r2["reused"] is False
+
+
+def test_case_belief_snapshot_lineage(client: TestClient) -> None:
+    """R10 判断变化线：快照创建 + change_type 派生（首条 new，其后 revised）。"""
+    r = client.post(
+        "/api/cases",
+        json={
+            "case_id": "case-belief-1",
+            "question": "判断变化线验证",
+            "origin": "question",
+            "created_by": "user",
+            "created_at": "2026-09-03T12:00:00+00:00",
+            "updated_at": "2026-09-03T12:00:00+00:00",
+        },
+    )
+    assert r.status_code == 200
+    body = {
+        "change_id": "claim-b1",
+        "subject_id": "case-belief-1",
+        "subject_label": "日元干预叙事",
+        "stance": "adjust",
+        "confidence": 0.7,
+        "rationale": "新增反证后调整看法",
+    }
+    r1 = client.post("/api/cases/case-belief-1/beliefs", json=body)
+    assert r1.status_code == 201, r1.text
+    snap1 = r1.json()
+    assert snap1["change_type"] == "new"
+    assert snap1["stance"] == "adjust"
+    r2 = client.post("/api/cases/case-belief-1/beliefs", json={**body, "stance": "reverse"})
+    assert r2.status_code == 201
+    assert r2.json()["change_type"] == "revised"
+    lst = client.get("/api/cases/case-belief-1/beliefs")
+    assert lst.status_code == 200
+    data = lst.json()
+    assert data["n"] == 2
+    assert [b["stance"] for b in data["beliefs"]] == ["adjust", "reverse"]
+    assert client.get("/api/cases/case-none/beliefs").status_code == 404
