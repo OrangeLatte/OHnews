@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 from oh_storage.connection import connect
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 10
 
 _DDL_V1 = """
 CREATE TABLE IF NOT EXISTS cases (
@@ -349,6 +349,21 @@ UPDATE monitors SET status = 'active' WHERE status = 'needs_review';
         # 文档唯一标识：入案文章保留原题（同源多文可区分，用户要求）。
         """
 ALTER TABLE document_revisions ADD COLUMN title TEXT NOT NULL DEFAULT '';
+""",
+    ),
+    (
+        9,
+        # Monitor 执行闭环（P0-B）：阶段/计数随 run 终态持久化，轮询端点可取回
+        # （模式同 analysis_runs.output_json v4）。
+        """
+ALTER TABLE monitor_runs ADD COLUMN output_json TEXT NOT NULL DEFAULT '';
+""",
+    ),
+    (
+        10,
+        # Archive 闭环（P0-C）：UserCommit 记录确认者（HITL 确认主体）。
+        """
+ALTER TABLE user_commits ADD COLUMN created_by TEXT NOT NULL DEFAULT '';
 """,
     ),
 )
@@ -708,6 +723,21 @@ class ResearchStore:
         self._conn.commit()
         return cur.rowcount
 
+    def reap_stale_monitor_runs(self, finished_at: str = "") -> int:
+        """启动清理：monitor_runs 遗留 queued/running → failed。
+
+        僵尸 run 若不清理，POST /runs 的幂等复用会永久命中它，
+        导致后续运行请求永远不被真实执行。
+        """
+        cur = self._conn.execute(
+            "UPDATE monitor_runs SET status = 'failed',"
+            " error = 'interrupted by restart', finished_at = ?"
+            " WHERE status IN ('queued','running')",
+            (finished_at,),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
     def cancel_analysis_run(self, run_id: str, finished_at: str = "") -> bool:
         """用户取消：仅 queued/running 可取消；终态不可逆转。"""
         cur = self._conn.execute(
@@ -885,13 +915,15 @@ class ResearchStore:
                 (revision_id, artifact_id),
             )
             self._conn.execute(
-                "INSERT INTO user_commits (commit_id, revision_id, user_note, committed_at)"
-                " VALUES (?,?,?,?)",
+                "INSERT INTO user_commits"
+                " (commit_id, revision_id, user_note, committed_at, created_by)"
+                " VALUES (?,?,?,?,?)",
                 (
                     commit.commit_id,
                     commit.revision_id,
                     commit.user_note,
                     commit.committed_at,
+                    commit.created_by,
                 ),
             )
         return {"artifact_id": artifact_id, "superseded_revision_id": superseded or ""}
@@ -923,7 +955,8 @@ class ResearchStore:
 
     def artifact_revisions(self, artifact_id: str) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT * FROM artifact_revisions WHERE artifact_id = ? ORDER BY created_at",
+            # rowid 平局决胜：同 microsecond 创建的版本按插入序稳定排列（版本链语义）
+            "SELECT * FROM artifact_revisions WHERE artifact_id = ? ORDER BY created_at, rowid",
             (artifact_id,),
         ).fetchall()
         return [
@@ -937,10 +970,12 @@ class ResearchStore:
             "SELECT a.*, r.revision_id AS current_revision_id,"
             " r.created_at AS revision_created_at,"
             " c.commit_id AS commit_id, c.user_note AS commit_note,"
-            " c.committed_at AS committed_at"
+            " c.committed_at AS committed_at, c.created_by AS confirmed_by,"
+            " cs.created_by AS case_created_by"
             " FROM artifacts a JOIN artifact_revisions r"
             " ON a.current_revision_id = r.revision_id"
             " JOIN user_commits c ON c.revision_id = r.revision_id"
+            " LEFT JOIN cases cs ON cs.case_id = a.case_id"
             " WHERE r.status = 'committed'"
         )
         params: tuple = ()
@@ -951,12 +986,27 @@ class ResearchStore:
         return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
 
     def monitor_runs_for(self, monitor_id: str, limit: int = 50) -> list[dict]:
-        """监测器运行时间线（新→旧）。"""
+        """监测器运行时间线（新→旧）；output_json 解析为 output（空则 None）。"""
         rows = self._conn.execute(
-            "SELECT run_id, monitor_id, status, started_at, finished_at, error"
+            "SELECT run_id, monitor_id, status, started_at, finished_at, error, output_json"
             " FROM monitor_runs WHERE monitor_id = ?"
-            " ORDER BY started_at DESC LIMIT ?",
+            " ORDER BY started_at DESC, rowid DESC LIMIT ?",
             (monitor_id, limit),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["output"] = _loads(d.pop("output_json", "") or "", None)
+            out.append(d)
+        return out
+
+    def artifacts_for_case(self, case_id: str) -> list[dict]:
+        """某 Case 的产物列表（chat case_context 卡等只读汇总用；不含正文）。"""
+        rows = self._conn.execute(
+            "SELECT artifact_id, case_id, klass, title, report_type, created_at,"
+            " current_revision_id FROM artifacts WHERE case_id = ?"
+            " ORDER BY created_at DESC",
+            (case_id,),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -1085,6 +1135,41 @@ class ResearchStore:
             (run.run_id, run.monitor_id, run.status, run.started_at, run.finished_at, run.error),
         )
         self._conn.commit()
+
+    def finish_monitor_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        finished_at: str = "",
+        error: str = "",
+        output_json: str = "",
+    ) -> bool:
+        """回写 MonitorRun 状态：status 必写；其余字段非空才写（running 过渡不擦历史值）。"""
+        sets = ["status = ?"]
+        params: list[str] = [status]
+        fields = (("finished_at", finished_at), ("error", error), ("output_json", output_json))
+        for col, val in fields:
+            if val:
+                sets.append(f"{col} = ?")  # noqa: S608
+                params.append(val)
+        params.append(run_id)
+        cur = self._conn.execute(
+            "UPDATE monitor_runs SET " + ", ".join(sets) + " WHERE run_id = ?",  # noqa: S608
+            params,
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def active_monitor_run(self, monitor_id: str) -> dict | None:
+        """该 monitor 是否已有 queued/running run（幂等复用判定）。"""
+        row = self._conn.execute(
+            "SELECT run_id, status FROM monitor_runs"
+            " WHERE monitor_id = ? AND status IN ('queued','running')"
+            " ORDER BY started_at DESC, rowid DESC LIMIT 1",
+            (monitor_id,),
+        ).fetchone()
+        return dict(row) if row else None
 
     def add_monitor_update(self, update: MonitorUpdate) -> None:
         self._conn.execute(
