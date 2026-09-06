@@ -76,3 +76,4 @@ class UserCommit(_StrictBase):
     revision_id: str
     user_note: str = ""
     committed_at: str
+    created_by: str = ""  # 确认者（v10 起；旧库迁移默认空串诚实降级）
