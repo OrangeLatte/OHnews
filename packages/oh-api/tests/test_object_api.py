@@ -1132,3 +1132,41 @@ def test_case_belief_snapshot_lineage(client: TestClient) -> None:
     assert data["n"] == 2
     assert [b["stance"] for b in data["beliefs"]] == ["adjust", "reverse"]
     assert client.get("/api/cases/case-none/beliefs").status_code == 404
+
+
+def test_extraction_deep_link_detail(app_env: tuple[TestClient, Path]) -> None:
+    """P1-9 证据深链：单条提取端点返回文档版本+首个有效 span；404 未知 id。"""
+    from oh_contracts.case import ElementExtraction, EvidenceSpan
+    from oh_storage.research_store import ResearchStore
+
+    client, tmp = app_env
+    store = ResearchStore.open(tmp / "research.sqlite")
+    store.add_document_revision(
+        "rev-dl",
+        "doc-dl",
+        source_id="wscn",
+        body="美联储表示通胀正在放缓。",
+        fetched_at="2026-09-03T12:00:00+00:00",
+    )
+    store.add_span(
+        EvidenceSpan(
+            span_id="sp-dl", document_revision_id="rev-dl", char_start=0, char_end=4, quote="美联储"
+        )
+    )
+    store.add_extraction(
+        ElementExtraction(
+            extraction_id="ex-dl",
+            case_id="case-t1",
+            document_revision_id="rev-dl",
+            element_key="actor",
+            normalized_value="美联储",
+            span_ids=["sp-dl"],
+            confidence=0.9,
+        )
+    )
+    store.close()
+
+    d = client.get("/api/extractions/ex-dl").json()
+    assert d["document_revision_id"] == "rev-dl"
+    assert d["span"]["span_id"] == "sp-dl" and d["span"]["char_end"] == 4
+    assert client.get("/api/extractions/ex-none").status_code == 404

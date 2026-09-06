@@ -1179,6 +1179,33 @@ def build_workflow_router(
             out.append(row)
         return out
 
+    @router.get("/api/extractions/{extraction_id}")
+    def extraction_detail(extraction_id: str) -> dict:
+        """单条提取解析（证据深链）：定位其文档版本与首个有效字符范围。"""
+        store = _store()
+        ex = store.get_extraction(extraction_id)
+        if not ex:
+            raise HTTPException(404, "extraction not found")
+        spans = store.spans_by_ids(ex["span_ids"])
+        first = next((s for s in spans if s.char_end > s.char_start and s.char_start >= 0), None)
+        return {
+            "extraction_id": ex["extraction_id"],
+            "document_revision_id": ex["document_revision_id"],
+            "element_key": ex["element_key"],
+            "normalized_value": ex.get("normalized_value", ""),
+            "human_status": ex.get("human_status", ""),
+            "set_status": ex.get("set_status", ""),
+            "span": (
+                {
+                    "span_id": first.span_id,
+                    "char_start": first.char_start,
+                    "char_end": first.char_end,
+                }
+                if first
+                else None
+            ),
+        }
+
     @router.post("/api/extractions/{extraction_id}/review")
     def review_extraction(extraction_id: str, body: ExtractionReviewIn) -> dict:
         """元素 HITL 复核：confirmed（认可拆解）/ rejected（人工否决）。"""

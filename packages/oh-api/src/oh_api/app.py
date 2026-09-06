@@ -618,8 +618,12 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                     continue
                 title = str(norm.get("title") or "")
                 body = str(norm.get("body") or "")
-                if query and query.lower() not in (title + "\n" + body).lower():
-                    continue
+                t_hit = True
+                if query:
+                    ql = query.lower()
+                    if ql not in title.lower() and ql not in body.lower():
+                        continue
+                    t_hit = ql in title.lower()
                 if element and value:
                     d = silver.get_dissection(rec.item_key)
                     els = d.get("elements") if isinstance(d, dict) else None
@@ -642,9 +646,13 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                         "body_preview": _strip_tags(body)[:200],
                         "cased": rec.item_key in cased,
                         "dissected": rec.item_key in dissected,
+                        "title_match": t_hit,
                     }
                 )
-            rows.sort(key=lambda r: str(r["published_at"]), reverse=True)
+            rows.sort(
+                key=lambda r: (bool(r["title_match"]), str(r["published_at"])),
+                reverse=True,
+            )
             return rows[:limit]
 
         rows = _search(q.strip())

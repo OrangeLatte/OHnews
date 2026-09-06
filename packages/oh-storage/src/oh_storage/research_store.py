@@ -771,6 +771,17 @@ class ResearchStore:
         rows = self._conn.execute(sql, (document_revision_id,)).fetchall()
         return [{**dict(r), "span_ids": _loads(r["span_ids"], [])} for r in rows]
 
+    def get_extraction(self, extraction_id: str) -> dict | None:
+        """单条提取（含所属文档版本），供证据深链定位到精确字符范围。"""
+        row = self._conn.execute(
+            "SELECT * FROM extractions WHERE extraction_id = ?", (extraction_id,)
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["span_ids"] = _loads(row["span_ids"], [])
+        return d
+
     def set_extraction_human_status(self, extraction_id: str, human_status: str) -> bool:
         cur = self._conn.execute(
             "UPDATE extractions SET human_status = ? WHERE extraction_id = ?",

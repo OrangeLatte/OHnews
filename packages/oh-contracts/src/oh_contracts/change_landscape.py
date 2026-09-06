@@ -99,6 +99,8 @@ class QualifiedChange(_StrictBase):
     subjects: list[str] = Field(default_factory=list)
     at: str | None = None
     evidence_articles: list[ChangeEvidenceArticle] = Field(default_factory=list)
+    # 检测器输出的数值读数（jsd/n_recent/n_base 等），供变化卡真实量化呈现
+    metrics: dict[str, float] = Field(default_factory=dict)
 
 
 class QualityWarning(_StrictBase):

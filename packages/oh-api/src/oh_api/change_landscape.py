@@ -400,6 +400,9 @@ def _qualified_changes(
                     base_records=base_records,
                     bronze_by_key=bronze_by_key,
                 ),
+                metrics={
+                    k: float(v) for k, v in sig.metrics.items() if isinstance(v, (int, float))
+                },
             )
         )
         for c in (ev.supporting or ev.context or [])[:2]:
