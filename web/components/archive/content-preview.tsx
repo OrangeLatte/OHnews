@@ -8,6 +8,7 @@
 
 import { STRIPES, type TFunc } from "@/components/monitors/bits";
 import { klassLabel } from "@/lib/i18n/labels";
+import { EvidenceRefChips } from "./evidence-refs";
 import { PressRender } from "./press-render";
 
 function textify(v: unknown): string {
@@ -38,6 +39,9 @@ type SectionItem = {
   title?: unknown;
   klass?: unknown;
   content?: unknown;
+  /** 研究报告分节形状 {title, body, evidence_refs}：完整正文（不只章节标题）。 */
+  body?: unknown;
+  evidence_refs?: unknown;
 };
 
 export function ContentPreview({
@@ -47,6 +51,7 @@ export function ContentPreview({
   title,
   createdAt,
   commitId,
+  caseId,
 }: {
   content: unknown;
   t: TFunc;
@@ -56,6 +61,8 @@ export function ContentPreview({
   title?: string;
   createdAt?: string;
   commitId?: string;
+  /** 来源 Case：证据 chips 回链与"来源 Case"链接行；缺失则诚实降级为纯文本。 */
+  caseId?: string;
 }) {
   if (content == null) {
     return <p className="text-xs text-muted-foreground">{t("archive.contentNone")}</p>;
@@ -68,7 +75,16 @@ export function ContentPreview({
     return <p className="text-xs text-muted-foreground">{t("archive.contentNone")}</p>;
   }
   if (klass === "press_edition" && dict && Array.isArray(dict.sections)) {
-    return <PressRender content={content} t={t} title={title} createdAt={createdAt} commitId={commitId} />;
+    return (
+      <PressRender
+        content={content}
+        t={t}
+        title={title}
+        createdAt={createdAt}
+        commitId={commitId}
+        caseId={caseId}
+      />
+    );
   }
 
   const note = dict && typeof dict.note === "string" ? (dict.note as string) : "";
@@ -76,6 +92,17 @@ export function ContentPreview({
 
   return (
     <div className="space-y-2">
+      {caseId ? (
+        <p className="text-[11px] text-muted-foreground">
+          {t("archive.sourceCase")}{" "}
+          <a
+            href={`/cases/${encodeURIComponent(caseId)}`}
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            {caseId}
+          </a>
+        </p>
+      ) : null}
       {note && (
         <p className="whitespace-pre-wrap border-l-2 border-border pl-2 text-xs italic text-muted-foreground">
           {t("archive.noteLabel")}: {cap(note, 600)}
@@ -86,7 +113,14 @@ export function ContentPreview({
           {rawSections.map((s, i) => {
             const title = typeof s.title === "string" ? s.title : (typeof s.artifact_id === "string" ? s.artifact_id : `#${i + 1}`);
             const klass = typeof s.klass === "string" ? s.klass : "";
-            const body = cap(textify(s.content), 400);
+            // 报告分节 {title, body, evidence_refs} 无 content 字段：body 即完整正文
+            // （纯字符串不截断——硬验收要求读到完整正文）；嵌套对象仍走 JSON 兜底截断。
+            const rawBody = s.content ?? s.body;
+            const bodyText = textify(rawBody);
+            const body = typeof rawBody === "string" ? bodyText : cap(bodyText, 400);
+            const refs = Array.isArray(s.evidence_refs)
+              ? s.evidence_refs.map((x) => String(x)).filter(Boolean)
+              : [];
             return (
               <li key={`${title}-${i}`} className="rounded-lg border bg-muted/30 p-2">
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -99,6 +133,7 @@ export function ContentPreview({
                   )}
                 </div>
                 {body && <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">{body}</p>}
+                <EvidenceRefChips refs={refs} caseId={caseId} t={t} />
               </li>
             );
           })}

@@ -9,6 +9,7 @@
 
 import { STRIPES, type TFunc } from "@/components/monitors/bits";
 import { klassLabel } from "@/lib/i18n/labels";
+import { EvidenceRefChips } from "./evidence-refs";
 
 type EditionSection = {
   artifact_id?: unknown;
@@ -19,10 +20,6 @@ type EditionSection = {
 
 const TEXT_KEYS = ["body", "text", "summary", "answer", "report"] as const;
 const REF_KEYS = ["title", "id", "ref", "source", "url"] as const;
-
-function cap(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}…` : s;
-}
 
 function refText(r: unknown): string {
   if (typeof r === "string") return r;
@@ -40,26 +37,14 @@ function refText(r: unknown): string {
   return r == null ? "" : String(r);
 }
 
-/** evidence_refs 尾部小字 mono chips（有才渲染）。 */
-function RefChips({ refs }: { refs: unknown[] }) {
-  const chips = refs.map(refText).filter(Boolean).map((s) => cap(s, 48));
-  if (chips.length === 0) return null;
-  return (
-    <p className="mt-1 flex flex-wrap gap-1">
-      {chips.map((c, i) => (
-        <span
-          key={`${c}-${i}`}
-          className="rounded border bg-muted/40 px-1 py-0.5 font-mono text-[10px] text-muted-foreground"
-        >
-          {c}
-        </span>
-      ))}
-    </p>
-  );
+/** evidence_refs 尾部小字 mono chips（有才渲染）；case_id 存在时点击回链。 */
+function RefChips({ refs, caseId, t }: { refs: unknown[]; caseId?: string; t: TFunc }) {
+  const chips = refs.map(refText).filter(Boolean);
+  return <EvidenceRefChips refs={chips} caseId={caseId} t={t} />;
 }
 
 /** 单个 section 的 content 渲染：string / 子 sections / 常见文本字段 / JSON 兜底。 */
-function SectionBody({ content }: { content: unknown }) {
+function SectionBody({ content, caseId, t }: { content: unknown; caseId?: string; t: TFunc }) {
   if (content == null || content === "") return null;
   if (typeof content === "string") {
     return <p className="whitespace-pre-wrap text-[13px] leading-relaxed">{content}</p>;
@@ -81,7 +66,7 @@ function SectionBody({ content }: { content: unknown }) {
             <div key={i} className="border-t border-dashed border-border pt-1 first:border-t-0 first:pt-0">
               {st && <h5 className="font-paper text-[13px] font-semibold leading-snug">{st}</h5>}
               {body && <p className="whitespace-pre-wrap text-[13px] leading-relaxed">{body}</p>}
-              {refs.length > 0 && <RefChips refs={refs} />}
+              {refs.length > 0 && <RefChips refs={refs} caseId={caseId} t={t} />}
             </div>
           );
         })}
@@ -110,7 +95,17 @@ function SectionBody({ content }: { content: unknown }) {
 }
 
 /** 正文"文章块"：序号 + serif 标题 + klass 徽标 + 细横线 + 内容。 */
-function PressArticle({ section, index, t }: { section: EditionSection; index: number; t: TFunc }) {
+function PressArticle({
+  section,
+  index,
+  t,
+  caseId,
+}: {
+  section: EditionSection;
+  index: number;
+  t: TFunc;
+  caseId?: string;
+}) {
   const rawTitle = typeof section.title === "string" ? section.title : "";
   const rawId = typeof section.artifact_id === "string" ? section.artifact_id : "";
   const title = rawTitle || rawId;
@@ -128,7 +123,7 @@ function PressArticle({ section, index, t }: { section: EditionSection; index: n
         </span>
       )}
       <div className="mt-1.5 border-t border-border pt-1.5">
-        <SectionBody content={section.content} />
+        <SectionBody content={section.content} caseId={caseId} t={t} />
       </div>
     </article>
   );
@@ -140,6 +135,7 @@ export function PressRender({
   title,
   createdAt,
   commitId,
+  caseId,
 }: {
   content: unknown;
   t: TFunc;
@@ -149,6 +145,8 @@ export function PressRender({
   createdAt?: string;
   /** UserCommit id，存在则底部留痕。 */
   commitId?: string;
+  /** 来源 Case：证据 chips 回链；缺失则 chips 为纯文本（诚实降级）。 */
+  caseId?: string;
 }) {
   const dict =
     typeof content === "object" && content != null && !Array.isArray(content)
@@ -182,6 +180,7 @@ export function PressRender({
               section={s}
               index={i}
               t={t}
+              caseId={caseId}
             />
           ))}
         </div>

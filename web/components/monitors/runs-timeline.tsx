@@ -13,6 +13,8 @@ export type MonitorRunRow = {
   started_at: string;
   finished_at: string;
   error: string;
+  /** P0-B：run 终态输出（命中数/增量数）；null = 无输出，诚实不显示。 */
+  output?: { hits?: number; new_articles?: number; stage?: string } | null;
 };
 
 export function runTone(status: string): Tone {
@@ -70,6 +72,11 @@ export function RunsTimeline({
               {t("monitors.started")}: {absTime(r.started_at, lang)}
               {r.finished_at ? ` · ${t("monitors.finished")}: ${absTime(r.finished_at, lang)}` : ""}
             </p>
+            {r.output && (
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {t("monitors.runHits", { n: r.output.hits ?? 0, m: r.output.new_articles ?? 0 })}
+              </p>
+            )}
             {r.error && <p className="mt-0.5 text-xs text-[#b91c1c] dark:text-[#f87171]">{r.error}</p>}
           </li>
         );

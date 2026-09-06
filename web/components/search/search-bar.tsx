@@ -1,13 +1,16 @@
 "use client";
 
 /**
- * 顶栏全局搜索（R7）：300ms debounce 拉取 /api/search，下拉结果报纸风。
+ * 顶栏全局搜索（R7 + P1-A 五类型精确定位）：300ms debounce 拉取 /api/search，下拉结果报纸风。
  *
  * - AbortController 防竞态：新请求发起前中断上一个（含 timer 清理）
  * - q trim 后 <2 字符不请求（对齐后端 search_bronze 最小长度语义）
- * - 文章点击 = 研究此文：取 bronze 全文 → 建 Research Case → 挂载文档 → 跳转工作台
- * - 「原文」次链接仅在文章有 url 时显示（window.open 外跳）
- * - Esc / 外部点击关闭；空结果「无匹配文章」；加载中不阻塞既有列表
+ * - P1-A 分流（结果必带 kind + 稳定 ID，禁止裸跳）：
+ *   article → 研究此文流（取全文建 Case）；event → 有实体跳实体时间线，
+ *   无实体诚实降级 inbox 预填标题前缀（q= 主路径）；entity → 实体时间线；
+ *   case → 案例工作台；monitor → 监测台 open= 深链。任何路径先关浮层。
+ * - 「原文」次链接仅文章有 url 时显示（window.open 外跳）
+ * - Esc / 外部点击关闭；空结果「无匹配」；加载中不阻塞既有列表
  */
 
 import { useRouter } from "next/navigation";
@@ -17,13 +20,19 @@ import { track } from "@/lib/track";
 import { useT } from "@/lib/i18n/use-t";
 import { toast } from "@/components/ui/toast";
 
+type SearchResultKind = "article" | "event" | "entity" | "case" | "monitor";
+
 type SearchResult = {
-  kind: "article" | "event";
+  kind: SearchResultKind;
   item_key?: string;
   id?: string;
   source_id?: string;
-  /** 事件主实体（可选；当前 /api/search 未回传该字段，回传后跳转自动选中实体时间线）。 */
-  entity?: string;
+  /** 事件主实体（P1-A 起后端回传；无实体为 null/缺省 → inbox 降级路径）。 */
+  entity?: string | null;
+  /** case/monitor 状态（后端 P1-A 起回传，可选）。 */
+  status?: string;
+  /** monitor 目标引用（entity:fed 等，可选）。 */
+  target_ref?: string;
   title: string;
   url: string;
   published_at: string | null;
@@ -93,17 +102,8 @@ export function SearchBar() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [active]);
 
-  /** 文章点击 = 研究此文；事件跳 OBSERVE 实体时间线（事件主体实体驱动，30d 窗口）。
-   *  有 entity 时 URL 带上 &entity= 供 observe 页自动选中；无论哪条路径先关浮层。 */
+  /** 文章点击 = 研究此文：取 bronze 全文 → 建 Research Case → 挂载文档 → 跳转工作台。 */
   async function research(item: SearchResult) {
-    if (item.kind === "event" && item.id) {
-      track("change_opened", { objectId: item.id, fromPage: "/search-bar" });
-      setOpen(false);
-      router.push(
-        `/observe?mode=entities&days=30${item.entity ? `&entity=${encodeURIComponent(item.entity)}` : ""}`,
-      );
-      return;
-    }
     if (!item.source_id || !item.item_key || busyId) return;
     const key = item.item_key;
     setBusyId(key);
@@ -140,6 +140,39 @@ export function SearchBar() {
     }
   }
 
+  /** P1-A 五类型分流：kind + 稳定 ID 驱动跳转；任何路径先关浮层，ID 缺失不动（禁止裸跳）。 */
+  function onOpen(item: SearchResult) {
+    setOpen(false);
+    switch (item.kind) {
+      case "event": {
+        if (item.id) track("change_opened", { objectId: item.id, fromPage: "/search-bar" });
+        if (item.entity) {
+          router.push(
+            `/observe?mode=entities&days=30&entity=${encodeURIComponent(item.entity)}`,
+          );
+        } else {
+          // 诚实降级：事件无实体 → inbox 预填标题前缀（CJK 8 字 / 拉丁 12 字符），不裸跳
+          const cjk = /[\u4e00-\u9fff]/.test(item.title);
+          router.push(`/observe?mode=inbox&q=${encodeURIComponent(item.title.slice(0, cjk ? 8 : 12))}`);
+        }
+        return;
+      }
+      case "entity":
+        if (item.id) {
+          router.push(`/observe?mode=entities&days=30&entity=${encodeURIComponent(item.id)}`);
+        }
+        return;
+      case "case":
+        if (item.id) router.push(`/cases/${encodeURIComponent(item.id)}`);
+        return;
+      case "monitor":
+        if (item.id) router.push(`/monitors?open=${encodeURIComponent(item.id)}`);
+        return;
+      default:
+        void research(item);
+    }
+  }
+
   return (
     <div ref={rootRef} className="relative">
       <input
@@ -171,50 +204,56 @@ export function SearchBar() {
                     <div
                       role="button"
                       tabIndex={0}
-                      onClick={() => research(item)}
+                      onClick={() => onOpen(item)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") research(item);
+                        if (e.key === "Enter" || e.key === " ") onOpen(item);
                       }}
                       aria-busy={busy}
                       className="block w-full cursor-pointer px-3 py-2 text-left hover:bg-foreground/5"
                     >
                       <span className="font-paper flex items-center gap-1 truncate text-sm">
-                        {item.kind === "event" && (
-                          <span className="mr-1 border border-black/20 px-1 text-[10px] align-middle">
-                            {t("search.eventTag")}
-                          </span>
-                        )}
+                        <span className="mr-1 shrink-0 border border-black/20 px-1 text-[10px] align-middle">
+                          {t(`search.kind.${item.kind}`)}
+                        </span>
                         {item.title || t("search.untitled")}
                       </span>
                       <span className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                        <span>{item.source_id ?? t("search.eventTag")}</span>
+                        {item.kind === "article" && <span>{item.source_id}</span>}
+                        {item.kind === "event" && <span>{item.entity ?? t("search.eventTag")}</span>}
+                        {item.kind === "entity" && <span className="font-mono">{item.id}</span>}
+                        {item.status && <span>{item.status}</span>}
+                        {item.kind === "monitor" && item.target_ref && (
+                          <span className="font-mono">{item.target_ref}</span>
+                        )}
                         {item.published_at && <span>{fmtDate(item.published_at)}</span>}
                       </span>
                       <span className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
                         {item.snippet}
                       </span>
                     </div>
-                    <div className="flex items-center gap-3 px-3 pb-2 text-[11px]">
-                      <button
-                        type="button"
-                        onClick={() => research(item)}
-                        disabled={busy}
-                        className="border border-foreground/30 px-1.5 py-0.5 hover:!text-primary disabled:opacity-50"
-                      >
-                        {busy ? t("search.researching") : t("search.researchThis")}
-                      </button>
-                      {item.kind === "article" && item.url && (
-                        <a
-                          href={item.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-muted-foreground hover:!text-primary"
+                    {item.kind === "article" && (
+                      <div className="flex items-center gap-3 px-3 pb-2 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => research(item)}
+                          disabled={busy}
+                          className="border border-foreground/30 px-1.5 py-0.5 hover:!text-primary disabled:opacity-50"
                         >
-                          {t("search.openOriginal")} ↗
-                        </a>
-                      )}
-                    </div>
+                          {busy ? t("search.researching") : t("search.researchThis")}
+                        </button>
+                        {item.url && (
+                          <a
+                            href={item.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-muted-foreground hover:!text-primary"
+                          >
+                            {t("search.openOriginal")} ↗
+                          </a>
+                        )}
+                      </div>
+                    )}
                   </li>
                 );
               })}

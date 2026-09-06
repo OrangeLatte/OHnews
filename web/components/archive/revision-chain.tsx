@@ -142,6 +142,7 @@ export function RevisionChain({
   artifactKlass,
   artifactTitle,
   commitId,
+  caseId,
 }: {
   revisions: RevisionWithContent[];
   t: TFunc;
@@ -150,6 +151,8 @@ export function RevisionChain({
   artifactKlass?: string;
   artifactTitle?: string;
   commitId?: string;
+  /** 来源 Case：透传给 ContentPreview，供证据 chips 与"来源 Case"行回链。 */
+  caseId?: string;
 }) {
   const [openRev, setOpenRev] = useState("");
   const [openDiff, setOpenDiff] = useState("");
@@ -240,6 +243,7 @@ export function RevisionChain({
                   title={artifactTitle}
                   createdAt={r.created_at}
                   commitId={commitId}
+                  caseId={caseId}
                 />
               </div>
             )}

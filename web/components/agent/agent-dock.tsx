@@ -147,7 +147,19 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-function EntryCard({ entry, youLabel, agentLabel, onConfirm }: { entry: ChatEntry; youLabel: string; agentLabel: string; onConfirm?: (msg: string) => void }) {
+function EntryCard({
+  entry,
+  youLabel,
+  agentLabel,
+  onConfirm,
+  onSuggest,
+}: {
+  entry: ChatEntry;
+  youLabel: string;
+  agentLabel: string;
+  onConfirm?: (msg: string) => void;
+  onSuggest?: (msg: string) => void;
+}) {
   const mt: MessageType = entry.message_type ?? "answer";
   return (
     <div className={`ag-card ${entry.role === "user" ? "ag-echo" : ""}`}>
@@ -158,7 +170,7 @@ function EntryCard({ entry, youLabel, agentLabel, onConfirm }: { entry: ChatEntr
         </span>
       </p>
       {entry.text ? <p className="whitespace-pre-wrap break-words">{entry.text}</p> : null}
-      <CardList cards={entry.cards} onConfirm={onConfirm} />
+      <CardList cards={entry.cards} onConfirm={onConfirm} onSuggest={onSuggest} />
     </div>
   );
 }
@@ -297,8 +309,9 @@ function ChatTab({
       });
   };
 
-  const send = (): void => {
-    const text = draft.trim();
+  /** 发送通道（阶段3-2 T6 收敛）：confirmed=true 仅限 confirm_action 卡显式确认
+   * （服务端 bypass 写预览门）；建议卡/普通输入一律走正常通道（服务端仍预览）。 */
+  const sendText = (text: string, confirmed: boolean, clearDraft: boolean): void => {
     if (!text || sending) return;
     setSending(true);
     const ensureThread = threadId
@@ -310,10 +323,11 @@ function ChatTab({
     ensureThread
       .then((tid) => {
         setEntries((prev) => [...prev, { role: "user", text }]);
-        setDraft("");
+        if (clearDraft) setDraft("");
         return postJson<ChatReply>("/api/chat", {
           message: text,
           thread_id: tid,
+          ...(confirmed ? { confirmed_action: { message: text, params: {} } } : {}),
           ...(caseId ? { case_id: caseId } : {}),
         }).then((res) => {
           const cards = Array.isArray(res.cards) ? (res.cards as CardData[]) : undefined;
@@ -343,50 +357,18 @@ function ChatTab({
       .finally(() => setSending(false));
   };
 
+  const send = (): void => {
+    sendText(draft.trim(), false, true);
+  };
+
   /** P0-1 确认执行：confirm_action 卡上用户显式确认后回发（服务端 confirmed 通道 bypass 预览门）。 */
   const confirmSend = (msg: string): void => {
-    if (sending || !msg) return;
-    setSending(true);
-    const ensureThread = threadId
-      ? Promise.resolve(threadId)
-      : createThread(msg.slice(0, 48)).then((tid) => {
-          onThreadChange(tid);
-          return tid;
-        });
-    ensureThread
-      .then((tid) => {
-        setEntries((prev) => [...prev, { role: "user", text: msg }]);
-        return postJson<ChatReply>("/api/chat", {
-          message: msg,
-          thread_id: tid,
-          confirmed_action: { message: msg, params: {} },
-          ...(caseId ? { case_id: caseId } : {}),
-        }).then((res) => {
-          const cards = Array.isArray(res.cards) ? (res.cards as CardData[]) : undefined;
-          setEntries((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              text: textOf(res.reply),
-              message_type: res.offline ? "abstention" : "answer",
-              cards,
-            },
-          ]);
-          const runId = findProgressRunId(cards);
-          if (runId) setActiveRun(runId);
-        });
-      })
-      .catch((e: unknown) => {
-        setEntries((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            text: `${t("chat.sendFailed")}: ${e instanceof Error ? e.message : String(e)}`,
-            message_type: "error",
-          },
-        ]);
-      })
-      .finally(() => setSending(false));
+    sendText(msg, true, false);
+  };
+
+  /** 只读建议卡（optional_actions）：作为普通消息重发，服务端写预览门照常生效。 */
+  const suggestSend = (msg: string): void => {
+    sendText(msg, false, false);
   };
 
   return (
@@ -451,6 +433,7 @@ function ChatTab({
             youLabel={t("chat.you")}
             agentLabel={t("chat.agent")}
             onConfirm={confirmSend}
+            onSuggest={suggestSend}
           />
         ))}
         <div ref={bottomRef} />

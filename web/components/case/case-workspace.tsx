@@ -46,6 +46,11 @@ function readModeFromUrl(): Mode | null {
   return m !== null && (MODES as readonly string[]).includes(m) ? (m as Mode) : null;
 }
 
+/** P0-C 证据回链：Archive 报告的 rev- 证据 chip 以 ?doc=<document_revision_id> 深链 READ 文档。 */
+function readDocParamFromUrl(): string {
+  return new URLSearchParams(window.location.search).get("doc") ?? "";
+}
+
 function subscribeUrl(cb: () => void): () => void {
   urlListeners.add(cb);
   window.addEventListener("popstate", cb);
@@ -174,7 +179,12 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
         const list = Array.isArray(rows) ? (rows as DocRow[]) : [];
         setDocs(list);
         setSources(Array.isArray(src?.sources) ? (src.sources as SourceOption[]) : []);
-        if (list.length > 0) setActiveDoc(list[0].document_revision_id);
+        if (list.length > 0) {
+          // ?doc= 深链（证据回链）：命中文档列表则选中该文档，未命中诚实回落首篇。
+          const wanted = readDocParamFromUrl();
+          const hit = wanted !== "" && list.some((r) => r.document_revision_id === wanted);
+          setActiveDoc(hit ? wanted : list[0].document_revision_id);
+        }
         // ResearchState 接线（阶段2 单一状态真源）：Case 上下文 + 激活文档 + report 草稿产物
         setCaseContext(caseId, d.case.question);
         setActiveDocs(

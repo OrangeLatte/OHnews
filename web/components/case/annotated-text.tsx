@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { useT } from "@/lib/i18n/use-t";
 
 // 18 元素闭集色板（snake_case，与 DB element_key 一致）；柔和底色保证黑字可读。
 export const ELEMENT_COLORS: Record<string, string> = {
@@ -52,13 +53,26 @@ function buildSegments(text: string, spans: AnnoSpan[]): Segment[] {
   for (let i = 0; i < points.length - 1; i += 1) {
     const a = points[i];
     const b = points[i + 1];
-    const cover = valid.find((s) => s.char_start <= a && b <= s.char_end);
-    segments.push({ text: text.slice(a, b), span: cover ?? null });
+    // 重叠归属：取覆盖该段的 span 中跨度最长者（而非数组序先到先得），
+    // 保证多个元素重叠时各段归给最具代表性的元素。
+    let cover: AnnoSpan | null = null;
+    let best = -1;
+    for (const s of valid) {
+      if (s.char_start <= a && b <= s.char_end) {
+        const len = s.char_end - s.char_start;
+        if (len > best) {
+          best = len;
+          cover = s;
+        }
+      }
+    }
+    segments.push({ text: text.slice(a, b), span: cover });
   }
   return segments.filter((seg) => seg.text.length > 0);
 }
 
 export function AnnotatedText({ text, spans, onSpanClick }: Props) {
+  const t = useT();
   const segments = useMemo(() => buildSegments(text, spans), [text, spans]);
   if (!text) return null;
   const annotated = spans.length > 0;
@@ -66,7 +80,18 @@ export function AnnotatedText({ text, spans, onSpanClick }: Props) {
     // min-w-0 + overflow-wrap:anywhere：390px 下长行/长 token 允许任意断行（继承至 mark 子元素）
     <div className="min-w-0 whitespace-pre-wrap text-sm leading-7 [overflow-wrap:anywhere]">
       {segments.map((seg, i) => {
-        if (!seg.span) return <span key={i}>{seg.text}</span>;
+        if (!seg.span) {
+          if (!annotated) return <span key={i}>{seg.text}</span>;
+          return (
+            <span
+              key={i}
+              title={t("case.unannotatedLegend")}
+              className="rounded bg-muted/40 px-0.5"
+            >
+              {seg.text}
+            </span>
+          );
+        }
         const color = ELEMENT_COLORS[seg.span.element_key] ?? "#fef9c3";
         return (
           <mark
@@ -93,6 +118,10 @@ export function AnnotatedText({ text, spans, onSpanClick }: Props) {
               {k}
             </span>
           ))}
+          <span className="inline-flex items-center gap-1">
+            <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-sm bg-muted/60" />
+            {t("case.unannotatedLegend")}
+          </span>
         </p>
       )}
     </div>

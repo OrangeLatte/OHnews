@@ -208,7 +208,7 @@ export default function ArchivePage() {
                     <span className="flex w-full flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                       <span className="font-mono">{a.case_id}</span>
                       {a.commit_note && <span title={a.commit_note}>· {a.commit_note}</span>}
-                      <span>· {t("archive.committedAt")} {relTime(a.revision_created_at, lang)}</span>
+                      <span>· {t("archive.committedAt")} {relTime(a.committed_at ?? a.revision_created_at, lang)}</span>
                       {!revisions && <span className="hidden sm:inline">· {t("archive.chainHint")}</span>}
                     </span>
                   </button>
@@ -223,6 +223,46 @@ export default function ArchivePage() {
                 </div>
                 {open && (
                   <div className="border-t p-3">
+                    {/* P0-C 档案元数据：创建者/确认者/确认时间/确认说明/来源 Case。
+                        契约诚实降级：user_commits 无独立身份列，本地单操作者模式下两者均为
+                        本地操作者，以 UserCommit（id/备注/时间戳）留痕，不编造身份。 */}
+                    <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground">
+                      <span>
+                        {t("archive.creator")} ·{" "}
+                        {a.case_created_by
+                          ? t(
+                              a.case_created_by === "watch"
+                                ? "cases.originWatch"
+                                : a.case_created_by === "agent"
+                                  ? "cases.originAgent"
+                                  : "cases.originUser",
+                            )
+                          : t("archive.actorLocal")}
+                      </span>
+                      <span>
+                        {t("archive.confirmer")} · {a.confirmed_by || t("archive.actorLocal")}
+                      </span>
+                      <span>
+                        {t("archive.committedAt")} {relTime(a.committed_at ?? a.revision_created_at, lang)}
+                      </span>
+                      {a.commit_id ? <span className="font-mono">{a.commit_id}</span> : null}
+                      {a.commit_note ? (
+                        <span title={a.commit_note}>
+                          {t("archive.commitNote")}: {a.commit_note}
+                        </span>
+                      ) : null}
+                      {a.case_id ? (
+                        <a
+                          href={`/cases/${encodeURIComponent(a.case_id)}`}
+                          className="underline underline-offset-2 hover:text-foreground"
+                        >
+                          {t("archive.sourceCase")}: {a.case_id}
+                        </a>
+                      ) : (
+                        <span title={t("archive.noCaseLink")}>{t("archive.noCaseLink")}</span>
+                      )}
+                    </div>
+                    <p className="mb-2 text-[11px] text-muted-foreground">{t("archive.actorNote")}</p>
                     <RevisionChain
                       revisions={revisions ?? []}
                       t={t}
@@ -230,6 +270,7 @@ export default function ArchivePage() {
                       artifactKlass={a.klass}
                       artifactTitle={a.title}
                       commitId={a.commit_id ?? undefined}
+                      caseId={a.case_id || undefined}
                     />
                   </div>
                 )}

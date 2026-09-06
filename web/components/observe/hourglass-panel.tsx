@@ -436,7 +436,11 @@ export function HourglassPanel({
 
   const hgLabels = {
     past: ot("observe.hg.past", "PAST inflow"),
-    now: ot("observe.hg.now", "NOW field"),
+    // STALE 纪律：数据过期不得称 NOW（P0-D）；fresh 保留 NOW field
+    now:
+      staleness === "stale" || staleness === "aging"
+        ? ot("observe.hg.staleNow", "DATA WINDOW (STALE)")
+        : ot("observe.hg.now", "NOW field"),
     gate: ot("observe.hg.gate", "Quality gate"),
     qualified: ot("observe.hg.qualified", "qualified changes"),
     passRate: ot("observe.hg.passRate", "pass rate"),

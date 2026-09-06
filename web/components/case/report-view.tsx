@@ -38,6 +38,11 @@ type RevisionWithContent = RevisionRow & {
     engine?: string;
     model_hint?: string;
     inputs?: ReportInputs;
+    /** P0-C 版本元数据：修订溯源 / 反馈原文 / Prompt 版本 / 报告类型 */
+    revised_from?: string;
+    feedback?: string;
+    prompt_version?: string;
+    report_type?: string;
   };
 };
 
@@ -50,6 +55,7 @@ type Props = {
   setReportOut: (out: WorkflowOut | null) => void;
   /** detail.analysis_runs：刷新/换会话后从最近成功 report run 恢复历史草稿预览 */
   historyRuns?: {
+    run_id?: string;
     kind: string;
     status: string;
     output?: unknown;
@@ -80,6 +86,8 @@ export default function ReportView({
   const [needChallenge, setNeedChallenge] = useState(false);
   // REPORT 运行中提示：busy 为工作台级共享态（commit 等也置位），run 本身用独立标记
   const [reportRunning, setReportRunning] = useState(false);
+  // T3 反馈修订：草稿反馈输入 → 新版本追加（旧草稿不动）
+  const [feedback, setFeedback] = useState("");
 
   // 会话内结果优先；无则从 HISTORY runs 恢复最近成功的 report 产物（刷新后不丢草稿）
   const effectiveOut = useMemo<WorkflowOut | null>(() => {
@@ -95,6 +103,16 @@ export default function ReportView({
   const artifactId = effectiveOut?.artifact_id ?? null;
   const effectiveRevId = effectiveOut?.revision_id ?? null;
   const revLoading = artifactId !== null && revisions === null;
+
+  // 版本 → 源 run 状态映射（T4 归档门前端显式化：后端 422 同源判定）
+  const runStatusById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const x of historyRuns ?? []) {
+      const r = x as { run_id?: string; status?: string };
+      if (r.run_id && r.status) m.set(r.run_id, r.status);
+    }
+    return m;
+  }, [historyRuns]);
 
   const loadRevisions = useCallback((aid: string, preferRev?: string | null) => {
     let alive = true;
@@ -161,6 +179,58 @@ export default function ReportView({
   };
 
   const selectedRev = revisions?.find((r) => r.revision_id === selectedRevId) ?? null;
+
+  // T4：草稿对应 run 非 succeeded → 禁归档（含 effectiveOut 历史恢复路径判定）
+  const archiveBlocked = useMemo(() => {
+    if (!selectedRev || selectedRev.status !== "draft") return false;
+    const src = selectedRev.run_id ? runStatusById.get(selectedRev.run_id) : undefined;
+    if (src) return src !== "succeeded";
+    if (selectedRev.revision_id === effectiveRevId && effectiveOut) {
+      return effectiveOut.status !== "succeeded";
+    }
+    return false;
+  }, [selectedRev, runStatusById, effectiveRevId, effectiveOut]);
+
+  /** T3 反馈修订：反馈注入 → 新 run → 新版本追加到同一 artifact（旧草稿不动）。 */
+  const reviseReport = () => {
+    const text = feedback.trim();
+    if (!text) return;
+    // 修订跟随当前草稿的报告类型（content.report_type 缺省回退当前选择卡）
+    const revType = selectedRev?.content?.report_type ?? reportType;
+    setBusy(true);
+    setRunError(null);
+    setNeedChallenge(false);
+    setReportRunning(true);
+    const analysisLocale = readAnalysisLocale();
+    objectApi
+      .report(caseId, {
+        report_type: revType,
+        title: `${caseQuestion || caseId} · ${revType}`,
+        feedback: text,
+        ...(analysisLocale ? { analysis_locale: analysisLocale } : {}),
+      })
+      .then((r) => {
+        if (r.status === "failed" || !r.output) {
+          const msg = r.error || r.status;
+          setRunError(msg);
+          toast.error(`${t("case.runError")}: ${msg}`);
+          return;
+        }
+        setReportOut(r.output);
+        setFeedback("");
+        if (r.output.status === "succeeded") toast.success(t("case.reviseDone"));
+        else toast.info(`${t("case.status")}: ${r.output.status}`);
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : t("case.loadFailed");
+        setRunError(msg);
+        toast.error(msg);
+      })
+      .finally(() => {
+        setBusy(false);
+        setReportRunning(false);
+      });
+  };
 
   const commitDraft = () => {
     if (!artifactId || !selectedRev || selectedRev.status !== "draft") return;
@@ -330,21 +400,56 @@ export default function ReportView({
                   <span>{selectedRev.created_at?.slice(0, 19).replace("T", " ")}</span>
                   {selectedRev.content?.engine ? <span>engine: {selectedRev.content.engine}</span> : null}
                   {selectedRev.content?.model_hint ? <span>{selectedRev.content.model_hint}</span> : null}
+                  {selectedRev.content?.prompt_version ? <span>prompt: {selectedRev.content.prompt_version}</span> : null}
+                  {selectedRev.content?.revised_from ? (
+                    <span className="font-mono">
+                      {t("case.revisedFrom")}: {selectedRev.content.revised_from}
+                    </span>
+                  ) : null}
+                  {selectedRev.content?.feedback ? (
+                    <span className="max-w-[26rem] truncate" title={selectedRev.content.feedback}>
+                      {t("case.feedbackLabel")}: {selectedRev.content.feedback}
+                    </span>
+                  ) : null}
                 </p>
+                {selectedRev ? (
+                  <div className="mt-3 space-y-2">
+                    <textarea
+                      value={feedback}
+                      onChange={(e) => setFeedback(e.target.value)}
+                      placeholder={t("case.reportFeedbackPlaceholder")}
+                      rows={2}
+                      className="w-full rounded-lg border bg-background px-2 py-1.5 text-xs placeholder:text-muted-foreground"
+                    />
+                    <button
+                      type="button"
+                      disabled={busy || !feedback.trim()}
+                      onClick={reviseReport}
+                      className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
+                    >
+                      {t("case.reviseFromFeedback")}
+                    </button>
+                  </div>
+                ) : null}
+                {selectedRev?.status === "draft" && archiveBlocked ? (
+                  <p className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-2.5 text-xs text-amber-700 dark:text-amber-300">
+                    {t("case.abstainedNoArchive")}
+                  </p>
+                ) : null}
+                {selectedRev?.status === "draft" ? (
+                  <button
+                    type="button"
+                    disabled={busy || archiveBlocked}
+                    onClick={commitDraft}
+                    className="mt-3 rounded-md border border-emerald-600/50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50 dark:text-emerald-300"
+                  >
+                    {t("case.commitAndArchive")}
+                  </button>
+                ) : null}
               </>
             ) : (
               <p className="text-xs text-muted-foreground">{t("case.reportEmptyBody")}</p>
             )}
-            {selectedRev?.status === "draft" ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={commitDraft}
-                className="mt-3 rounded-md border border-emerald-600/50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50 dark:text-emerald-300"
-              >
-                {t("case.commitAndArchive")}
-              </button>
-            ) : null}
           </section>
 
           <section className="rounded-xl border p-3">

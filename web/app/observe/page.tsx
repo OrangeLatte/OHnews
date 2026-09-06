@@ -120,6 +120,8 @@ export default function ObservePage() {
   const [drawer, setDrawer] = useState<ChangeSelection | null>(null);
   // Drawer → Inbox 传实体通道（{q, entity?, days}；days 即当前窗口，Inbox 结果行已随窗口）
   const [inboxEntity, setInboxEntity] = useState("");
+  // P0-D 硬验收：候选变化沿唯一主路径进入 Case 时携带原始 change_id（审计可追溯）
+  const [inboxChangeId, setInboxChangeId] = useState("");
   const openDrawer = useCallback((sel: ChangeSelection) => setDrawer(sel), []);
   const closeDrawer = useCallback(() => setDrawer(null), []);
   const createCaseFromDrawer = useCallback(
@@ -134,6 +136,10 @@ export default function ObservePage() {
         setQInput(subject);
       }
       setInboxEntity(drawerEntity(sel));
+      setInboxChangeId(sel.kind === "change" ? sel.change.change_id : "");
+      // 主路径保障（P0-D 硬验收：不得只跳回空列表）——清默认源预选，
+      // 让 q/entity 全源检索；源筛选由用户到 Inbox 左栏显式设置
+      setSelSourcesRaw([]);
       // 诚实降级：变化卡未提取到实体（subjects 空）→ 明示仅用标题关键词检索
       if (sel.kind === "change" && sel.change.subjects.length === 0) {
         toast.info(
@@ -692,6 +698,8 @@ export default function ObservePage() {
                   days={days}
                   filters={inboxFilters}
                   handlers={inboxHandlers}
+                  changeId={inboxChangeId}
+                  onChangeIdConsumed={() => setInboxChangeId("")}
                 />
               ) : null}
             </div>

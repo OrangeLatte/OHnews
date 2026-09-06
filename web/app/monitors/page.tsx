@@ -53,7 +53,17 @@ async function postJson(path: string, body: unknown): Promise<unknown> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.ok) {
+    // 透传后端根因（FastAPI {"detail": ...}）；非 JSON 错误体退回状态码
+    let detail = "";
+    try {
+      const err = (await r.json()) as { detail?: unknown };
+      if (err && typeof err.detail === "string") detail = err.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail || `HTTP ${r.status}`);
+  }
   return r.json();
 }
 
@@ -90,15 +100,18 @@ export default function MonitorsPage() {
   const [editW, setEditW] = useState("");
   const [editS, setEditS] = useState("");
   const [editBusy, setEditBusy] = useState(false);
-  // OBSERVE Change Drawer 跳转落地：/monitors?create=1 自动打开创建表单。
+  // 跳转落地：/monitors?create=1 自动打开创建表单（OBSERVE Drawer）；
+  // /monitors?open=<monitor_id> 自动选中该监测器（全局搜索 monitor 结果入口，P1-A）。
   // 必须在 effect 内异步打开：惰性初始化会导致 SSR(false) 与客户端(true) 首帧
   // 不一致 → hydration mismatch；同步 setState 又违反 set-state-in-effect 规则。
+  // open= 指向不存在/已删除的 id：rows.find(...) ?? null 落回详情空态（诚实忽略不崩）。
   const [createOpen, setCreateOpen] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => {
-      if (new URLSearchParams(window.location.search).get("create") === "1") {
-        setCreateOpen(true);
-      }
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("create") === "1") setCreateOpen(true);
+      const open = params.get("open");
+      if (open) setOpenId(open);
     }, 0);
     return () => clearTimeout(t);
   }, []);
@@ -346,9 +359,11 @@ export default function MonitorsPage() {
         setSnapBusy(false);
         toast.success(t("monitors.snapshotConfirmed"));
       })
-      .catch(() => {
+      .catch((e: unknown) => {
         setSnapBusy(false);
-        toast.error(t("monitors.decisionFailed"));
+        // 后端 422（无成功运行结果不可确认快照）等根因如实透出
+        const reason = e instanceof Error ? e.message : String(e);
+        toast.error(reason ? `${t("monitors.confirmFailed")}: ${reason}` : t("monitors.decisionFailed"));
       });
   };
 

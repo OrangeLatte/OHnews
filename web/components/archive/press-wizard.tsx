@@ -29,6 +29,10 @@ export type ArchiveRowExt = {
   commit_note?: string | null;
   committed_at?: string | null;
   commit_id?: string | null;
+  /** v10 起 UserCommit 记录的确认者；旧记录空串诚实回退。 */
+  confirmed_by?: string | null;
+  /** 来源 Case 的 created_by（user/watch/agent），作为档案创建主体线索。 */
+  case_created_by?: string | null;
 };
 
 type Draft = {

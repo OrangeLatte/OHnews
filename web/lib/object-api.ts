@@ -145,6 +145,10 @@ export type ArchiveRow = {
   commit_id?: string;
   commit_note?: string | null;
   committed_at?: string | null;
+  /** v10 起 UserCommit 记录的确认者；旧记录空串诚实回退。 */
+  confirmed_by?: string | null;
+  /** 来源 Case 的 created_by（user/watch/agent），作为档案创建主体线索。 */
+  case_created_by?: string | null;
 };
 
 /** 报告输入清单（run output.inputs / revision content.inputs）：核对报告输入与页面状态一致 */
@@ -180,6 +184,10 @@ export type WorkflowOut = {
   n_elements?: number;
   skipped?: { artifact_id: string; reason: string }[];
   inputs?: ReportInputs;
+  /** P0-C 报告版本元数据：修订溯源 + 反馈原文 + Prompt 版本 */
+  revised_from?: string;
+  feedback?: string;
+  prompt_version?: string;
 };
 
 export type LaunchOut = {
@@ -345,13 +353,24 @@ export const objectApi = {
     launch(
       post<LaunchOut>(`/cases/${encodeURIComponent(caseId)}/compare`, { document_revision_ids }),
     ),
-  report: (caseId: string, body: { report_type: string; title: string; text?: string; analysis_locale?: string }) =>
+  report: (
+    caseId: string,
+    body: {
+      report_type: string;
+      title: string;
+      text?: string;
+      analysis_locale?: string;
+      /** 用户对上一版草稿的反馈（P0-C T3）：非空 → 后端生成修订版（新版本追加） */
+      feedback?: string;
+    },
+  ) =>
     launch(
       post<LaunchOut>(`/cases/${encodeURIComponent(caseId)}/report`, {
         report_type: body.report_type,
         title: body.title,
         ...(body.text !== undefined ? { text: body.text } : {}),
         ...(body.analysis_locale ? { analysis_locale: body.analysis_locale } : {}),
+        ...(body.feedback ? { feedback: body.feedback } : {}),
       }),
     ),
   challenge: (caseId: string, claim_id: string) =>
@@ -405,6 +424,8 @@ export const objectApi = {
 export type RevisionRow = {
   revision_id: string;
   artifact_id: string;
+  /** 源分析运行（T4 归档门映射：run 状态非 succeeded 的草稿禁归档） */
+  run_id?: string;
   status: string;
   legacy: boolean;
   created_at: string;
@@ -418,6 +439,8 @@ export type MonitorRunRow = {
   started_at: string;
   finished_at: string | null;
   error: string | null;
+  /** P0-B：run 终态输出（阶段/计数），output_json 空则 null——诚实缺省不显示。 */
+  output?: { hits?: number; new_articles?: number; stage?: string; window?: string } | null;
 };
 
 /** GET /monitors/{id}/scheduler：调度健康视图（估算无真实 scheduler 进程，note 显式声明）。 */

@@ -116,12 +116,17 @@ export function InboxPanel({
   days,
   filters,
   handlers,
+  changeId,
+  onChangeIdConsumed,
 }: {
   sources: SourceRow[];
   sourcesErr: string;
   days: number;
   filters: InboxFilters;
   handlers: InboxFilterHandlers;
+  /** P0-D：来自 Change Drawer 的原始变化 ID（建 Case 时写入 context_note 审计留痕）。 */
+  changeId: string;
+  onChangeIdConsumed: () => void;
 }) {
   const t = useT();
   const ot = useOt();
@@ -134,7 +139,12 @@ export function InboxPanel({
   );
   const hasFilter = q !== "" || lang !== "" || element !== "" || entity !== "" || selSources.length > 0;
 
-  const [wrap, setWrap] = useState<{ key: string; n: number; rows: InboxRow[] } | null>(null);
+  const [wrap, setWrap] = useState<{
+    key: string;
+    n: number;
+    rows: InboxRow[];
+    qEff?: string;
+  } | null>(null);
   const [err, setErr] = useState("");
   const [tick, setTick] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -145,11 +155,12 @@ export function InboxPanel({
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [lastCreated, setLastCreated] = useState<{ caseId: string; n: number } | null>(null);
 
+  // 实体 token 并入 q（entity token + q）；q 已含该词时去重不重复拼接
+  const mergedQ =
+    entity && !q.toLowerCase().includes(entity.toLowerCase()) ? (q ? `${entity} ${q}` : entity) : q;
+
   useEffect(() => {
     let alive = true;
-    // 实体 token 并入 q（entity token + q）；q 已含该词时去重不重复拼接
-    const mergedQ =
-      entity && !q.toLowerCase().includes(entity.toLowerCase()) ? (q ? `${entity} ${q}` : entity) : q;
     const p = new URLSearchParams();
     for (const s of selSources) p.append("source_id", s);
     if (mergedQ) p.set("q", mergedQ);
@@ -163,9 +174,14 @@ export function InboxPanel({
     fetch(`/api/inbox?${p.toString()}`, { cache: "no-store" })
       .then(async (r) => {
         if (!r.ok) throw new Error(`inbox: ${await errText(r)}`);
-        const data = (await r.json()) as { n: number; rows: InboxRow[] };
+        const data = (await r.json()) as { n: number; rows: InboxRow[]; q_effective?: string };
         if (alive) {
-          setWrap({ key: filterKey, n: data.n, rows: data.rows });
+          setWrap({
+            key: filterKey,
+            n: data.n,
+            rows: data.rows,
+            qEff: typeof data.q_effective === "string" ? data.q_effective : "",
+          });
           setErr("");
           setChecked((prev) => {
             const keys = new Set(data.rows.map((x) => x.item_key));
@@ -180,7 +196,7 @@ export function InboxPanel({
     return () => {
       alive = false;
     };
-  }, [filterKey, q, lang, element, value, days, selSources, entity, tick]);
+  }, [filterKey, q, lang, element, value, days, selSources, entity, mergedQ, tick]);
 
   const stale = wrap === null || wrap.key !== filterKey;
   const visibleRows = useMemo(
@@ -226,10 +242,14 @@ export function InboxPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // 契约（OpenAPI ResearchCase, additionalProperties=false）：无 title 字段，可选标题入 context_note
+        // 契约（OpenAPI ResearchCase, additionalProperties=false）：无 title 字段，可选标题入 context_note；
+        // change_id 附加留痕（P0-D：候选变化→Case 的可追溯链路）
         body: JSON.stringify({
           case_id: caseId,
           question,
-          context_note: caseTitle.trim(),
+          context_note: [caseTitle.trim(), changeId ? `change_id: ${changeId}` : ""]
+            .filter(Boolean)
+            .join(" · "),
           origin: "observe",
           created_by: "user",
           created_at: now,
@@ -533,6 +553,18 @@ export function InboxPanel({
                 shown: visibleRows.length,
                 total: wrap === null ? 0 : wrap.n,
               })}
+              {wrap?.qEff && wrap.qEff !== q && wrap.qEff !== mergedQ ? (
+                <span
+                  className="rounded-[6px] bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300"
+                  title={ot(
+                    "observe.inbox.qEffTitle",
+                    "No exact match for \"{q}\"; searched with \"{eff}\" instead.",
+                    { q: mergedQ, eff: wrap.qEff },
+                  )}
+                >
+                  {ot("observe.inbox.qEff", 'searched as "{eff}"', { eff: wrap.qEff })}
+                </span>
+              ) : null}
             </span>
             {hiddenCased > 0 ? (
               <span>{ot("observe.inbox.hiddenCased", "{n} cased hidden", { n: hiddenCased })}</span>
@@ -633,6 +665,22 @@ export function InboxPanel({
             <span className="rounded-[6px] bg-foreground px-2 py-0.5 text-xs font-semibold text-background">
               {ot("observe.inbox.selected", "{n} selected", { n: checkedRows.length })}
             </span>
+            {changeId ? (
+              <button
+                type="button"
+                onClick={onChangeIdConsumed}
+                title={ot(
+                  "observe.inbox.changeRef",
+                  "From change {id} (click to detach)",
+                  { id: changeId },
+                )}
+                className="rounded-[6px] border border-blue-500/40 bg-blue-500/10 px-2 py-0.5 text-xs font-medium text-blue-700 dark:text-blue-300"
+              >
+                {ot("observe.inbox.changeRef", "From change {id} (click to detach)", {
+                  id: changeId,
+                })}
+              </button>
+            ) : null}
             <input
               type="text"
               value={caseTitle}
