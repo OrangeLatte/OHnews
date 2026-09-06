@@ -103,7 +103,6 @@ export default function CasesPage() {
   };
 
   const closeCase = (c: CaseListItem): void => {
-    if (!window.confirm(t("case.confirmClose", { id: c.case_id }))) return;
     objectApi
       .closeCase(c.case_id)
       .then(() => {
@@ -273,6 +272,7 @@ export default function CasesPage() {
               zh={zh}
               openLabel={tr("cases.openCase", "Open")}
               closeLabel={t("case.closeCase")}
+              closeConfirmLabel={t("case.confirmClose", { id: c.case_id })}
               onOpen={openCase}
               onClose={closeCase}
               rowRef={(el) => {

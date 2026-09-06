@@ -122,9 +122,6 @@ export function SourcesWorkspace() {
   };
 
   const onRefreshSource = (s: SourceRow): void => {
-    if (!window.confirm(tr("sources.refreshConfirm", "Trigger collection for {id} now?", { id: s.source_id }))) {
-      return;
-    }
     setRefreshingId(s.source_id);
     triggerRefresh(s.source_id)
       .then(() => {

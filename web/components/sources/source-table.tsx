@@ -8,6 +8,7 @@
 import { useState } from "react";
 import type { SourceRow } from "@/lib/landscape-api";
 import { useT } from "@/lib/i18n/use-t";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { TIER_HINT_KEYS, kindLabel } from "@/lib/sources-meta";
 import { HEALTH_BADGE, HEALTH_DOT, healthOf, type Health, type Tr } from "./sources-ui";
 
@@ -202,19 +203,23 @@ function SourceRowFragment({
               <span className={s.enabled ? "text-[#16a34a]" : "text-[#6b7280]"}>
                 {s.enabled ? tr("sources.enabledOn", "Enabled") : tr("sources.enabledOff", "Disabled")}
               </span>
-              <button
-                type="button"
-                disabled={refreshing}
+              <span
                 onClick={(e) => {
                   e.stopPropagation();
-                  onRefresh(s);
                 }}
-                className="rounded-md border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-50"
               >
-                {refreshing
-                  ? tr("sources.refreshing", "Triggering…")
-                  : tr("sources.refresh", "Refresh now")}
-              </button>
+                  <ConfirmButton
+                    onConfirm={() => onRefresh(s)}
+                    confirmLabel={tr("sources.refreshConfirm", "Trigger collection for {id} now?", { id: s.source_id })}
+                    disabled={refreshing}
+                    className="rounded-md border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-50"
+                    armedClassName="border-amber-500 bg-amber-50 text-amber-800"
+                  >
+                    {refreshing
+                      ? tr("sources.refreshing", "Triggering…")
+                      : tr("sources.refresh", "Refresh now")}
+                  </ConfirmButton>
+                </span>
             </div>
           </td>
         </tr>

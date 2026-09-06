@@ -4,13 +4,14 @@
  * 新建监测器表单（MONITORS 创建入口）。
  * target_type 取 oh-contracts MonitorTarget 十值闭集；entity/topic 必填 target_ref；
  * trigger_conditions 标签输入（回车成 chip，可删）；window/schedule 下拉闭集；
- * 提交前 window.confirm（HITL：写操作）；monitor_id 客户端生成 mon-{uuid8}。
+ * 提交走 ConfirmButton 两击确认（HITL：写操作，非阻塞）；monitor_id 客户端生成 mon-{uuid8}。
  * 成功/失败均 toast；失败保留表单（根因随 toast 展示）。
  */
 
 import { useState } from "react";
 import { objectApi } from "@/lib/object-api";
 import { Button } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { toast } from "@/components/ui/toast";
 import type { TFunc } from "./bits";
 import { newMonitorId } from "./format";
@@ -75,7 +76,6 @@ export function CreateForm({
       setError(t("monitors.create.refRequired"));
       return;
     }
-    if (!window.confirm(t("monitors.create.confirm"))) return;
     setError("");
     setBusy(true);
     objectApi
@@ -200,9 +200,15 @@ export function CreateForm({
       </div>
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
       <div className="mt-3 flex gap-2">
-        <Button size="sm" disabled={busy} onClick={submit}>
+        <ConfirmButton
+          onConfirm={submit}
+          confirmLabel={t("monitors.create.confirm")}
+          disabled={busy}
+          className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+          armedClassName="bg-amber-600 hover:bg-amber-700"
+        >
           {t("monitors.create.submit")}
-        </Button>
+        </ConfirmButton>
         <Button size="sm" variant="outline" disabled={busy} onClick={onClose}>
           {t("monitors.cancel")}
         </Button>

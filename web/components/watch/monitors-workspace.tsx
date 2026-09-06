@@ -6,7 +6,7 @@
  * 三概念分离：Monitor 配置状态（active/paused，error 预留）≠ Run 状态 ≠ Update
  * 审核状态（review_status 派生键）——"待复核"只数 unreviewed updates。
  * 详情 = 元数据 + 运行时间线 + 未复核 updates（HITL 三按钮）+ confirm-snapshot + 新建入口。
- * 所有写操作 window.confirm（文案说明不可逆性），决策后 toast + 局部刷新。
+ * 所有写操作走 ConfirmButton 两击确认（文案说明不可逆性，无阻塞 dialog），决策后 toast + 局部刷新。
  * 深链契约（沿袭旧 /monitors）：/watch?tab=monitors&create=1 自动开创建表单；
  * /watch?tab=monitors&open=<monitor_id> 自动选中该监测器。
  */
@@ -22,6 +22,7 @@ import {
 } from "@/lib/object-api";
 import { useLocale } from "@/lib/i18n/use-t";
 import { Button } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { Skeleton, toast } from "@/components/ui/toast";
 import { HelpIcon } from "@/components/help/help-icon";
 import { MonitorCard, statusTone } from "@/components/monitors/monitor-card";
@@ -312,7 +313,6 @@ export function MonitorsWorkspace() {
   };
 
   const deleteMonitorRow = (m: MonitorRow) => {
-    if (!window.confirm(t("monitors.confirmDelete").replace("{id}", m.monitor_id))) return;
     objectApi
       .deleteMonitor(m.monitor_id)
       .then(() => {
@@ -328,13 +328,6 @@ export function MonitorsWorkspace() {
       toast.error(t("monitors.pickCaseFirst"));
       return;
     }
-    const confirmKey =
-      decision === "new_case"
-        ? "monitors.confirmNewCase"
-        : decision === "join_case"
-          ? "monitors.confirmJoinCase"
-          : "monitors.confirmIgnore";
-    if (!window.confirm(t(confirmKey))) return;
     const monitor = rows.find((m) => m.monitor_id === u.monitor_id);
     setBusyUpdate(u.update_id);
     objectApi
@@ -374,7 +367,6 @@ export function MonitorsWorkspace() {
   };
 
   const confirmSnapshot = (m: MonitorRow) => {
-    if (!window.confirm(t("monitors.confirmSnapshotAsk"))) return;
     setSnapBusy(true);
     postJson(`/monitors/${encodeURIComponent(m.monitor_id)}/confirm-snapshot`, { snapshot_at: nowIso() })
       .then((out) => {
@@ -397,7 +389,6 @@ export function MonitorsWorkspace() {
   /** 登记一次监测运行（HITL confirm）：成功 toast + 刷新 runs 时间线与调度小卡；失败 toast 带根因。 */
   const runNow = (m: MonitorRow) => {
     if (runBusy) return;
-    if (!window.confirm(t("monitors.runNowConfirm"))) return;
     setRunBusy(true);
     const busyTimer = window.setTimeout(() => setRunBusy(false), 12000);
     objectApi
@@ -565,13 +556,14 @@ export function MonitorsWorkspace() {
                           {t("monitors.edit")}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => deleteMonitorRow(open)}
+                      <ConfirmButton
+                        onConfirm={() => deleteMonitorRow(open)}
+                        confirmLabel={t("monitors.confirmDelete").replace("{id}", open.monitor_id)}
                         className="rounded-md border border-[#dc2626]/40 px-2 py-0.5 text-xs text-[#dc2626] hover:bg-[#fee2e2]"
+                        armedClassName="bg-[#dc2626] text-white hover:bg-[#b91c1c]"
                       >
                         {t("monitors.deleteBtn")}
-                      </button>
+                      </ConfirmButton>
                     </span>
                   </div>
                   {editOpen ? (
@@ -730,24 +722,25 @@ export function MonitorsWorkspace() {
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold">{t("monitors.runs")}</h3>
                     <span className="flex gap-1">
-                      <Button
-                        size="sm"
-                        variant="outline"
+                      <ConfirmButton
+                        onConfirm={() => runNow(open)}
+                        confirmLabel={t("monitors.runNowConfirm")}
                         disabled={runBusy}
-                        onClick={() => runNow(open)}
-                        title={t("monitors.runNowConfirm")}
+                        className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border px-3 text-xs font-medium hover:bg-accent"
+                        armedClassName="bg-amber-600 text-white hover:bg-amber-700"
                       >
                         {t("monitors.runNow")}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
+                      </ConfirmButton>
+                      <ConfirmButton
+                        onConfirm={() => confirmSnapshot(open)}
+                        confirmLabel={t("monitors.confirmSnapshotAsk")}
                         disabled={snapBusy}
-                        onClick={() => confirmSnapshot(open)}
+                        className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border px-3 text-xs font-medium hover:bg-accent"
+                        armedClassName="bg-amber-600 text-white hover:bg-amber-700"
                         title={t("monitors.confirmSnapshot")}
                       >
                         {t("monitors.confirmSnapshot")}
-                      </Button>
+                      </ConfirmButton>
                     </span>
                   </div>
                   <div className="mt-2">

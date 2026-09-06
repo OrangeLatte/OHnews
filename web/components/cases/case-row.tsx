@@ -8,6 +8,7 @@
 
 import type { Ref } from "react";
 import type { CaseRow } from "@/lib/object-api";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import {
   OriginIcon,
   STATUS_BADGE,
@@ -27,6 +28,7 @@ export function CaseRowItem({
   zh,
   openLabel,
   closeLabel,
+  closeConfirmLabel,
   onOpen,
   onClose,
   rowRef,
@@ -36,6 +38,7 @@ export function CaseRowItem({
   zh: boolean;
   openLabel: string;
   closeLabel: string;
+  closeConfirmLabel: string;
   onOpen: (c: CaseListItem) => void;
   onClose: (c: CaseListItem) => void;
   rowRef?: Ref<HTMLDivElement>;
@@ -73,16 +76,20 @@ export function CaseRowItem({
             {openLabel}
           </button>
           {closable ? (
-            <button
-              type="button"
+            <span
               onClick={(e) => {
                 e.stopPropagation();
-                onClose(c);
               }}
-              className="rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-[#dc2626]/40 hover:bg-[#fee2e2] hover:text-[#dc2626]"
             >
-              {closeLabel}
-            </button>
+              <ConfirmButton
+                onConfirm={() => onClose(c)}
+                confirmLabel={closeConfirmLabel}
+                className="rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-[#dc2626]/40 hover:bg-[#fee2e2] hover:text-[#dc2626]"
+                armedClassName="border-[#dc2626] bg-[#fee2e2] text-[#b91c1c]"
+              >
+                {closeLabel}
+              </ConfirmButton>
+            </span>
           ) : null}
         </span>
       </div>

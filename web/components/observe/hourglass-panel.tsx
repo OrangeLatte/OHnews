@@ -525,11 +525,11 @@ export function HourglassPanel({
         <span className="ml-auto flex items-center gap-2">
           <button
             type="button"
-            disabled
-            title={ot("observe.hero.agentTip", "Agent entry placeholder — Agent workspace returns in Phase 2")}
-            className="rounded-[6px] border border-dashed px-2 py-0.5 text-xs text-muted-foreground"
+            onClick={() => window.dispatchEvent(new CustomEvent("oh:open-agent"))}
+            title={ot("observe.hero.agentTip", "Open the global Agent with this change as context")}
+            className="rounded-[6px] border border-dashed px-2 py-0.5 text-xs text-muted-foreground hover:border-foreground/40 hover:text-foreground"
           >
-            {ot("observe.hero.agent", "Ask Agent · Phase 2")}
+            {ot("observe.hero.agent", "Ask Agent")}
           </button>
         </span>
       </div>

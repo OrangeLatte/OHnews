@@ -2,12 +2,13 @@
 
 /**
  * REPORT 模式：7 类型报告卡选择 → run → 草稿预览（revisions draft content.sections）
- * → 版本列表（v1/v2 状态色）→ 「确认并归档」HITL commit（window.confirm；422 needChallenge 处理）。
+ * → 版本列表（v1/v2 状态色）→ 「确认并归档」HITL commit（ConfirmButton 两击确认；422 needChallenge 处理）。
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { HelpIcon } from "@/components/help/help-icon";
 import { Skeleton, toast } from "@/components/ui/toast";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { objectApi, type ReportInputs, type RevisionRow, type WorkflowOut } from "@/lib/object-api";
 import { readAnalysisLocale } from "@/lib/analysis-locale";
 import { useT } from "@/lib/i18n/use-t";
@@ -247,7 +248,6 @@ export default function ReportView({
 
   const commitDraft = () => {
     if (!artifactId || !selectedRev || selectedRev.status !== "draft") return;
-    if (!window.confirm(t("case.confirmCommit"))) return;
     setBusy(true);
     fetch(`/api/artifacts/${encodeURIComponent(artifactId)}/commit`, {
       method: "POST",
@@ -473,14 +473,15 @@ export default function ReportView({
                   </p>
                 ) : null}
                 {selectedRev?.status === "draft" ? (
-                  <button
-                    type="button"
+                  <ConfirmButton
+                    onConfirm={commitDraft}
+                    confirmLabel={t("case.confirmCommit")}
                     disabled={busy || archiveBlocked}
-                    onClick={commitDraft}
                     className="mt-3 rounded-md border border-emerald-600/50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50 dark:text-emerald-300"
+                    armedClassName="bg-emerald-600 text-white hover:bg-emerald-700"
                   >
                     {t("case.commitAndArchive")}
-                  </button>
+                  </ConfirmButton>
                 ) : null}
               </>
             ) : (

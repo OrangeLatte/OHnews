@@ -208,6 +208,16 @@ export function InboxPanel({
   const checkedRows = visibleRows.filter((r) => checked.has(r.item_key));
 
   const toggleCheck = (itemKey: string): void => {
+    // P0-3 相关性门槛：仅正文提及（title_match=false）的低相关文档不得自动入案。
+    if (visibleRows.find((r) => r.item_key === itemKey)?.title_match === false) {
+      toast.error(
+        ot(
+          "observe.inbox.bodyOnlyBlocked",
+          "Body-only mention: too weak for this change's evidence pool. Pick headline matches, or attach it manually inside the Case.",
+        ),
+      );
+      return;
+    }
     setChecked((prev) => {
       const next = new Set(prev);
       if (next.has(itemKey)) next.delete(itemKey);
@@ -216,7 +226,11 @@ export function InboxPanel({
     });
   };
 
-  const allVisibleChecked = visibleRows.length > 0 && checkedRows.length === visibleRows.length;
+  // 全选同样只圈定标题命中的行（低相关行始终排除在自动入案之外）
+  const selectableRows = visibleRows.filter((r) => r.title_match !== false);
+
+  const allVisibleChecked =
+    selectableRows.length > 0 && selectableRows.every((r) => checked.has(r.item_key));
 
   const createCase = async (): Promise<void> => {
     const question = caseQuestion.trim();
@@ -224,7 +238,7 @@ export function InboxPanel({
       toast.error(ot("observe.inbox.needQuestion", "Please fill in the research question first."));
       return;
     }
-    const items = checkedRows.filter((r) => !r.cased);
+    const items = checkedRows.filter((r) => !r.cased && r.title_match !== false);
     if (items.length === 0) {
       toast.error(
         ot(
@@ -539,11 +553,11 @@ export function InboxPanel({
                   setChecked((prev) => {
                     if (allVisibleChecked) {
                       const next = new Set(prev);
-                      for (const r of visibleRows) next.delete(r.item_key);
+                      for (const r of selectableRows) next.delete(r.item_key);
                       return next;
                     }
                     const next = new Set(prev);
-                    for (const r of visibleRows) next.add(r.item_key);
+                    for (const r of selectableRows) next.add(r.item_key);
                     return next;
                   })
                 }
@@ -591,10 +605,14 @@ export function InboxPanel({
                     <input
                       type="checkbox"
                       checked={checked.has(r.item_key)}
+                      disabled={r.title_match === false}
                       onClick={(e) => e.stopPropagation()}
                       onChange={() => toggleCheck(r.item_key)}
                       aria-label={ot("observe.inbox.selectRow", "select {title}", { title: r.title })}
-                      className="accent-foreground"
+                      title={r.title_match === false
+                        ? ot("observe.inbox.bodyOnlyTitle", "Keyword appears only in the body text, not the headline — lower relevance, review before adding to a Case.")
+                        : undefined}
+                      className="accent-foreground disabled:opacity-40"
                     />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold leading-5" title={r.title}>

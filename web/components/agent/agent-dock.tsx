@@ -516,11 +516,25 @@ export function AgentDock({
   const [draft, setDraft] = useState("");
   const [chatThreadId, setChatThreadId] = useState("");
   const [chatEntries, setChatEntries] = useState<ChatEntry[]>([]);
-  const [width, setWidth] = useState(() => {
-    if (typeof window === "undefined") return 26;
-    const v = Number(window.localStorage.getItem("ag-width"));
-    return v >= 18 && v <= 60 ? v : 26;
-  });
+  // 全局入口（如 NOW 变化卡「Ask Agent」）：打开 Dock 并切到 Chat 标签
+  useEffect(() => {
+    const openAgent = () => {
+      setOpen(true);
+      setTab("chat");
+    };
+    window.addEventListener("oh:open-agent", openAgent);
+    return () => window.removeEventListener("oh:open-agent", openAgent);
+  }, []);
+  // 宽度持久化：SSR 首帧用默认值，挂载后 setTimeout(0) 异步读 localStorage
+  // （惰性 initializer 在客户端首帧读 storage 会造成 SSR/client 首帧不一致 → hydration mismatch）
+  const [width, setWidth] = useState(26);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const v = Number(window.localStorage.getItem("ag-width"));
+      if (v >= 18 && v <= 60) setWidth(v);
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
   // 停靠位置持久化：SSR 首帧用 prop 默认值，挂载后 setTimeout(0) 异步读 localStorage
   // （同步/惰性读取会导致 SSR 与客户端首帧不一致 → hydration mismatch，monitors 页教训）
   const [pos, setPos] = useState<DockPosition>(position);

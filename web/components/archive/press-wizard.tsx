@@ -2,13 +2,14 @@
 
 /**
  * Press Edition 编排向导（三步）：勾选 chips → title/note 表单 → Compose →
- * 草稿预览（sections 列表卡 + skipped 诚实披露）→「发布」HITL（window.confirm，
+ * 草稿预览（sections 列表卡 + skipped 诚实披露）→「发布」HITL（ConfirmButton 两击确认，
  * 文案说明 UserCommit 留痕、发布后不可变）→ 成功 toast + 新 Edition 进列表。
  */
 
 import { useState } from "react";
 import { objectApi, type WorkflowOut } from "@/lib/object-api";
 import { Button } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
@@ -127,7 +128,6 @@ export function PressWizard({
 
   const publish = () => {
     if (!draft) return;
-    if (!window.confirm(t("archive.confirmPublish"))) return;
     setPublishing(true);
     objectApi
       .commitRevision(draft.artifact_id, {
@@ -261,14 +261,16 @@ export function PressWizard({
               </div>
             )}
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
+              <ConfirmButton
+                onConfirm={publish}
+                confirmLabel={t("archive.confirmPublish")}
                 disabled={publishing}
-                onClick={publish}
+                className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                armedClassName="bg-amber-600 hover:bg-amber-700"
                 title={t("archive.publish")}
               >
                 {t("archive.publish")}
-              </Button>
+              </ConfirmButton>
               <Button
                 size="sm"
                 variant="outline"

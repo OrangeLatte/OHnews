@@ -2,7 +2,7 @@
 
 /**
  * 运行中心：采集计划卡片化（mode 徽标 / schedule / 源数 / enabled 开关 + runs 折叠），
- * runs 带进度条；enable/disable 均走 window.confirm（HITL）；
+ * runs 带进度条；enable/disable 均走 ConfirmButton 两击确认（HITL，非阻塞）；
  * 新建计划 = PlanWizard 三步 stepper。
  */
 
@@ -18,6 +18,7 @@ import {
   type SourceRow,
 } from "@/lib/landscape-api";
 import { Skeleton } from "@/components/ui/toast";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { PlanWizard } from "./plan-wizard";
 import {
   RUN_BADGE,
@@ -107,13 +108,18 @@ function PlanCard({
           >
             {plan.enabled ? tr("sources.enabled", "Enabled") : tr("sources.disabled", "Disabled")}
           </span>
-          <button
-            type="button"
-            onClick={onFlipEnabled}
+          <ConfirmButton
+            onConfirm={onFlipEnabled}
+            confirmLabel={
+              plan.enabled
+                ? tr("sources.confirmDisable", "Disable this plan?")
+                : tr("sources.confirmEnable", "Enable this plan?")
+            }
             className="rounded-md border px-1.5 py-0.5 text-[11px] hover:bg-muted"
+            armedClassName="border-amber-500 bg-amber-50 text-amber-800"
           >
             {plan.enabled ? tr("sources.disable", "Disable") : tr("sources.enable", "Enable")}
-          </button>
+          </ConfirmButton>
         </span>
       </div>
       <p className="mt-1 pl-5 text-[11px] text-muted-foreground">
@@ -227,8 +233,6 @@ export function RunCenter({ sources, reloadToken }: { sources: SourceRow[]; relo
   };
 
   const flipEnabled = (p: CollectionPlanRow): void => {
-    const msg = p.enabled ? tr("sources.confirmDisable", "Disable this plan?") : tr("sources.confirmEnable", "Enable this plan?");
-    if (!window.confirm(`${msg} (${p.plan_id})`)) return;
     enableCollectionPlan(p.plan_id, !p.enabled)
       .then(() => {
         setPlans((prev) =>

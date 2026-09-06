@@ -8,6 +8,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import type { CaseRow, MonitorUpdateRow } from "@/lib/object-api";
 import { relTime } from "./format";
 import { type TFunc, ToneChip } from "./bits";
@@ -102,14 +103,16 @@ export function UpdateCard({
       )}
       {!decided && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
+          <ConfirmButton
+            onConfirm={() => onDecide(u, "new_case")}
+            confirmLabel={t("monitors.confirmNewCase")}
             disabled={busy}
-            onClick={() => onDecide(u, "new_case")}
+            className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            armedClassName="bg-amber-600 hover:bg-amber-700"
             title={t("monitors.acceptNew")}
           >
             {t("monitors.acceptNew")}
-          </Button>
+          </ConfirmButton>
           <Button
             size="sm"
             variant="outline"
@@ -119,15 +122,15 @@ export function UpdateCard({
           >
             {t("monitors.joinCase")}
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
+          <ConfirmButton
+            onConfirm={() => onDecide(u, "ignore")}
+            confirmLabel={t("monitors.confirmIgnore")}
             disabled={busy}
-            className="border-[#dc2626]/60 text-[#b91c1c] hover:bg-[#fee2e2] hover:text-[#b91c1c] dark:border-[#dc2626]/50 dark:text-[#f87171] dark:hover:bg-[#dc2626]/15 dark:hover:text-[#f87171]"
-            onClick={() => onDecide(u, "ignore")}
+            className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-3 text-xs font-medium hover:bg-accent border-[#dc2626]/60 text-[#b91c1c] hover:bg-[#fee2e2] hover:text-[#b91c1c] dark:border-[#dc2626]/50 dark:text-[#f87171] dark:hover:bg-[#dc2626]/15 dark:hover:text-[#f87171]"
+            armedClassName="bg-[#dc2626] text-white hover:bg-[#b91c1c]"
           >
             {t("monitors.ignore")}
-          </Button>
+          </ConfirmButton>
           {busy && <span className="text-xs text-muted-foreground">{t("monitors.reviewing")}</span>}
         </div>
       )}
@@ -148,17 +151,18 @@ export function UpdateCard({
               </option>
             ))}
           </select>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy || !joinCaseId}
-            onClick={() => {
+          <ConfirmButton
+            onConfirm={() => {
               setPicking(false);
               onDecide(u, "join_case");
             }}
+            confirmLabel={t("monitors.confirmJoinCase")}
+            disabled={busy || !joinCaseId}
+            className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-3 text-xs font-medium hover:bg-accent"
+            armedClassName="bg-amber-600 text-white hover:bg-amber-700"
           >
             {t("monitors.joinCase")}
-          </Button>
+          </ConfirmButton>
         </div>
       )}
     </li>
