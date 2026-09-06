@@ -610,9 +610,15 @@ class ResearchStore:
             raise ValueError(f"document_revision conflict: {document_revision_id}")
 
     def cased_keys(self) -> set[str]:
-        """已入案文章的 external_key 集合（收件箱 cased 标记）。"""
+        """在活跃 Case 中的文章 external_key 集合（收件箱 cased 标记）。
+
+        已关闭（closed）Case 的文档不计入——关闭即释放素材，可再次入案。
+        """
         rows = self._conn.execute(
-            "SELECT DISTINCT external_key FROM document_revisions WHERE external_key != ''"
+            "SELECT DISTINCT dr.external_key FROM document_revisions dr"
+            " JOIN case_documents cd ON cd.document_revision_id = dr.document_revision_id"
+            " JOIN cases c ON c.case_id = cd.case_id"
+            " WHERE dr.external_key != '' AND c.status != 'closed'"
         ).fetchall()
         return {r["external_key"] for r in rows}
 

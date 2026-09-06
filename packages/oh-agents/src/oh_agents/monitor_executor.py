@@ -144,28 +144,38 @@ def run_monitor(
 
         total, n_new = len(hits), len(new_hits)
         win_note = f"窗口 {monitor.window} 内" if window_applied else "窗口不可解析，已全量检索"
-        store.add_monitor_update(
-            MonitorUpdate(
-                update_id=f"mupd-{uuid4().hex[:12]}",
-                run_id=run_id,
-                monitor_id=monitor_id,
-                summary=(
-                    f"相对上次确认快照：新增 {n_new} 篇相关文档（{win_note}共命中 {total} 篇）"
-                    if snapshot_at is not None
-                    else f"首次运行：{win_note}命中 {total} 篇相关文档"
-                ),
-                delta={
-                    "new_articles": n_new,
-                    "total_hits": total,
-                    "window": monitor.window,
-                    "window_applied": window_applied,
-                },
-                evidence_refs=[r.item_key for r in new_hits[:_EVIDENCE_CAP]],
-                suggested_case_action="new_candidate" if n_new > 0 else "none",
-                reviewed=False,
-                created_at=now_dt.isoformat(),
-            )
+        # 更新去重（用户验收 P0-2b）：同一监测器存在未复核且内容相同的 update
+        # （新增数/命中数/证据集合一致）时不再生成重复条目——重复运行只刷新 run 记录。
+        ref_set = {r.item_key for r in new_hits[:_EVIDENCE_CAP]}
+        duplicate = any(
+            (u.delta or {}).get("new_articles") == n_new
+            and (u.delta or {}).get("total_hits") == total
+            and set(u.evidence_refs) == ref_set
+            for u in store.pending_updates(monitor_id)
         )
+        if not duplicate:
+            store.add_monitor_update(
+                MonitorUpdate(
+                    update_id=f"mupd-{uuid4().hex[:12]}",
+                    run_id=run_id,
+                    monitor_id=monitor_id,
+                    summary=(
+                        f"相对上次确认快照：新增 {n_new} 篇相关文档（{win_note}共命中 {total} 篇）"
+                        if snapshot_at is not None
+                        else f"首次运行：{win_note}命中 {total} 篇相关文档"
+                    ),
+                    delta={
+                        "new_articles": n_new,
+                        "total_hits": total,
+                        "window": monitor.window,
+                        "window_applied": window_applied,
+                    },
+                    evidence_refs=[r.item_key for r in new_hits[:_EVIDENCE_CAP]],
+                    suggested_case_action="new_candidate" if n_new > 0 else "none",
+                    reviewed=False,
+                    created_at=now_dt.isoformat(),
+                )
+            )
         output = {
             "stage": "succeeded",
             "hits": total,
@@ -174,6 +184,7 @@ def run_monitor(
             "window_applied": window_applied,
             "window_start": window_start.isoformat() if window_start else None,
             "window_end": now_dt.isoformat(),
+            "duplicate_update": duplicate,
         }
         store.finish_monitor_run(
             run_id,

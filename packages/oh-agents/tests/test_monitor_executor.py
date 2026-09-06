@@ -204,6 +204,7 @@ def test_run_monitor_persists_output_json_raw(tmp_path: Path) -> None:
         "window_applied": True,
         "window_start": "2026-08-27T12:00:00+00:00",
         "window_end": NOW.isoformat(),
+        "duplicate_update": False,
     }
     store.close()
 
@@ -250,4 +251,28 @@ def test_window_unparseable_full_scan(tmp_path: Path) -> None:
     assert output["window_start"] is None
     assert output["hits"] == 1  # 全量：窗口外仍在（诚实，不假装过滤）
     assert "全量检索" in store.pending_updates("mon-x")[0].summary
+    store.close()
+
+
+def test_duplicate_update_suppressed(tmp_path: Path) -> None:
+    """P0-2b：同内容重复运行不生成重复 update（数值+证据集合一致即视为同一增量）。"""
+    env = _Env(tmp_path)
+    recs = [_rec("dup-1", title="fed 加息文", published=NOW - timedelta(days=1))]
+    env.run(recs)
+    env._store().add_monitor_run(
+        MonitorRun(run_id="mrun-x2", monitor_id="mon-x", started_at=NOW.isoformat())
+    )
+    env.run(recs, run_id="mrun-x2")  # 同一窗口同一数据再跑一次（新 run）
+    store = env._store()
+    outs = [(r.get("output") or {}) for r in store.monitor_runs_for("mon-x")]
+    assert sum(1 for o in outs if not o.get("duplicate_update")) == 1  # 仅首次产 update
+    assert len(store.pending_updates("mon-x")) == 1  # 待复核队列无重复条目
+    # 数据变化后不再判重
+    env._store().add_monitor_run(
+        MonitorRun(run_id="mrun-x3", monitor_id="mon-x", started_at=NOW.isoformat())
+    )
+    env.run([*recs, _rec("dup-2", title="fed 新增声明", published=NOW)], run_id="mrun-x3")
+    outs = [(r.get("output") or {}) for r in store.monitor_runs_for("mon-x")]
+    assert not outs[-1].get("duplicate_update")
+    assert len(store.pending_updates("mon-x")) == 2
     store.close()
