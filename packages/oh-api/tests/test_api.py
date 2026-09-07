@@ -826,6 +826,18 @@ def test_change_landscape_evidence_articles(client: TestClient) -> None:
             n_cited += 1
     # 主题词 = 变化主体标签「美联储」（两个种子正文均含）→ 至少一个变化命中证据
     assert n_cited > 0
+    # P0-1：实体证据覆盖逐变化披露（breakdown 聚合一致 + flag 与总数一致）
+    for c in chs:
+        bd = c["evidence_source_breakdown"]
+        assert sum(x["n"] for x in bd) == len(c["evidence_articles"])
+        flag = c["evidence_flag"]
+        total = len(c["evidence_articles"])
+        if total >= 2:
+            assert flag == "sufficient"
+        elif total == 1:
+            assert flag == "single_source"
+        else:
+            assert flag == "none"
 
 
 def _sig(entity_id: str = "fed") -> Signal:

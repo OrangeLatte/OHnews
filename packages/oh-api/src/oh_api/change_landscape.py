@@ -23,6 +23,8 @@ from oh_contracts.change_landscape import (
     ChangeFieldPayload,
     ChangeFieldPoint,
     ChangeLandscape,
+    EvidenceFlag,
+    EvidenceSourceCount,
     NarrativeStream,
     QualifiedChange,
     QualityWarning,
@@ -343,6 +345,28 @@ def _evidence_articles(
     return out
 
 
+def _evidence_coverage(
+    articles: list[ChangeEvidenceArticle],
+) -> tuple[list[EvidenceSourceCount], EvidenceFlag]:
+    """实体证据覆盖口径（P0-1）：按信源聚合命中数 + 覆盖等级。
+
+    sufficient=≥2 篇实体证据；single_source=恰 1 篇；none=0 篇。
+    纪律：质量门通过 ≠ 实体证据充分，逐变化披露不冒充。
+    """
+    counts: dict[str, int] = {}
+    for a in articles:
+        counts[a.source_id] = counts.get(a.source_id, 0) + 1
+    breakdown = [EvidenceSourceCount(source_id=k, n=v) for k, v in sorted(counts.items())]
+    total = len(articles)
+    if total >= 2:
+        flag = EvidenceFlag.SUFFICIENT
+    elif total == 1:
+        flag = EvidenceFlag.SINGLE_SOURCE
+    else:
+        flag = EvidenceFlag.NONE
+    return breakdown, flag
+
+
 def _qualified_changes(
     briefing: BriefingResponse,
     signals: list[Signal],
@@ -382,6 +406,15 @@ def _qualified_changes(
             gated_out += 1
             continue
         subject_labels = [s.label for s in (b.subjects or [])]
+        _articles = _evidence_articles(
+            subject_labels,
+            b.headline,
+            b.what,
+            cur_records=cur_records,
+            base_records=base_records,
+            bronze_by_key=bronze_by_key,
+        )
+        _breakdown, _flag = _evidence_coverage(_articles)
         changes.append(
             QualifiedChange(
                 change_id=b.change_id,
@@ -392,14 +425,9 @@ def _qualified_changes(
                 strength_word=b.strength_word,
                 urgency=b.urgency,
                 subjects=subject_labels,
-                evidence_articles=_evidence_articles(
-                    subject_labels,
-                    b.headline,
-                    b.what,
-                    cur_records=cur_records,
-                    base_records=base_records,
-                    bronze_by_key=bronze_by_key,
-                ),
+                evidence_articles=_articles,
+                evidence_source_breakdown=_breakdown,
+                evidence_flag=_flag,
                 metrics={
                     k: float(v) for k, v in sig.metrics.items() if isinstance(v, (int, float))
                 },

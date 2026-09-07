@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import Field
@@ -86,6 +87,21 @@ class ChangeEvidenceArticle(_StrictBase):
     language: str = ""
 
 
+class EvidenceSourceCount(_StrictBase):
+    """单个信源对某变化的实体证据命中计数（来源驱动按实体过滤的口径）。"""
+
+    source_id: str
+    n: int = Field(ge=0)
+
+
+class EvidenceFlag(StrEnum):
+    """实体证据覆盖等级：质量门后仍须逐变化披露，禁冒充合格候选。"""
+
+    SUFFICIENT = "sufficient"  # ≥2 篇实体证据
+    SINGLE_SOURCE = "single_source"  # 仅 1 篇（单源候选）
+    NONE = "none"  # 0 篇（无实体证据）
+
+
 class QualifiedChange(_StrictBase):
     """腰部 Change Point：已过质量门的变化（复用 Briefing 人话语义）。"""
 
@@ -101,6 +117,9 @@ class QualifiedChange(_StrictBase):
     evidence_articles: list[ChangeEvidenceArticle] = Field(default_factory=list)
     # 检测器输出的数值读数（jsd/n_recent/n_base 等），供变化卡真实量化呈现
     metrics: dict[str, float] = Field(default_factory=dict)
+    # 实体证据覆盖（P0-1）：按信源聚合的命中计数 + 覆盖等级
+    evidence_source_breakdown: list[EvidenceSourceCount] = Field(default_factory=list)
+    evidence_flag: EvidenceFlag = EvidenceFlag.NONE
 
 
 class QualityWarning(_StrictBase):
