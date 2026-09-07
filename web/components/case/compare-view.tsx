@@ -55,6 +55,8 @@ type Props = {
   ex: Record<string, ExtractionRow[]>;
   ensureAllEx: (rids: string[]) => void;
   busy: boolean;
+  /** Case 已关闭：禁止发起新比较，但历史比较结果仍完整可看 */
+  readOnly?: boolean;
   setBusy: (v: boolean) => void;
   cmpOut: WorkflowOut | null;
   setCmpOut: (out: WorkflowOut | null) => void;
@@ -70,6 +72,7 @@ export default function CompareView({
   ex,
   ensureAllEx,
   busy,
+  readOnly = false,
   setBusy,
   cmpOut,
   setCmpOut,
@@ -312,8 +315,9 @@ export default function CompareView({
           ))}
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || readOnly}
             onClick={runCompare}
+            title={readOnly ? t("case.closedReadonly") : undefined}
             className="ml-auto rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
           >
             {t("case.compare")}

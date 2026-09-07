@@ -466,7 +466,8 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
           docs={docs}
           ex={ex}
           ensureAllEx={ensureAllEx}
-          busy={roBusy}
+          busy={busy}
+          readOnly={caseClosed}
           setBusy={setBusy}
           cmpOut={cmpOut}
           setCmpOut={setCmpOut}

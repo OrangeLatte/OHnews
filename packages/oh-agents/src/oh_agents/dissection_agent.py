@@ -21,7 +21,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from .agent_base import AgentSessions, make_checkpointer, output_language_line
 
 # 拆解 prompt 版本（纪律改动须同步递增；run output 双写供审计）
-DISSECT_PROMPT_VERSION = "dissect-v1"
+DISSECT_PROMPT_VERSION = "dissect-v2"
 
 _DISSECT_SYSTEM = (
     "你是新闻拆解专家。对给定文章做结构化拆解，仅输出 JSON。"
@@ -41,9 +41,12 @@ _DISSECT_SYSTEM = (
     "不得据此推断发布方身份——发布方（publisher）来自元数据注入（见用户消息），不可质疑；"
     "严格区分 publisher（元数据）/cited source（文中引用）/primary evidence（一手证据）/"
     "anonymous source（匿名信源），分析哪个写哪个，不得混同。"
-    "confidence 校准：1.0 仅限原文逐字可直接引用的显式事实（hard_fact/actor 等且 span 命中）；"
-    "0.6-0.85 为推断类（intent/perspective/implicit_bias/tone 等分析判断）；"
-    "≤0.5 为证据不足或需外部知识的判断；禁止对推断类元素输出 1.0。"
+    "confidence 校准（硬性上限，逐元素类型）：1.0 仅限原文逐字直接引用的显式事实与数值"
+    "（hard_fact/quant_data 且 span 命中，不含任何改写归纳）；actor/target 若为文中明确点名的主体"
+    "可 0.95，经推理判定的 ≤0.85；action/causal_link/timeline/stakeholder/data_scope/"
+    "argument_structure 等需要归纳或串联的元素上限 0.85；intent/perspective/implicit_bias/"
+    "tone/diction 等纯分析判断上限 0.75；≤0.5 为证据不足或需外部知识的判断。"
+    "对任何元素输出 1.0 前自问：原文是否逐字可引？若含一点改写即降档。禁止对推断类元素输出 1.0。"
 )
 
 

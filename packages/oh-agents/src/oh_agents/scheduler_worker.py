@@ -97,9 +97,9 @@ def run_scheduler_tick(
             result.skipped_unscheduled.append(monitor.monitor_id)
             continue
         runs = store.monitor_runs_for(monitor.monitor_id, limit=1)
-        anchor = (
-            _parse_dt(runs[0].get("started_at")) if runs else None
-        ) or _parse_dt(monitor.created_at)
+        anchor = (_parse_dt(runs[0].get("started_at")) if runs else None) or _parse_dt(
+            monitor.created_at
+        )
         if anchor is None:
             result.skipped_not_due.append(monitor.monitor_id)
             continue
@@ -169,9 +169,7 @@ class SchedulerWorker:
                 started_at=self._clock().isoformat(),
                 last_error="",
             )
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="monitor-scheduler"
-        )
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="monitor-scheduler")
         self._thread.start()
 
     def stop(self) -> None:
@@ -191,9 +189,7 @@ class SchedulerWorker:
             try:
                 store = self._store_factory()
                 try:
-                    result = run_scheduler_tick(
-                        store, self._bronze, self._clock
-                    )
+                    result = run_scheduler_tick(store, self._bronze, self._clock)
                 finally:
                     store.close()
                 with self._lock:

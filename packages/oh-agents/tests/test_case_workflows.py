@@ -538,6 +538,41 @@ def test_report_evidence_marks_unreviewed_and_prompt_discipline(store, case_id) 
     assert revs[0]["content"]["inputs"]["n_unreviewed_extractions"] == 1
 
 
+class TimeoutThenOkRouter(MultiRouter):
+    """首轮 invoke 抛 TimeoutError（模拟长文超时），之后恢复正常。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed_once = False
+
+    async def invoke(self, tier: Any, system: str, user: str, schema: type) -> tuple:
+        if not self.failed_once:
+            self.failed_once = True
+            raise TimeoutError()
+        return await super().invoke(tier, system, user, schema)
+
+
+def test_report_timeout_degraded_retry_succeeds(store, case_id) -> None:
+    """P1-e 长文超时降级重试：首轮 TimeoutError → 收窄证据包重试一次 →
+    succeeded + degraded_retry 标记（output/content 双写），inputs 如实反映收窄。"""
+    _seed_report_evidence(store, case_id)
+    router = TimeoutThenOkRouter()
+    wf = CaseWorkflows(research=store, router=router, now_fn=_NOW)
+    out = asyncio.run(
+        wf.build_report(case_id, report_type="structured_summary", title="降级重试报告")
+    )
+    assert out["status"] == "succeeded"
+    run = store.get_analysis_run(out["run_id"])
+    assert run is not None and run["output"]["degraded_retry"] is True
+    rev = store.get_artifact_revision(out["revision_id"])
+    assert rev is not None and rev["content"]["degraded_retry"] is True
+    assert router.failed_once is True
+    # 首轮在 super().invoke 之前 raise（calls 不记）；第二次重试走正常路径记录 1 次
+    assert router.calls.count(ReportOutputP) == 1
+    # 降级 inputs：n_documents/n_extractions 如实（此处样本小未触发收窄截断，但标记链路完整）
+    assert run["output"]["inputs"]["n_documents"] >= 1
+
+
 def test_report_context_integrity_triple_check(store, case_id) -> None:
     """T2 三重校验：declared/serialized/loaded 一致时 succeeded；篡改 declared → failed。"""
     _seed_report_evidence(store, case_id)

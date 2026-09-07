@@ -245,8 +245,24 @@ export default function HistoryView({
     if (o.summary) out.push({ label: t("case.outSummary"), value: o.summary });
     if (o.agreement) out.push({ label: t("case.compareConsistent"), value: o.agreement.join(", ") || "—" });
     if (o.conflicts) out.push({ label: t("case.compareConflicts"), value: Object.keys(o.conflicts).join(", ") || "—" });
-    if (o.gaps) out.push({ label: t("case.compareGaps"), value: o.gaps.join(", ") || "—" });
+    if (o.missing) out.push({ label: t("case.compareGaps"), value: o.missing.join(", ") || "—" });
+    if (o.gaps && !o.missing) out.push({ label: t("case.compareGaps"), value: o.gaps.join(", ") || "—" });
+    if (o.eligibility)
+      out.push({
+        label: t("case.factorSameEventScore"),
+        value: `${o.eligibility.same_event_probability ?? o.eligibility.probability ?? "—"} · ${o.eligibility.comparison_mode ?? ""}`,
+      });
     if (o.artifact_id) out.push({ label: t("case.outArtifact"), value: o.artifact_id });
+    if (o.revision_id) out.push({ label: t("case.outRevision"), value: o.revision_id });
+    if (o.translation_revision_id)
+      out.push({
+        label: t("case.outTranslation"),
+        value: `${o.translation_revision_id}${o.target_language ? ` → ${o.target_language}` : ""}`,
+      });
+    if (o.duplicate) out.push({ label: t("case.outDuplicate"), value: "true" });
+    if (o.verdict) out.push({ label: t("case.verdict"), value: o.verdict });
+    if (o.search_scope) out.push({ label: t("case.searchScope"), value: o.search_scope });
+    if (o.revised_from) out.push({ label: t("case.revisedFrom"), value: o.revised_from });
     if (o.questions) out.push({ label: t("case.questions"), value: o.questions.join(" / ") || "—" });
     if (o.engine) out.push({ label: t("case.outEngine"), value: o.engine });
     return out;

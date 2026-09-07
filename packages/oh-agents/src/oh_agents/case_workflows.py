@@ -660,14 +660,23 @@ class CaseWorkflows:
 
     # ---------- W4 报告 BuildReport ----------
 
-    def _collect_report_evidence(self, case_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _collect_report_evidence(
+        self,
+        case_id: str,
+        *,
+        max_body_chars: int | None = None,
+        max_elements_per_doc: int | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """收集 Case 全部真实材料作为报告证据包（只含库内可核对的 id 与原文）。
 
         返回 (evidence_pack, inputs 清单)；inputs 供验收方核对
         「报告输入与页面 ResearchState 一致」，truncated 标记正文截断。
         每条 extraction 携带 human_status（R6 只引已审核纪律的数据源），
         n_unreviewed_extractions 统计未复核元素数（=0 表示全部经人工审核）。
+        max_body_chars / max_elements_per_doc 供长文超时后的降级重试收窄输入
+        （收窄是诚实降级：inputs 计数如实反映收窄后的实际输入）。
         """
+        body_limit = int(max_body_chars or _MAX_REPORT_BODY_CHARS)
         truncated = False
         documents: list[dict[str, Any]] = []
         n_extractions = 0
@@ -681,16 +690,22 @@ class CaseWorkflows:
                 "source_id": str(doc.get("source_id") or ""),
                 "language": str(doc.get("language") or ""),
             }
-            if len(body) > _MAX_REPORT_BODY_CHARS:
+            if len(body) > body_limit:
                 truncated = True
-                entry["body"] = body[:_MAX_REPORT_BODY_CHARS]
+                entry["body"] = body[:body_limit]
                 entry["body_note"] = (
-                    f"正文超长已截断：仅前 {_MAX_REPORT_BODY_CHARS} 字符（原文 {len(body)} 字符）"
+                    f"正文超长已截断：仅前 {body_limit} 字符（原文 {len(body)} 字符）"
                 )
             else:
                 entry["body"] = body
             elements: list[dict[str, Any]] = []
             for row in self._research.extractions_for_revision(rev_id):
+                if max_elements_per_doc is not None and len(elements) >= max_elements_per_doc:
+                    truncated = True
+                    entry["elements_note"] = (
+                        f"降级收窄：每文档仅保留前 {max_elements_per_doc} 条提取"
+                    )
+                    break
                 spans = self._research.spans_by_ids(list(row.get("span_ids") or []))
                 elements.append(
                     {
@@ -804,28 +819,35 @@ class CaseWorkflows:
             error = "报告证据包为空：无已拆解文档"
             self._finish_run(run, "failed", error=error)
             raise RuntimeError(error)
+
         # 三重校验（declared / serialized / loaded 同一对象三处来源必须相等）：
         # declared = inputs 清单计数；serialized = 实际放入 evidence_json 的条目数；
         # loaded = json.loads(evidence_json) 后 len 计数。不一致即上下文完整性破坏，
         # run failed 不产 draft（绝不把缺料报告冒充成功）。
-        evidence_json = _dumps(pack)
-        declared = (int(inputs["n_documents"]), int(inputs["n_extractions"]))
-        serialized = (
-            len(pack["documents"]),
-            sum(len(d["extraction_elements"]) for d in pack["documents"]),
-        )
-        loaded_pack = json.loads(evidence_json)
-        loaded = (
-            len(loaded_pack["documents"]),
-            sum(len(d["extraction_elements"]) for d in loaded_pack["documents"]),
-        )
-        if declared != serialized or declared != loaded:
-            error = (
-                "context_integrity_failed: "
-                f"declared={declared}, serialized={serialized}, loaded={loaded}"
+        def _prepare_evidence(pk: dict[str, Any], ip: dict[str, Any]) -> str:
+            ej = _dumps(pk)
+            declared = (int(ip["n_documents"]), int(ip["n_extractions"]))
+            serialized = (
+                len(pk["documents"]),
+                sum(len(d["extraction_elements"]) for d in pk["documents"]),
             )
-            self._finish_run(run, "failed", error=error)
-            raise RuntimeError(error)
+            loaded_pack = json.loads(ej)
+            loaded = (
+                len(loaded_pack["documents"]),
+                sum(len(d["extraction_elements"]) for d in loaded_pack["documents"]),
+            )
+            if declared != serialized or declared != loaded:
+                raise ValueError(
+                    "context_integrity_failed: "
+                    f"declared={declared}, serialized={serialized}, loaded={loaded}"
+                )
+            return ej
+
+        try:
+            evidence_json = _prepare_evidence(pack, inputs)
+        except ValueError as exc:
+            self._finish_run(run, "failed", error=str(exc))
+            raise RuntimeError(str(exc)) from exc
         if self._report_graph is None:
             self._report_graph = build_report_graph(
                 router=self._router, store=self._silver, now_fn=self._graph_now
@@ -843,14 +865,32 @@ class CaseWorkflows:
         if feedback:
             state_in["feedback"] = feedback
         state = await self._report_graph.ainvoke(state_in)
+        # 长文超时降级重试：首轮 llm_failed 含 Timeout 时，收窄证据包
+        # （body 3000 字符 + 每文档 10 条提取）重试一次；inputs 如实反映收窄，
+        # degraded_retry 标记写进 output/content，绝不冒充首轮全量成功。
+        degraded_retry = False
+        _lf = str(state.get("llm_failed") or "")
+        if "Timeout" in _lf:
+            degraded_retry = True
+            pack, inputs = self._collect_report_evidence(
+                case_id, max_body_chars=3000, max_elements_per_doc=10
+            )
+            try:
+                evidence_json = _prepare_evidence(pack, inputs)
+            except ValueError as exc:
+                self._finish_run(run, "failed", error=str(exc), usage=state.get("usage"))
+                raise RuntimeError(str(exc)) from exc
+            state_in["evidence_json"] = evidence_json
+            state = await self._report_graph.ainvoke(state_in)
+            _lf = str(state.get("llm_failed") or "")
         report = state.get("report")
         _usage = state.get("usage")
         if report is None:
             error = "; ".join(state.get("errors", [])) or "report graph 未产出结果"
             self._finish_run(run, "failed", error=error, usage=_usage)
             raise RuntimeError(error)
-        if state.get("llm_failed"):
-            final_status, final_error = "abstained", f"llm_failed: {state['llm_failed']}"
+        if _lf:
+            final_status, final_error = "abstained", f"llm_failed: {_lf}"
         elif report.engine == "offline":
             final_status = "abstained"
             final_error = "; ".join(state.get("errors", [])) or "llm_empty_output"
@@ -883,6 +923,8 @@ class CaseWorkflows:
             "report_type": report_type,
             "prompt_version": REPORT_PROMPT_VERSION,
         }
+        if degraded_retry:
+            content["degraded_retry"] = True
         if prev_revision_id:
             content["revised_from"] = prev_revision_id
         if feedback:
@@ -904,6 +946,8 @@ class CaseWorkflows:
             "inputs": inputs,
             "prompt_version": REPORT_PROMPT_VERSION,
         }
+        if degraded_retry:
+            output["degraded_retry"] = True
         if prev_revision_id:
             output["revised_from"] = prev_revision_id
         if feedback:

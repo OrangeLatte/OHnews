@@ -67,9 +67,7 @@ def test_tick_fires_due_monitor(tmp_path: Any) -> None:
 
         def executor(monitor_id: str, run_id: str) -> None:
             fired.append((monitor_id, run_id))
-            store.finish_monitor_run(
-                run_id, status="succeeded", finished_at=_iso(_now())
-            )
+            store.finish_monitor_run(run_id, status="succeeded", finished_at=_iso(_now()))
 
         result = run_scheduler_tick(store, lambda: iter(()), _now, executor=executor)
         assert [(m, r) for m, r in fired] == [("mon-a", result.fired[0]["run_id"])]
@@ -78,9 +76,7 @@ def test_tick_fires_due_monitor(tmp_path: Any) -> None:
         # queued run 已登记
         active = store.active_monitor_run("mon-a")
         assert active is None  # executor 已终结
-        assert store.monitor_runs_for("mon-a", limit=1)[0]["run_id"] == result.fired[0][
-            "run_id"
-        ]
+        assert store.monitor_runs_for("mon-a", limit=1)[0]["run_id"] == result.fired[0]["run_id"]
     finally:
         store.close()
 
@@ -136,9 +132,7 @@ def test_tick_missed_run_refires_after_restart(tmp_path: Any) -> None:
         fired: list[dict[str, Any]] = []
 
         def executor(monitor_id: str, run_id: str) -> None:
-            store.finish_monitor_run(
-                run_id, status="succeeded", finished_at=_iso(_now())
-            )
+            store.finish_monitor_run(run_id, status="succeeded", finished_at=_iso(_now()))
 
         result = run_scheduler_tick(store, lambda: iter(()), _now, executor=executor)
         assert len(result.fired) == 1

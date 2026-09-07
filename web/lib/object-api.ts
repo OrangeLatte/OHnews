@@ -170,6 +170,7 @@ export type WorkflowOut = {
   revision_id?: string;
   comparison_id?: string;
   translation_revision_id?: string;
+  target_language?: string;
   duplicate?: boolean;
   extraction_ids?: string[];
   questions?: string[];
