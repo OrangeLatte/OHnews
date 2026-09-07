@@ -100,6 +100,9 @@ export function MonitorsWorkspace() {
   // 懒加载（打开详情时 fetch），失败诚实显示，不编造。
   const [sched, setSched] = useState<Record<string, MonitorSchedulerRow>>({});
   const [schedErr, setSchedErr] = useState<Record<string, boolean>>({});
+  const [hb, setHb] = useState<{ alive?: boolean; ticks?: number; last_error?: string } | null>(
+    null,
+  );
   const [verdicts, setVerdicts] = useState<Record<string, Record<string, number>>>({});
   const [runBusy, setRunBusy] = useState(false);
   // Run now 固定内联确认区（非瞬时 armed）：显式 Cancel/Queue run + 结果条（Queued/Deduplicated 常驻）
@@ -227,6 +230,22 @@ export function MonitorsWorkspace() {
       alive = false;
     };
   }, [openId, sched, schedErr]);
+
+  // 调度 worker 心跳（第十一轮 P0-D）：alive/ticks/last_error（进程级真值）。
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/scheduler/heartbeat", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((hb: { alive?: boolean; ticks?: number; last_error?: string }) => {
+        if (alive) setHb(hb);
+      })
+      .catch(() => {
+        if (alive) setHb({ alive: false });
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const configStatuses = useMemo(
     () => CONFIG_STATUSES.filter((s) => rows.some((r) => r.status === s)),
@@ -764,6 +783,24 @@ export function MonitorsWorkspace() {
                         </span>
                       )}
                     </div>
+                    <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+                      <span
+                        className={`inline-block h-2 w-2 rounded-full ${
+                          hb?.alive ? "bg-emerald-600" : "bg-zinc-400"
+                        }`}
+                        aria-hidden
+                      />
+                      <span className="text-muted-foreground">
+                        {hb?.alive
+                          ? t("monitors.worker.alive", { n: hb.ticks ?? 0 })
+                          : t("monitors.worker.dead")}
+                      </span>
+                      {hb?.last_error ? (
+                        <span className="text-red-600" title={hb.last_error}>
+                          {t("monitors.worker.error")}
+                        </span>
+                      ) : null}
+                    </p>
                     {schedRow && (
                       <>
                         <p className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
@@ -883,9 +920,9 @@ export function MonitorsWorkspace() {
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground">
+      <div className="text-xs text-muted-foreground">
         j / k · Esc — <HelpIcon helpKey="state.needsConfirm" />
-      </p>
+      </div>
     </div>
   );
 }

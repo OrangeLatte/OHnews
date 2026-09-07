@@ -497,6 +497,7 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
           refreshDetail={refreshDetail}
           highlightClaim={highlightClaim}
           docs={docs}
+          readOnly={caseClosed}
         />
       ) : null}
     </div>

@@ -137,8 +137,26 @@ class QualityWarning(_StrictBase):
     message: str = Field(min_length=4)
 
 
+class EffectiveFilters(_StrictBase):
+    """本聚合实际生效的筛选（空=未筛选，作用于全部 bronze 记录）。"""
+
+    source_ids: list[str] = Field(default_factory=list)
+    language: str | None = None
+
+
+class LandscapeSample(_StrictBase):
+    """两窗样本量（筛选后口径，与 sample_baseline/sample_current 同源）。"""
+
+    baseline: int = 0
+    current: int = 0
+
+
 class ChangeLandscape(_StrictBase):
-    """沙漏场景聚合（/api/change_landscape 唯一出口）。"""
+    """沙漏场景聚合（/api/change_landscape 唯一出口）。
+
+    effective_window 语义由 current_window 承担（检测锚定后的实际生效窗）；
+    effective_filters/sample/computed_at 供前端展示筛选口径与数据新鲜度。
+    """
 
     scene_id: str
     generated_at: str
@@ -150,6 +168,9 @@ class ChangeLandscape(_StrictBase):
     evidence_refs: list[EvidenceCitation] = Field(default_factory=list)
     freshness: DataFreshness
     quality_warnings: list[QualityWarning] = Field(default_factory=list)
+    effective_filters: EffectiveFilters | None = None
+    sample: LandscapeSample | None = None
+    computed_at: str = ""
 
 
 class ChangeFieldPoint(_StrictBase):

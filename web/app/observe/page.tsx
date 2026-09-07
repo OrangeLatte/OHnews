@@ -172,10 +172,21 @@ export default function ObservePage() {
     return () => clearTimeout(timer);
   }, [urlEntity]);
 
-  // 主舞台只读数据（change-landscape + ndi/rank + emotion），窗口变化整体重拉
+  // 主舞台只读数据（change-landscape + ndi/rank + emotion），窗口/来源/语言筛选变化整体重拉。
+  // P0-3：来源/语言作用于 landscape 全链（两窗/检测/证据）。用户未显式选择信源
+  // （selSourcesRaw=null）时主舞台不过滤（Inbox 的 Top3 预选不影响全局视图）。
+  // NDI/Emotion 端点按全量数据计算，筛选不作用时在对应 Lens 诚实标注。
   useEffect(() => {
     let alive = true;
-    Promise.all([fetchLandscape(fetchDays), fetchNdiRank(8), fetchEmotion(fetchDays)])
+    Promise.all([
+      fetchLandscape({
+        days: fetchDays,
+        sourceIds: selSourcesRaw ?? [],
+        language: lang || undefined,
+      }),
+      fetchNdiRank(8),
+      fetchEmotion(fetchDays),
+    ])
       .then(([ls, rank, emo]) => {
         if (alive) {
           setMainData({ days: fetchDays, landscape: ls, ndi: rank, emotion: emo });
@@ -188,7 +199,7 @@ export default function ObservePage() {
     return () => {
       alive = false;
     };
-  }, [fetchDays, reloadTick]);
+  }, [fetchDays, selSourcesRaw, lang, reloadTick]);
 
   // 左栏信源目录（一次性）
   useEffect(() => {
@@ -662,6 +673,16 @@ export default function ObservePage() {
             </div>
 
             <div role="tabpanel" aria-label={tabLabels[mode]}>
+              {/* P0-3 筛选诚实边界：NDI/情绪/实体端点按全量数据计算，来源/语言筛选不作用 */}
+              {(mode === "divergence" || mode === "emotion" || mode === "entities") &&
+              (selSourcesRaw?.length ?? 0) + (lang ? 1 : 0) > 0 ? (
+                <p className="mb-3 rounded-[6px] border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                  {ot(
+                    "observe.filterScope",
+                    "Source/language filters apply to Signal, Flow, Narrative, change detection and Inbox. This view is computed from the full dataset and is shown unchanged.",
+                  )}
+                </p>
+              ) : null}
               {mode === "signal" ? (
                 <HourglassPanel
                   landscape={mainData?.landscape ?? null}

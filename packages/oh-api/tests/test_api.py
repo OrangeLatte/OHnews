@@ -1223,3 +1223,17 @@ def test_parent_brief_endpoint(client: TestClient, tmp_path: Path) -> None:
     }
     assert isinstance(r["providers"], dict) and "zhipu" in r["providers"]
     assert len(r["suggestions"]) >= 1
+
+
+def test_change_landscape_source_filter(client: TestClient) -> None:
+    """P0-3 筛选契约：source_id 过滤作用于两窗/流带，effective_filters/sample 回显。"""
+    a = client.get("/api/change-landscape", params={"source_id": "gov"}).json()
+    assert a["effective_filters"] == {"source_ids": ["gov"], "language": None}
+    assert a["effective_filters"]["source_ids"] == ["gov"]
+    assert {s["source_id"] for s in a["source_streams"]} == {"gov"}
+    assert a["sample"]["current"] == a["current_window"]["n_articles"] > 0
+    # 未筛选：effective_filters 为 None，流带含全部种子源
+    b = client.get("/api/change-landscape").json()
+    assert b["effective_filters"] is None
+    assert {"gov", "wscn"} <= {s["source_id"] for s in b["source_streams"]}
+    assert b["sample"]["current"] >= a["sample"]["current"]

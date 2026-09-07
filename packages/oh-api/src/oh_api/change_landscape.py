@@ -23,8 +23,10 @@ from oh_contracts.change_landscape import (
     ChangeFieldPayload,
     ChangeFieldPoint,
     ChangeLandscape,
+    EffectiveFilters,
     EvidenceFlag,
     EvidenceSourceCount,
+    LandscapeSample,
     NarrativeStream,
     QualifiedChange,
     QualityWarning,
@@ -532,13 +534,27 @@ def build_change_landscape(
     min_per_source: int = 10,
     top: int = 5,
     briefing_result: tuple[BriefingResponse, list[Signal]] | None = None,
+    source_ids: tuple[str, ...] | list[str] = (),
+    language: str | None = None,
 ) -> ChangeLandscape:
     """变化场场景唯一聚合入口（后端拼图，前端渲染）。
+
+    source_ids/language 筛选在 bronze 记录层预过滤——两窗/检测/证据
+    全部作用于同一过滤后数据集（筛选语义对全视图闭合）。
+    effective_filters/sample/computed_at 回显实际口径供前端展示。
 
     v2（T2 待做）：两窗需按共同来源 cohort 校正可比性，raw 与
     composition-adjusted 双口径并列，避免把来源结构变化误读为叙事迁移。
     """
     records = list(bronze_iter)
+    if source_ids or language:
+        _sid = {s for s in source_ids if s}
+        records = [
+            r
+            for r in records
+            if (not _sid or r.source_id in _sid)
+            and (not language or (r.normalized.get("language") or "") == language)
+        ]
     # 数据末梢锚定：采集断流时（now 距最新数据 >1d），检测与窗口锚点跟随数据
     # 覆盖期，避免检测尾窗空转导致信号恒零；数据过时事实仍由 freshness
     # 警告如实承担（staleness 以真实 now 计算，不因锚定而被掩盖）。
@@ -613,6 +629,19 @@ def build_change_landscape(
         evidence_refs=refs,
         freshness=freshness,
         quality_warnings=warnings,
+        effective_filters=(
+            EffectiveFilters(
+                source_ids=list(source_ids),
+                language=language,
+            )
+            if (source_ids or language)
+            else None
+        ),
+        sample=LandscapeSample(
+            baseline=baseline_w.n_articles,
+            current=current_w.n_articles,
+        ),
+        computed_at=now.isoformat(),
     )
 
 

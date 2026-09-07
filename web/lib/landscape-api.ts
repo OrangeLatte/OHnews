@@ -91,6 +91,9 @@ export type Landscape = {
   qualified_changes: QualifiedChange[];
   quality_warnings: QualityWarning[];
   freshness?: Freshness;
+  effective_filters?: { source_ids: string[]; language: string | null } | null;
+  sample?: { baseline: number; current: number };
+  computed_at?: string;
 };
 
 export type NdiRankRow = {
@@ -125,8 +128,19 @@ export type SourcesQuery = {
   enabled?: boolean;
 };
 
-export async function fetchLandscape(days: number): Promise<Landscape> {
-  const r = await fetch(`/api/change-landscape?days=${days}`, { cache: "no-store" });
+export type LandscapeParams = {
+  days: number;
+  sourceIds?: string[];
+  language?: string;
+};
+
+export async function fetchLandscape(params: LandscapeParams | number): Promise<Landscape> {
+  // 兼容旧签名 fetchLandscape(days: number)
+  const p: LandscapeParams = typeof params === "number" ? { days: params } : params;
+  const qs = new URLSearchParams({ days: String(p.days) });
+  for (const sid of p.sourceIds ?? []) qs.append("source_id", sid);
+  if (p.language) qs.set("language", p.language);
+  const r = await fetch(`/api/change-landscape?${qs.toString()}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`change-landscape: HTTP ${r.status}`);
   return r.json();
 }

@@ -54,6 +54,8 @@ type Props = {
   highlightClaim?: string;
   /** R10 事件时间线：案内文档（published_at 排序，缺日期诚实标注）。 */
   docs?: DocRow[];
+  /** P0-2 closed Case 双层锁：禁用判断写入表单（后端 409 兜底）。 */
+  readOnly?: boolean;
 };
 
 const matchFilter = (status: string, f: FilterKey): boolean => {
@@ -88,6 +90,7 @@ export default function HistoryView({
   refreshDetail,
   highlightClaim = "",
   docs = [],
+  readOnly = false,
 }: Props) {
   const t = useT();
   const [filter, setFilter] = useState<FilterKey>("all");
@@ -466,7 +469,7 @@ export default function HistoryView({
                 ) : null}
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || readOnly}
                   onClick={() => runChallenge(c.claim_id)}
                   className="rounded-md border px-2 py-1 hover:bg-muted disabled:opacity-50"
                 >
@@ -555,20 +558,22 @@ export default function HistoryView({
             onChange={(e) => setClaimText(e.target.value)}
             placeholder={t("case.claimStatement")}
             aria-label={t("case.claimStatement")}
-            className="min-w-40 flex-1 rounded-md border bg-transparent px-2 py-1 text-xs"
+            disabled={readOnly}
+            className="min-w-40 flex-1 rounded-md border bg-transparent px-2 py-1 text-xs disabled:opacity-50"
           />
           <select
             value={claimKind}
             onChange={(e) => setClaimKind(e.target.value)}
             aria-label={t("case.claimKind")}
-            className="rounded-md border bg-transparent px-1 py-1 text-xs"
+            disabled={readOnly}
+            className="rounded-md border bg-transparent px-1 py-1 text-xs disabled:opacity-50"
           >
             <option value="factual">{t("case.claimKind.factual")}</option>
             <option value="opinion">{t("case.claimKind.opinion")}</option>
           </select>
           <button
             type="submit"
-            disabled={busy || !claimText.trim()}
+            disabled={busy || readOnly || !claimText.trim()}
             className="rounded-md border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
           >
             {t("case.addClaim")}
@@ -590,7 +595,7 @@ export default function HistoryView({
       ) : null}
 
       {/* R10 判断变化线：Belief Snapshot（maintain/adjust/reverse/uncertain） */}
-      <BeliefSection caseId={caseId} />
+      <BeliefSection caseId={caseId} readOnly={readOnly} />
 
       {nothing ? <p className="text-sm text-muted-foreground">{t("case.emptyHistory")}</p> : null}
     </div>
@@ -598,7 +603,7 @@ export default function HistoryView({
 }
 
 /** R10 判断变化线：用户认知快照列表 + 新增表单（服务端锚定时间并派生 change_type）。 */
-function BeliefSection({ caseId }: { caseId: string }) {
+function BeliefSection({ caseId, readOnly }: { caseId: string; readOnly?: boolean }) {
   const t = useT();
   const [beliefs, setBeliefs] = useState<BeliefRow[] | null>(null);
   const [stance, setStance] = useState<BeliefStance>("maintain");
@@ -682,42 +687,48 @@ function BeliefSection({ caseId }: { caseId: string }) {
           ))}
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-1.5 text-xs">
-        <select
-          aria-label={t("case.beliefStanceLabel")}
-          value={stance}
-          onChange={(e) => setStance(e.target.value as BeliefStance)}
-          className="rounded-lg border bg-background px-2 py-1"
-        >
-          {(["maintain", "adjust", "reverse", "uncertain"] as BeliefStance[]).map((s) => (
-            <option key={s} value={s}>
-              {t(`case.beliefStance.${s}`)}
-            </option>
-          ))}
-        </select>
-        <input
-          aria-label={t("case.beliefConfidence")}
-          value={confidence}
-          onChange={(e) => setConfidence(e.target.value)}
-          className="w-16 rounded-lg border bg-background px-2 py-1"
-          placeholder="0-1"
-        />
-        <input
-          aria-label={t("case.beliefRationale")}
-          value={rationale}
-          onChange={(e) => setRationale(e.target.value)}
-          className="min-w-0 flex-1 rounded-lg border bg-background px-2 py-1"
-          placeholder={t("case.beliefRationalePh")}
-        />
-        <button
-          type="button"
-          onClick={submit}
-          disabled={saving}
-          className="rounded-lg bg-sky-600 px-2.5 py-1 font-medium text-white disabled:opacity-50"
-        >
-          {t("case.beliefAdd")}
-        </button>
-      </div>
+      {readOnly ? (
+        <p className="text-xs text-muted-foreground" role="note">
+          {t("case.beliefReadOnly")}
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <select
+            aria-label={t("case.beliefStanceLabel")}
+            value={stance}
+            onChange={(e) => setStance(e.target.value as BeliefStance)}
+            className="rounded-lg border bg-background px-2 py-1"
+          >
+            {(["maintain", "adjust", "reverse", "uncertain"] as BeliefStance[]).map((s) => (
+              <option key={s} value={s}>
+                {t(`case.beliefStance.${s}`)}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label={t("case.beliefConfidence")}
+            value={confidence}
+            onChange={(e) => setConfidence(e.target.value)}
+            className="w-16 rounded-lg border bg-background px-2 py-1"
+            placeholder="0-1"
+          />
+          <input
+            aria-label={t("case.beliefRationale")}
+            value={rationale}
+            onChange={(e) => setRationale(e.target.value)}
+            className="min-w-0 flex-1 rounded-lg border bg-background px-2 py-1"
+            placeholder={t("case.beliefRationalePh")}
+          />
+          <button
+            type="button"
+            onClick={submit}
+            disabled={saving}
+            className="rounded-lg bg-sky-600 px-2.5 py-1 font-medium text-white disabled:opacity-50"
+          >
+            {t("case.beliefAdd")}
+          </button>
+        </div>
+      )}
     </section>
   );
 }

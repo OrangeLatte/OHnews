@@ -204,7 +204,9 @@ export const ELEMENT_HELP_KEYS: string[] = [
 ];
 
 export function helpDefinition(key: string): HelpDefinition | undefined {
-  return HELP_REGISTRY[key];
+  // 调用方存在两种前缀习惯（"mode.read" 与 "help.mode.read"），兼容双格式查找，
+  // 否则带前缀的 helpKey 落空 → 点击 ？ 无解释（第十一轮验收 P0-1）。
+  return HELP_REGISTRY[key] ?? HELP_REGISTRY[key.replace(/^help\./, "")];
 }
 
 /** 自动化扫描用：全部注册键（覆盖率测试 = 页面引用键 ⊆ 注册表）。 */

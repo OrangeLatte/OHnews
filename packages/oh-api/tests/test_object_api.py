@@ -1061,6 +1061,32 @@ def test_closed_case_lifecycle_gate(app_env: tuple[TestClient, Path]) -> None:
         client.post("/api/cases/case-none/dissect", json={"document_revision_id": "r"}).status_code
         == 404
     )
+    # 判断（Belief Snapshot）写入 closed Case → 409（P0-2 双层锁的后端半）
+    r = client.post(
+        "/api/cases/case-cg/beliefs",
+        json={
+            "change_id": "sig-x",
+            "subject_id": "case-cg",
+            "stance": "maintain",
+            "confidence": 0.7,
+            "rationale": "closed 后不应落库",
+        },
+    )
+    assert r.status_code == 409, f"belief on closed case should be 409, got {r.status_code}"
+    # 对照：open Case 的 belief 正常 201
+    assert client.post("/api/cases", json=dict(CASE, case_id="case-open")).status_code == 200
+    r = client.post(
+        "/api/cases/case-open/beliefs",
+        json={
+            "change_id": "sig-y",
+            "subject_id": "case-open",
+            "subject_label": "case-open",
+            "stance": "maintain",
+            "confidence": 0.7,
+            "rationale": "",
+        },
+    )
+    assert r.status_code == 201
 
 
 def test_failed_run_retry_allowed(app_env: tuple[TestClient, Path]) -> None:

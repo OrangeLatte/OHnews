@@ -104,6 +104,9 @@ async def publish_sse(event: str, payload: dict[str, Any]) -> None:
 
 _RE_TAG = re.compile(r"<[^>]+>")
 
+# Monitor scheduler worker 单例（跨 create_app 调用；pytest 由 OHNEWS_SCHEDULER=0 关闭）
+_SCHEDULER_WORKERS: dict[str, Any] = {}
+
 
 def _strip_tags(text: str) -> str:
     """剥离 HTML 标签（收件箱预览展示用；内容本身不变）。"""
@@ -352,6 +355,30 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             store.close()
 
     _reap_on_startup()
+
+    # ---- 第十一轮 P0-D：真实 Monitor scheduler worker ----
+    # 环境变量 gate（默认开）：pytest 场景设 OHNEWS_SCHEDULER=0 防后台线程副作用。
+    # 模块级单例：uvicorn reload/多次 create_app 不重复起线程。
+    if os.getenv("OHNEWS_SCHEDULER", "1") == "1" and "worker" not in _SCHEDULER_WORKERS:
+        from oh_agents.scheduler_worker import SchedulerWorker
+
+        def _sched_store() -> ResearchStore:
+            return ResearchStore.open(paths.root / "research.sqlite")
+
+        worker = SchedulerWorker(_sched_store, lambda: _bronze().iter_records())
+        worker.start()
+        _SCHEDULER_WORKERS["worker"] = worker
+
+    @app.get("/api/scheduler/heartbeat", include_in_schema=True)
+    def scheduler_heartbeat() -> dict[str, Any]:
+        """调度 worker 心跳：alive/ticks/fired_total/last_error（进程级真值）。"""
+        worker = _SCHEDULER_WORKERS.get("worker")
+        if worker is None:
+            return {
+                "alive": False,
+                "note": "scheduler worker not started (OHNEWS_SCHEDULER=0 or reload race)",
+            }
+        return worker.heartbeat()
 
     # ---- 阶段0b：真实 LLM 健康检查（轻量 ping + 60s 缓存；非 key 存在性检查）----
     _llm_health: dict[str, Any] = {
@@ -953,8 +980,17 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         )
 
     @app.get("/api/change-landscape", response_model=ChangeLandscape)
-    def change_landscape(days: int = 7, top: int = 5, min_per_source: int = 10) -> ChangeLandscape:
-        """叙事变化场聚合（阶段 1.5-c，T1 更名去沙漏）：后端拼图，前端只渲染。"""
+    def change_landscape(
+        days: int = 7,
+        top: int = 5,
+        min_per_source: int = 10,
+        source_id: list[str] = Query(default_factory=list),  # noqa: B008
+        language: str | None = None,
+    ) -> ChangeLandscape:
+        """叙事变化场聚合（阶段 1.5-c，T1 更名去沙漏）：后端拼图，前端只渲染。
+
+        source_id 可多值；筛选作用于两窗/检测/证据全链（effective_filters 回显）。
+        """
         return build_change_landscape(
             bronze_iter=_bronze().iter_records(),
             store=_store(),
@@ -964,6 +1000,8 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             days=max(1, days),
             top=top,
             min_per_source=min_per_source,
+            source_ids=source_id,
+            language=language or None,
         )
 
     @app.get("/api/home", response_model=HomePayload)
