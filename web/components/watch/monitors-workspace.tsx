@@ -96,6 +96,9 @@ export function MonitorsWorkspace() {
   const [schedErr, setSchedErr] = useState<Record<string, boolean>>({});
   const [verdicts, setVerdicts] = useState<Record<string, Record<string, number>>>({});
   const [runBusy, setRunBusy] = useState(false);
+  // Run now 固定内联确认区（非瞬时 armed）：显式 Cancel/Queue run + 结果条（Queued/Deduplicated 常驻）
+  const [armRun, setArmRun] = useState(false);
+  const [runResult, setRunResult] = useState<{ run_id: string; reused: boolean } | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [loadErr, setLoadErr] = useState("");
@@ -396,7 +399,9 @@ export function MonitorsWorkspace() {
       .then((r) => {
         window.clearTimeout(busyTimer);
         setRunBusy(false);
-        // 立即状态反馈（P1-4）：queued 新运行 / 幂等复用（相同快照）分类提示
+        setArmRun(false);
+        // 立即状态反馈（P1-4）：Queued / Deduplicated 结果条常驻 + 分类提示
+        setRunResult({ run_id: r.run_id, reused: Boolean(r.reused) });
         if (r.reused) {
           toast.info(`${t("monitors.runNowReused")}: ${r.run_id}`);
         } else {
@@ -727,15 +732,17 @@ export function MonitorsWorkspace() {
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold">{t("monitors.runs")}</h3>
                     <span className="flex gap-1">
-                      <ConfirmButton
-                        onConfirm={() => runNow(open)}
-                        confirmLabel={t("monitors.runNowConfirm")}
-                        disabled={runBusy}
-                        className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border px-3 text-xs font-medium hover:bg-accent"
-                        armedClassName="bg-amber-600 text-white hover:bg-amber-700"
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRunResult(null);
+                          setArmRun(true);
+                        }}
+                        disabled={runBusy || armRun}
+                        className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border px-3 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {t("monitors.runNow")}
-                      </ConfirmButton>
+                      </button>
                       <ConfirmButton
                         onConfirm={() => confirmSnapshot(open)}
                         confirmLabel={t("monitors.confirmSnapshotAsk")}
@@ -748,6 +755,40 @@ export function MonitorsWorkspace() {
                       </ConfirmButton>
                     </span>
                   </div>
+                  {armRun ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-[12px] border border-amber-500/50 bg-amber-100 p-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-300">
+                      <span className="font-medium">{t("monitors.armHint")}</span>
+                      <button
+                        type="button"
+                        onClick={() => setArmRun(false)}
+                        className="rounded-md border px-2.5 py-1 font-medium hover:bg-accent"
+                      >
+                        {t("monitors.cancel")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => runNow(open)}
+                        disabled={runBusy}
+                        className="rounded-md bg-amber-600 px-2.5 py-1 font-medium text-white hover:bg-amber-700 disabled:opacity-40"
+                      >
+                        {t("monitors.queueRun")}
+                      </button>
+                    </div>
+                  ) : null}
+                  {runResult ? (
+                    <p
+                      role="status"
+                      className={
+                        runResult.reused
+                          ? "mt-2 rounded-[12px] border border-amber-500/50 bg-amber-100 px-2 py-1 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-300"
+                          : "mt-2 rounded-[12px] border border-blue-500/50 bg-blue-100 px-2 py-1 text-xs text-blue-900 dark:bg-blue-500/10 dark:text-blue-300"
+                      }
+                    >
+                      {runResult.reused
+                        ? `${t("monitors.dedupTag")} · ${runResult.run_id}`
+                        : `${t("monitors.queuedTag")} · ${runResult.run_id}`}
+                    </p>
+                  ) : null}
                   <div className="mt-2">
                     <RunsTimeline
                       runs={runs[open.monitor_id]?.list ?? []}

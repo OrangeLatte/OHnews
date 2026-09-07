@@ -18,6 +18,7 @@ import type {
   SourceStream,
 } from "@/lib/landscape-api";
 import { useLocale, useT } from "@/lib/i18n/use-t";
+import { openAgent } from "@/lib/agent-bridge";
 import { relTime } from "@/components/monitors/format";
 
 /** Drawer 可选中的数据点（discriminated union，全部来自 change-landscape 载荷）。 */
@@ -567,6 +568,31 @@ export function ChangeDrawer({
           >
             {t("observe.drawer.createMonitor")}
           </button>
+          {selection.kind === "change" ? (
+            <button
+              type="button"
+              onClick={() => {
+                const c = selection.change;
+                const subj = c.subjects[0] ?? "";
+                openAgent({
+                  change_id: c.change_id,
+                  subject: subj,
+                  jsd: typeof c.metrics?.jsd === "number" ? c.metrics.jsd : null,
+                  warnings: landscape?.quality_warnings?.length ?? 0,
+                  message: subj
+                    ? ot(
+                        "observe.hero.agentPrompt",
+                        "请围绕变化「{subject}」分析：当前证据是否支持这一变化？应如何设计研究计划？",
+                        { subject: subj },
+                      )
+                    : "",
+                });
+              }}
+              className="rounded-[6px] border px-2.5 py-1 text-xs transition-colors hover:bg-muted/60"
+            >
+              {t("observe.drawer.askAgent")}
+            </button>
+          ) : null}
           {selection.kind === "entity" ? (
             <button
               type="button"

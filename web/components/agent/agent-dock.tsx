@@ -57,8 +57,10 @@ import { useT } from "@/lib/i18n/use-t";
 import {
   clearErrors,
   setActiveRun,
+  setAgentContext,
   useResearchState,
 } from "@/lib/research-state";
+import { getAgentBridge, subscribeAgentBridge } from "@/lib/agent-bridge";
 
 export type DockPosition = "left" | "right" | "bottom";
 
@@ -516,18 +518,30 @@ export function AgentDock({
   const [draft, setDraft] = useState("");
   const [chatThreadId, setChatThreadId] = useState("");
   const [chatEntries, setChatEntries] = useState<ChatEntry[]>([]);
-  // 全局入口（如 NOW 变化卡「Ask Agent」）：打开 Dock、切到 Chat 标签并预填上下文问题
-  // （detail.message 由派发方注入 change_id/主体词，用户可编辑后发送）
-  useEffect(() => {
-    const openAgent = (e: Event) => {
-      setOpen(true);
-      setTab("chat");
-      const d = (e as CustomEvent).detail as { message?: string } | null;
-      if (d && typeof d.message === "string" && d.message) setDraft(d.message);
-    };
-    window.addEventListener("oh:open-agent", openAgent);
-    return () => window.removeEventListener("oh:open-agent", openAgent);
+  // 全局入口（NOW 变化卡 / 变化 Drawer「问 Agent」）：经 agent-bridge 模块状态打开 Dock。
+  // 不用 window CustomEvent：bridge 在 Dock 未水合时也留存请求，挂载即消费（无水合时机竞态）；
+  // 按 seq 幂等——重复点击只更新预填与上下文，不创建线程（线程仅在发送消息时建立）。
+  const bridgeSeq = useRef(-1);
+  const consumeBridge = useCallback(() => {
+    const b = getAgentBridge();
+    if (b.seq === bridgeSeq.current || !b.request) return;
+    bridgeSeq.current = b.seq;
+    setOpen(true);
+    setExpanded(false);
+    setTab("chat");
+    setDraft(b.request.message);
+    setAgentContext({
+      change_id: b.request.change_id,
+      subject: b.request.subject,
+      window: b.request.window,
+      jsd: b.request.jsd,
+      warnings: b.request.warnings,
+    });
   }, []);
+  useEffect(() => {
+    consumeBridge();
+    return subscribeAgentBridge(consumeBridge);
+  }, [consumeBridge]);
   // 宽度持久化：SSR 首帧用默认值，挂载后 setTimeout(0) 异步读 localStorage
   // （惰性 initializer 在客户端首帧读 storage 会造成 SSR/client 首帧不一致 → hydration mismatch）
   const [width, setWidth] = useState(26);

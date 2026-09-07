@@ -125,6 +125,17 @@ export function AgentSystemExtra() {
             errs: rs.errors.length,
           })}
         </p>
+          {rs.agentContext ? (
+            <p className="mt-1 break-all text-xs tabular-nums text-muted-foreground">
+              {t("agentSys.rs.change", {
+                change: rs.agentContext.change_id || "—",
+                subject: rs.agentContext.subject || "—",
+                window: rs.agentContext.window || "—",
+                jsd: rs.agentContext.jsd == null ? "—" : rs.agentContext.jsd.toFixed(3),
+                warns: rs.agentContext.warnings ?? 0,
+              })}
+            </p>
+          ) : null}
       </div>
 
       {/* Prompt 版本（静态标注：版本号非哈希） */}

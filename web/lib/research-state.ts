@@ -15,6 +15,15 @@ export type PendingArtifact = {
   title: string;
 };
 
+/** Signal/Drawer → Agent 的变化上下文（change_id/窗口/主体/分歧度/质量警告数） */
+export type AgentContext = {
+  change_id?: string;
+  subject?: string;
+  window?: string;
+  jsd?: number | null;
+  warnings?: number;
+};
+
 export type ResearchState = {
   caseId: string;
   question: string;
@@ -24,6 +33,7 @@ export type ResearchState = {
   activeRunId: string;
   pendingArtifacts: PendingArtifact[];
   errors: string[];
+  agentContext: AgentContext | null;
 };
 
 const INITIAL: ResearchState = {
@@ -35,6 +45,7 @@ const INITIAL: ResearchState = {
   activeRunId: "",
   pendingArtifacts: [],
   errors: [],
+  agentContext: null,
 };
 
 let state: ResearchState = INITIAL;
@@ -99,4 +110,8 @@ export function pushError(msg: string): void {
 
 export function clearErrors(): void {
   update({ errors: [] });
+}
+
+export function setAgentContext(ctx: AgentContext | null): void {
+  update({ agentContext: ctx });
 }

@@ -20,6 +20,7 @@ import type {
   SourceRow,
 } from "@/lib/landscape-api";
 import { useT } from "@/lib/i18n/use-t";
+import { openAgent } from "@/lib/agent-bridge";
 
 const BAND_COLORS = ["#2563eb", "#16a34a", "#d97706", "#7c3aed", "#0891b2"];
 const TONE_HEX: Record<string, string> = {
@@ -355,6 +356,73 @@ export function HourglassPanel({
   const qualified = landscape.qualified_changes;
   const rate = passRate(qualified.length, cur.n_articles);
 
+  // 质量门两区拆分：实体证据充分 = Verified；其余诚实降级为待补证据候选（监测为补证，不代表变化已成立）
+  const verified = qualified.filter((c) => !c.evidence_flag || c.evidence_flag === "sufficient");
+  const candidates = qualified.filter((c) => c.evidence_flag && c.evidence_flag !== "sufficient");
+
+  const renderChange = (c: QualifiedChange, accent: string) => (
+                    <button
+                      type="button"
+                      onClick={() => onOpenDrawer({ kind: "change", change: c })}
+                      style={{ borderLeftColor: accent }}
+                      className="w-full rounded-[12px] border border-l-4 p-3 text-left text-[13px] transition-colors hover:bg-muted/60"
+                      title={ot("observe.drawer.clickHint", "Click to open the change detail drawer")}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="rounded-[6px] bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
+                          {c.kind}
+                        </span>
+                        {c.at ? (
+                          <span className="text-[10px] text-muted-foreground">{c.at.slice(0, 10)}</span>
+                        ) : null}
+                        {c.evidence_flag && c.evidence_flag !== "sufficient" ? (
+                          <span
+                            title={ot(
+                              "observe.drawer.flagTitle",
+                              "Entity evidence coverage is disclosed per change; it does not qualify as sufficient evidence",
+                            )}
+                            className="rounded-[6px] border border-amber-500/50 bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+                          >
+                            {c.evidence_flag === "none"
+                              ? ot("observe.drawer.flagNone", "No entity evidence — candidate only")
+                              : ot("observe.drawer.flagSingle", "Single-source candidate")}
+                          </span>
+                        ) : null}
+                        {c.subjects.length > 0 ? (
+                          <span className="min-w-0 truncate text-[10px] text-muted-foreground" title={c.subjects.join(" / ")}>
+                            {c.subjects.join(" / ")}
+                          </span>
+                        ) : null}
+                      </span>
+                      <p className="mt-1 text-sm font-semibold">{c.headline}</p>
+                      <p className="mt-0.5 text-muted-foreground">{c.what}</p>
+                      {c.why_now ? (
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {ot("observe.queue.whyNow", "why now")}: {c.why_now}
+                        </p>
+                      ) : null}
+                      <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span>{ot("observe.topChanges.delta", "Numeric change")}:</span>
+                        <span
+                          className="rounded-[6px] border px-1 tabular-nums"
+                          title={
+                            changeDelta(c, ndi) === "—"
+                              ? ot(
+                                  "observe.topChanges.deltaNone",
+                                  "No numeric reading for this change kind (e.g. narrative shifts are expressed as frame share) — shown honestly instead of a fabricated number.",
+                                )
+                              : undefined
+                          }
+                        >
+                          {changeDelta(c, ndi)}
+                        </span>
+                        <span className="opacity-70">
+                          {c.strength_word} · {c.urgency}
+                        </span>
+                      </p>
+                    </button>
+  );
+
   // 上段流入带：按峰值取前 5 个信源流
   const topStreams = [...landscape.source_streams]
     .sort((a, b) => Math.max(b.n_baseline, b.n_current) - Math.max(a.n_baseline, a.n_current))
@@ -528,21 +596,20 @@ export function HourglassPanel({
             onClick={() => {
               const top = qualified[0] ?? null;
               const subj = top?.subjects[0] ?? "";
-              window.dispatchEvent(
-                new CustomEvent("oh:open-agent", {
-                  detail: {
-                    change_id: top?.change_id ?? "",
-                    subject: subj,
-                    message: subj
-                      ? ot(
-                          "observe.hero.agentPrompt",
-                          "请围绕变化「{subject}」分析：当前证据是否支持这一变化？应如何设计研究计划？",
-                          { subject: subj },
-                        )
-                      : "",
-                  },
-                }),
-              );
+              openAgent({
+                change_id: top?.change_id ?? "",
+                subject: subj,
+                window: landscape.freshness?.coverage_end ?? "",
+                jsd: typeof top?.metrics?.jsd === "number" ? top.metrics.jsd : null,
+                warnings: landscape.quality_warnings?.length ?? 0,
+                message: subj
+                  ? ot(
+                      "observe.hero.agentPrompt",
+                      "请围绕变化「{subject}」分析：当前证据是否支持这一变化？应如何设计研究计划？",
+                      { subject: subj },
+                    )
+                  : "",
+              });
             }}
             title={ot("observe.hero.agentTip", "Open the global Agent with this change as context")}
             className="rounded-[6px] border border-dashed px-2 py-0.5 text-xs text-muted-foreground hover:border-foreground/40 hover:text-foreground"
@@ -573,75 +640,33 @@ export function HourglassPanel({
         <div className="space-y-4">
           {qualified.length > 0 ? (
             <>
-              <p className="text-xs text-muted-foreground">
-                {ot("observe.hero.topChanges", "Top change candidates (passed the quality gate)")}
+              <p className="text-xs font-semibold text-muted-foreground">
+                {ot("observe.hero.verified", "Verified changes")}
               </p>
               {/* 最多 5 张；逐卡用 change_id/what/why_now 各自渲染，点击开统一 Drawer（P1 验收 2/3） */}
               <ul className="space-y-2">
-                {qualified.slice(0, 5).map((c) => (
-                  <li key={c.change_id}>
-                    <button
-                      type="button"
-                      onClick={() => onOpenDrawer({ kind: "change", change: c })}
-                      className="w-full rounded-[12px] border border-l-4 border-l-blue-600 p-3 text-left text-[13px] transition-colors hover:bg-muted/60"
-                      title={ot("observe.drawer.clickHint", "Click to open the change detail drawer")}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className="rounded-[6px] bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
-                          {c.kind}
-                        </span>
-                        {c.at ? (
-                          <span className="text-[10px] text-muted-foreground">{c.at.slice(0, 10)}</span>
-                        ) : null}
-                        {c.evidence_flag && c.evidence_flag !== "sufficient" ? (
-                          <span
-                            title={ot(
-                              "observe.drawer.flagTitle",
-                              "Entity evidence coverage is disclosed per change; it does not qualify as sufficient evidence",
-                            )}
-                            className="rounded-[6px] border border-amber-500/50 bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
-                          >
-                            {c.evidence_flag === "none"
-                              ? ot("observe.drawer.flagNone", "No entity evidence — candidate only")
-                              : ot("observe.drawer.flagSingle", "Single-source candidate")}
-                          </span>
-                        ) : null}
-                        {c.subjects.length > 0 ? (
-                          <span className="min-w-0 truncate text-[10px] text-muted-foreground" title={c.subjects.join(" / ")}>
-                            {c.subjects.join(" / ")}
-                          </span>
-                        ) : null}
-                      </span>
-                      <p className="mt-1 text-sm font-semibold">{c.headline}</p>
-                      <p className="mt-0.5 text-muted-foreground">{c.what}</p>
-                      {c.why_now ? (
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {ot("observe.queue.whyNow", "why now")}: {c.why_now}
-                        </p>
-                      ) : null}
-                      <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                        <span>{ot("observe.topChanges.delta", "Numeric change")}:</span>
-                        <span
-                          className="rounded-[6px] border px-1 tabular-nums"
-                          title={
-                            changeDelta(c, ndi) === "—"
-                              ? ot(
-                                  "observe.topChanges.deltaNone",
-                                  "No numeric reading for this change kind (e.g. narrative shifts are expressed as frame share) — shown honestly instead of a fabricated number.",
-                                )
-                              : undefined
-                          }
-                        >
-                          {changeDelta(c, ndi)}
-                        </span>
-                        <span className="opacity-70">
-                          {c.strength_word} · {c.urgency}
-                        </span>
-                      </p>
-                    </button>
-                  </li>
+                {verified.slice(0, 5).map((c) => (
+                  <li key={c.change_id}>{renderChange(c, "#2563eb")}</li>
                 ))}
               </ul>
+              {candidates.length > 0 ? (
+                <>
+                  <p className="mt-3 text-xs font-semibold text-muted-foreground">
+                    {ot("observe.hero.candidates", "Candidates needing evidence")}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {ot(
+                      "observe.hero.candNote",
+                      "Monitors can track these to gather missing evidence — tracking does not mean the change is established.",
+                    )}
+                  </p>
+                  <ul className="space-y-2">
+                    {candidates.slice(0, 5).map((c) => (
+                      <li key={c.change_id}>{renderChange(c, "#d97706")}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
             </>
           ) : (
             <>
