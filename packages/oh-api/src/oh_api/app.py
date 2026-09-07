@@ -1846,7 +1846,8 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         from oh_sources.registry import build_registry
         from oh_sources.runner import run_collector
 
-        registry = build_registry(paths.sources_yaml)
+        with open(paths.sources_yaml, encoding="utf-8") as f:
+            registry = build_registry(yaml.safe_load(f) or {})
         try:
             adapter = registry.get(source_id)
         except KeyError as e:

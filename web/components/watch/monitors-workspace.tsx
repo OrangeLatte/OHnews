@@ -11,7 +11,7 @@
  * /watch?tab=monitors&open=<monitor_id> 自动选中该监测器。
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   objectApi,
@@ -37,6 +37,12 @@ type RunsState = { list: MonitorRunRow[]; unavailable: boolean };
 
 /** Monitor 配置状态闭集（三概念分离：needs_review 是 Update 审核概念，永不入此列）。 */
 const CONFIG_STATUSES = ["active", "paused", "error"] as const;
+
+/** 运行终态集合：轮询到此即停（用户验收：Running→Succeeded 自动刷新，终态后停止轮询）。 */
+const RUN_TERMINAL = new Set(["succeeded", "failed", "abstained", "cancelled"]);
+const RUN_POLL_MS = 2000;
+const RUN_POLL_MAX_MS = 300_000;
+const nowMs = () => Date.now();
 
 /** 调度健康三色：scheduled=绿 / no_history=琥珀 / unscheduled=红（后端口径）。 */
 function schedulerTone(h: MonitorSchedulerRow["scheduler_health"]): Tone {
@@ -266,6 +272,56 @@ export function MonitorsWorkspace() {
       .catch(() => toast.error(t("monitors.loadFailed")));
   };
 
+  const pollTimers = useRef<Map<string, number>>(new Map());
+  const pollTimersRef = pollTimers;
+  useEffect(
+    () => () => {
+      pollTimersRef.current.forEach((tm) => window.clearInterval(tm));
+      pollTimersRef.current.clear();
+    },
+    [pollTimersRef],
+  );
+
+  const fetchRuns = (monitorId: string) =>
+    fetch(`/api/monitors/${encodeURIComponent(monitorId)}/runs`, { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as MonitorRunRow[];
+      })
+      .then((list) => {
+        setRuns((s) => ({ ...s, [monitorId]: { list, unavailable: false } }));
+        return list;
+      });
+
+  /** 提交后轮询该 run 直到终态（自动刷新 Running→Succeeded；终态/超时后停止并刷新待复核队列）。 */
+  const startRunPolling = (monitorId: string, runId: string) => {
+    const prev = pollTimers.current.get(monitorId);
+    if (prev) window.clearInterval(prev);
+    const startedAt = nowMs();
+    const timer = window.setInterval(() => {
+      if (nowMs() - startedAt > RUN_POLL_MAX_MS) {
+        window.clearInterval(timer);
+        pollTimers.current.delete(monitorId);
+        return;
+      }
+      fetchRuns(monitorId)
+        .then((list) => {
+          const row = list.find((x) => x.run_id === runId);
+          if (row && RUN_TERMINAL.has(row.status)) {
+            window.clearInterval(timer);
+            pollTimers.current.delete(monitorId);
+            refreshOne(monitorId);
+            if (row.status === "succeeded") toast.success(`${t("monitors.runDone")}: ${runId}`);
+            else toast.error(`${t("monitors.runDone")}: ${row.status} · ${runId}`);
+          }
+        })
+        .catch(() => {
+          /* 网络抖动保留上次状态，下一轮继续 */
+        });
+    }, RUN_POLL_MS);
+    pollTimers.current.set(monitorId, timer);
+  };
+
   const handleCreated = (monitorId: string) => {
     setCreateOpen(false);
     setOpenId(monitorId);
@@ -407,13 +463,10 @@ export function MonitorsWorkspace() {
         } else {
           toast.success(`${t("monitors.runNowOk")}: ${r.run_id}`);
         }
-        fetch(`/api/monitors/${encodeURIComponent(m.monitor_id)}/runs`, { cache: "no-store" })
-          .then(async (res) => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return (await res.json()) as MonitorRunRow[];
-          })
-          .then((list) => setRuns((s) => ({ ...s, [m.monitor_id]: { list, unavailable: false } })))
-          .catch(() => setRuns((s) => ({ ...s, [m.monitor_id]: { list: [], unavailable: true } })));
+        fetchRuns(m.monitor_id).catch(() =>
+          setRuns((s) => ({ ...s, [m.monitor_id]: { list: [], unavailable: true } })),
+        );
+        if (!r.reused) startRunPolling(m.monitor_id, r.run_id);
         // last_run 变化 → 丢弃调度小卡缓存，触发懒加载 effect 重取。
         setSched((s) => {
           const next = { ...s };
