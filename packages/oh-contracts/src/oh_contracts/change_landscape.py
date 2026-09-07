@@ -151,11 +151,69 @@ class LandscapeSample(_StrictBase):
     current: int = 0
 
 
+class SourceDayPoint(_StrictBase):
+    """信源×日计数点（timeseries.source_day，Small Multiples 单元=一信源）。
+
+    day 为 published_at 的 UTC 日期（YYYY-MM-DD）；仅 bronze 窗口内
+    published_at 非空的记录计入。序列按窗口总量降序、同量按 source_id
+    升序排名，rank 内按 day 升序（未入选 top8 的信源不产出，前端聚合"其他"）。
+    """
+
+    source_id: str
+    day: str
+    n: int = Field(ge=0)
+
+
+class FrameDayPoint(_StrictBase):
+    """框架×日份额点（timeseries.frame_day，Small Multiples 单元=一框架）。
+
+    share = 当日该框架计数 / 当日全部框架计数（分母含未入选 top6 的框架，
+    单日 share 之和 ≈1）；n 为当日该框架计数。序列按窗口总量降序、同量按
+    frame 升序排名，rank 内按 day 升序。
+    """
+
+    frame: FrameKey
+    day: str
+    share: float = Field(ge=0.0, le=1.0)
+    n: int = Field(ge=0)
+
+
+class NdiDayPoint(_StrictBase):
+    """NDI×日读数点（timeseries.ndi_day，Small Multiples 单元=一 NDI 事件）。
+
+    entity_id 取 NDIPoint.event_id（NDI 数据面无 entity 维度，事件即分歧
+    主体）；仅窗口内 status=ok 点位产出（abstain 点 ndi=None 无读数，诚实
+    缺失）。序列按各实体窗口内最新 NDI 降序（同 ts 取 ndi 大者，保证确定
+    性）、同值按 entity_id 升序排名，rank 内按 day 升序。
+    """
+
+    entity_id: str
+    day: str
+    ndi: float = Field(ge=0.0, le=1.0)
+    n_sources: int = Field(ge=0)
+
+
+class TimeSeries(_StrictBase):
+    """按天分桶时间序列（阶段 1.5-c T9）：前端统一 Small Multiples 数据面。
+
+    分桶窗与 current_window 同源（days 参数 + 检测锚定后 det_now 切分，
+    半开区间）；day_start = 三序列最早数据日（前端轴起点，可能晚于窗口首日）。
+    三序列全空时整段 timeseries=None（诚实空态，不返回空结构假装有数据）。
+    """
+
+    days: int
+    day_start: str
+    source_day: list[SourceDayPoint] = Field(default_factory=list)
+    frame_day: list[FrameDayPoint] = Field(default_factory=list)
+    ndi_day: list[NdiDayPoint] = Field(default_factory=list)
+
+
 class ChangeLandscape(_StrictBase):
     """沙漏场景聚合（/api/change_landscape 唯一出口）。
 
     effective_window 语义由 current_window 承担（检测锚定后的实际生效窗）；
-    effective_filters/sample/computed_at 供前端展示筛选口径与数据新鲜度。
+    effective_filters/sample/computed_at 供前端展示筛选口径与数据新鲜度；
+    timeseries 为按天分桶序列（Small Multiples），空窗为 None。
     """
 
     scene_id: str
@@ -170,6 +228,7 @@ class ChangeLandscape(_StrictBase):
     quality_warnings: list[QualityWarning] = Field(default_factory=list)
     effective_filters: EffectiveFilters | None = None
     sample: LandscapeSample | None = None
+    timeseries: TimeSeries | None = None
     computed_at: str = ""
 
 

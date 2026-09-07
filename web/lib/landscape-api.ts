@@ -81,6 +81,21 @@ export type Freshness = {
   note: string;
 };
 
+/**
+ * 并行后端 timeseries 载荷（形状锁定，逐日时间序列）。
+ * 全字段可选：后端未部署该字段时 undefined → 前端诚实降级（不渲染对应时间区块）。
+ */
+export type TimeSeriesPayload = {
+  days?: number;
+  day_start?: string;
+  /** 逐源每日文章数。 */
+  source_day?: { source_id: string; day: string; n: number }[];
+  /** 逐框架每日份额（0-1）。 */
+  frame_day?: { frame: string; day: string; share: number; n: number }[];
+  /** 逐实体每日 NDI（0-1）。 */
+  ndi_day?: { entity_id: string; day: string; ndi: number; n_sources: number }[];
+};
+
 export type Landscape = {
   scene_id: string;
   generated_at: string;
@@ -91,6 +106,8 @@ export type Landscape = {
   qualified_changes: QualifiedChange[];
   quality_warnings: QualityWarning[];
   freshness?: Freshness;
+  /** 逐日时间序列（后端并行开发中；缺省 → OBSERVE 各 Lens 诚实不渲染时间区块）。 */
+  timeseries?: TimeSeriesPayload;
   effective_filters?: { source_ids: string[]; language: string | null } | null;
   sample?: { baseline: number; current: number };
   computed_at?: string;

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -10,8 +11,9 @@ from conftest import GAIN_BODY, LOSS_BODY, TIER_MAP, make_now, seed_event
 from fastapi.testclient import TestClient
 from oh_api.app import AppPaths, create_app
 from oh_contracts.briefing import EvidenceCitation, EvidenceSet
+from oh_contracts.enums import ExtractionEngine, FrameLabel, StanceLabel
 from oh_contracts.ids import make_item_key
-from oh_contracts.schemas import BronzeRecord
+from oh_contracts.schemas import BronzeRecord, EventRecord, NDIPoint, StanceRow
 from oh_contracts.signals import Signal, SignalKind
 from oh_pipeline.run import run_pipeline
 from oh_storage.bronze_parquet import ParquetBronzeWriter
@@ -806,6 +808,176 @@ def test_change_landscape_low_baseline_growth(client_lowbase: TestClient) -> Non
     # None 序列化兼容：JSON 里必须是 null（前端 SourceStream.growth?: number | null）
     raw = client_lowbase.get("/api/change-landscape").text
     assert '"growth":null' in raw.replace(" ", "")
+
+
+_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+@pytest.fixture()
+def client_timeseries(tmp_path: Path) -> TestClient:
+    """多天种子：9 信源 bronze（top8 裁剪）+ 3 框架 stances + 4 实体 NDI（含窗外/abstain）。
+
+    now=2026-08-28 18:00 UTC → days=7 分桶窗 [08-21 18:00, 08-28 18:00)，
+    d1=08-22、d2=08-28 02:00 均在窗内（尾距 now<1d，不触发数据末梢锚定）。
+    """
+    bronze = ParquetBronzeWriter(tmp_path / "bronze")
+    store = SqliteStore(connect(tmp_path / "silver.sqlite"))
+    now = make_now()
+    d1 = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
+    d2 = datetime(2026, 8, 28, 2, 0, tzinfo=UTC)
+
+    def rec(src: str, i: int, ts: datetime | None) -> BronzeRecord:
+        return BronzeRecord(
+            source_id=src,
+            item_key=make_item_key(src, f"ts-{src}-{i}", ts or now),
+            external_id=f"ts-{src}-{i}",
+            url_hash="u",
+            content_hash="c",
+            fetched_at=ts or now,
+            published_at=ts,
+            raw={},
+            normalized={"body": LOSS_BODY, "language": "zh"},
+        )
+
+    plan: list[tuple[str, int, datetime]] = [
+        ("s1", 3, d1),
+        ("s1", 2, d2),
+        ("s2", 4, d1),
+        ("s3", 1, d1),
+        *((f"s{k}", 1, d2) for k in range(4, 10)),
+    ]
+    recs = [rec(src, i, ts) for src, n, ts in plan for i in range(n)]
+    recs.append(rec("s1", 99, None))  # published_at=None → 诚实不计入分桶
+    bronze.write(recs)
+
+    def stance(src: str, frame: FrameLabel, ts: datetime, seq: int) -> StanceRow:
+        return StanceRow(
+            event_id="E01",
+            source_id=src,
+            entity_id="fed",
+            frame=frame,
+            stance=StanceLabel.NEUTRAL,
+            confidence=0.9,
+            engine=ExtractionEngine.RULE,
+            item_key=f"ts-{src}-{frame.value}-{seq}",
+            ts=ts,
+        )
+
+    # NDI 事件须先登记（stances/检测器对 event_id 有 FK 与 registry 回查）
+    for ent in ("E01", "E02", "E03"):
+        store.upsert_event(
+            EventRecord(event_id=ent, title=f"事件{ent}", entities=["fed"], as_of=now)
+        )
+    store.append_stances(
+        [
+            *[stance("s1", FrameLabel.LOSS, d1, i) for i in range(3)],
+            stance("s2", FrameLabel.GAIN, d1, 0),
+            stance("s1", FrameLabel.LOSS, d2, 9),
+            stance("s2", FrameLabel.GAIN, d2, 9),
+            stance("s3", FrameLabel.CONFLICT, d2, 9),
+        ]
+    )
+    for ent, pts in {"E01": [(d1, 0.2, 3), (d2, 0.6, 4)], "E02": [(d1, 0.9, 5)]}.items():
+        for ts, ndi, ns in pts:
+            store.append_ndi(NDIPoint(event_id=ent, ts=ts, ndi=ndi, n_sources=ns, status="ok"))
+    e03_ts = datetime(2026, 8, 10, tzinfo=UTC)
+    store.append_ndi(  # 窗外（08-10）：不计入
+        NDIPoint(event_id="E03", ts=e03_ts, ndi=0.99, n_sources=9, status="ok")
+    )
+    store.append_ndi(NDIPoint(event_id="E04", ts=d2, n_sources=2, status="abstain"))  # 无读数
+    sources_yaml = tmp_path / "sources.yaml"
+    sources_yaml.write_text(
+        "sources:\n"
+        + "".join(
+            f"  - source_id: {sid}\n    tier: {tier.value}\n" for sid, tier in TIER_MAP.items()
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(AppPaths(root=tmp_path, sources_yaml=sources_yaml, now_fn=make_now))
+    return TestClient(app)
+
+
+def test_change_landscape_timeseries(client_timeseries: TestClient) -> None:
+    """T9 timeseries：多天分桶 + top 裁剪 + 单日归一 + NDI 排序 + day 格式。"""
+    a = client_timeseries.get("/api/change-landscape?days=7").json()
+    ts = a["timeseries"]
+    assert ts is not None
+    assert set(ts) == {"days", "day_start", "source_day", "frame_day", "ndi_day"}
+    assert ts["days"] == 7 and ts["day_start"] == "2026-08-22"
+    for section in ("source_day", "frame_day", "ndi_day"):
+        assert ts[section] and all(_DAY_RE.match(p["day"]) for p in ts[section])
+
+    # source_day：计数精确 + published_at=None 不计 + top8 裁剪（s9 丢弃）
+    by_src: dict[str, dict[str, int]] = {}
+    for p in ts["source_day"]:
+        by_src.setdefault(p["source_id"], {})[p["day"]] = p["n"]
+    assert by_src["s1"] == {"2026-08-22": 3, "2026-08-28": 2}
+    assert by_src["s2"] == {"2026-08-22": 4}
+    assert by_src["s3"] == {"2026-08-22": 1}
+    assert all(by_src[f"s{k}"] == {"2026-08-28": 1} for k in range(4, 9))
+    srcs = [p["source_id"] for p in ts["source_day"]]
+    assert "s9" not in srcs and len(set(srcs)) == 8
+    assert srcs[0] == "s1"  # 窗口总量（5）降序 rank
+
+    # frame_day：share 分母=当日全部框架计数 → 单日归一；rank 按窗口总量
+    share_by_day: dict[str, float] = {}
+    for p in ts["frame_day"]:
+        share_by_day[p["day"]] = share_by_day.get(p["day"], 0.0) + p["share"]
+    assert share_by_day["2026-08-22"] == pytest.approx(1.0, abs=1e-3)
+    assert share_by_day["2026-08-28"] == pytest.approx(1.0, abs=1e-3)
+    fd = {(p["frame"], p["day"]): p for p in ts["frame_day"]}
+    assert fd[("loss", "2026-08-22")]["n"] == 3
+    assert fd[("loss", "2026-08-22")]["share"] == pytest.approx(0.75)
+    assert fd[("gain", "2026-08-22")]["share"] == pytest.approx(0.25)
+    assert fd[("conflict", "2026-08-28")]["share"] == pytest.approx(1 / 3, abs=1e-3)
+    assert ts["frame_day"][0]["frame"] == "loss"  # 窗口总量 4 最高
+
+    # ndi_day：窗外（E03）/abstain（E04）不产出；rank=最新 NDI 降序；实体内日升序
+    ents = [p["entity_id"] for p in ts["ndi_day"]]
+    assert set(ents) == {"E01", "E02"}
+    assert ents[0] == "E02"  # 最新 NDI 0.9 > E01 的 0.6
+    e01 = [p for p in ts["ndi_day"] if p["entity_id"] == "E01"]
+    assert [(p["day"], p["ndi"]) for p in e01] == [("2026-08-22", 0.2), ("2026-08-28", 0.6)]
+    assert e01[0]["n_sources"] == 3
+
+
+@pytest.fixture()
+def client_ts_empty(tmp_path: Path) -> TestClient:
+    """空窗种子：唯一记录 published_at=None → 分桶窗内三序列全空。"""
+    bronze = ParquetBronzeWriter(tmp_path / "bronze")
+    SqliteStore(connect(tmp_path / "silver.sqlite"))
+    now = make_now()
+    bronze.write(
+        [
+            BronzeRecord(
+                source_id="gov",
+                item_key=make_item_key("gov", "ts-none", now),
+                external_id="ts-none",
+                url_hash="u",
+                content_hash="c",
+                fetched_at=now,
+                published_at=None,
+                raw={},
+                normalized={"body": LOSS_BODY},
+            )
+        ]
+    )
+    sources_yaml = tmp_path / "sources.yaml"
+    sources_yaml.write_text(
+        "sources:\n"
+        + "".join(
+            f"  - source_id: {sid}\n    tier: {tier.value}\n" for sid, tier in TIER_MAP.items()
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(AppPaths(root=tmp_path, sources_yaml=sources_yaml, now_fn=make_now))
+    return TestClient(app)
+
+
+def test_change_landscape_timeseries_empty_window(client_ts_empty: TestClient) -> None:
+    """空窗诚实 None：无 published_at 可入桶 → timeseries=None（不返回空结构）。"""
+    a = client_ts_empty.get("/api/change-landscape").json()
+    assert a["timeseries"] is None
 
 
 def test_change_landscape_evidence_articles(client: TestClient) -> None:

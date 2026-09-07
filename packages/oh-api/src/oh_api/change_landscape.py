@@ -26,15 +26,19 @@ from oh_contracts.change_landscape import (
     EffectiveFilters,
     EvidenceFlag,
     EvidenceSourceCount,
+    FrameDayPoint,
     LandscapeSample,
     NarrativeStream,
+    NdiDayPoint,
     QualifiedChange,
     QualityWarning,
+    SourceDayPoint,
     SourceStream,
+    TimeSeries,
     TimeWindow,
 )
 from oh_contracts.enums import SourceTier
-from oh_contracts.schemas import BronzeRecord
+from oh_contracts.schemas import BronzeRecord, NDIPoint
 from oh_contracts.signals import Signal
 from oh_pipeline.entities import EntityRegistry
 from oh_storage.protocols import SilverStore
@@ -57,6 +61,10 @@ _MIN_BASELINE_FOR_GROWTH = 5
 # T1：每变化最多附 3 条证据文章；主题词上限（控线性扫描成本）
 _MAX_EVIDENCE_ARTICLES = 3
 _MAX_TOPIC_TERMS = 5
+# T9 timeseries：Small Multiples 裁剪上限（其余信源由前端聚合"其他"）
+_MAX_TS_SOURCES = 8
+_MAX_TS_FRAMES = 6
+_MAX_TS_ENTITIES = 8
 
 _LATIN_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{1,}")
 _TOPIC_STOPWORDS = frozenset(
@@ -523,6 +531,106 @@ def _warnings(
     return out
 
 
+def _utc_day(ts: datetime) -> str:
+    """UTC 日期桶键（YYYY-MM-DD）；naive 视为 UTC（与 _split_window 同规）。"""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return ts.astimezone(UTC).date().isoformat()
+
+
+def _timeseries(
+    cur_records: list[BronzeRecord],
+    rows: list,
+    ndi_points: list[NDIPoint],
+    *,
+    lo: datetime,
+    hi: datetime,
+    days: int,
+) -> TimeSeries | None:
+    """按天分桶时间序列（T9）：current 同窗 ×（信源计数/框架份额/NDI 读数）。
+
+    分桶窗 [lo, hi) 复用 current_window 切分（检测锚定后 det_now），
+    day = published_at/ts 的 UTC 日期。诚实纪律：
+    - published_at 为 None 的记录不计入（PIT 同规）；
+    - NDI abstain 点（ndi=None）无读数，不产出；
+    - 三序列全空 → None（不返回空结构假装有数据）。
+    share 分母 = 当日全部框架计数（含未入选 top6 框架，单日归一诚实）。
+    """
+    # 信源×日计数（窗口总量 top8）
+    sd_counts: Counter[tuple[str, str]] = Counter()
+    for r in cur_records:
+        if r.published_at is None:
+            continue
+        sd_counts[(r.source_id, _utc_day(r.published_at))] += 1
+    sd_tot: Counter[str] = Counter()
+    for (s, _d), n in sd_counts.items():
+        sd_tot[s] += n
+    top_srcs = sorted(sd_tot, key=lambda s: (-sd_tot[s], s))[:_MAX_TS_SOURCES]
+    sd_by_src: dict[str, list[tuple[str, int]]] = {}
+    for (s, d), n in sd_counts.items():
+        sd_by_src.setdefault(s, []).append((d, n))
+    source_day = [
+        SourceDayPoint(source_id=s, day=d, n=n)
+        for s in top_srcs
+        for d, n in sorted(sd_by_src.get(s, []))
+    ]
+
+    # 框架×日计数 + 当日总数（归一分母）
+    fd_counts: Counter[tuple[str, str]] = Counter()
+    day_tot: Counter[str] = Counter()
+    for r in rows:
+        ts = r.ts if r.ts.tzinfo else r.ts.replace(tzinfo=UTC)
+        if not lo <= ts < hi:
+            continue
+        frame = r.frame.value if hasattr(r.frame, "value") else str(r.frame)
+        if frame not in _FRAME_ZH:
+            frame = "other"
+        d = ts.date().isoformat()
+        fd_counts[(frame, d)] += 1
+        day_tot[d] += 1
+    fd_tot: Counter[str] = Counter()
+    for (f, _d), n in fd_counts.items():
+        fd_tot[f] += n
+    top_frames = sorted(fd_tot, key=lambda f: (-fd_tot[f], f))[:_MAX_TS_FRAMES]
+    fd_by_frame: dict[str, list[tuple[str, int]]] = {}
+    for (f, d), n in fd_counts.items():
+        fd_by_frame.setdefault(f, []).append((d, n))
+    frame_day = [
+        FrameDayPoint(frame=f, day=d, share=round(n / day_tot[d], 4), n=n)  # type: ignore[arg-type]
+        for f in top_frames
+        for d, n in sorted(fd_by_frame.get(f, []))
+    ]
+
+    # NDI×日：仅窗口内 ok 点；实体 rank = 窗口内最新 NDI 降序（同 ts 取 ndi 大者）
+    nd_by_ent: dict[str, list[tuple[str, float, int]]] = {}
+    latest: dict[str, tuple[datetime, float]] = {}
+    for p in ndi_points:
+        ts = p.ts if p.ts.tzinfo else p.ts.replace(tzinfo=UTC)
+        if not lo <= ts < hi or p.ndi is None:
+            continue
+        nd_by_ent.setdefault(p.event_id, []).append((ts.date().isoformat(), p.ndi, p.n_sources))
+        cur = latest.get(p.event_id)
+        if cur is None or (ts, p.ndi) > cur:
+            latest[p.event_id] = (ts, p.ndi)
+    top_ents = sorted(latest, key=lambda e: (-latest[e][1], e))[:_MAX_TS_ENTITIES]
+    ndi_day = [
+        NdiDayPoint(entity_id=e, day=d, ndi=ndi, n_sources=ns)
+        for e in top_ents
+        for d, ndi, ns in sorted(nd_by_ent.get(e, []))
+    ]
+
+    all_days = [p.day for p in (*source_day, *frame_day, *ndi_day)]
+    if not all_days:
+        return None
+    return TimeSeries(
+        days=days,
+        day_start=min(all_days),
+        source_day=source_day,
+        frame_day=frame_day,
+        ndi_day=ndi_day,
+    )
+
+
 def build_change_landscape(
     *,
     bronze_iter,
@@ -587,6 +695,7 @@ def build_change_landscape(
     streams = _source_streams(base, cur, tier_map)
     rows = store.stances_asof(det_now)
     narr = _narrative_streams(rows, lo_cur, lo_base, det_now, tier_map)
+    timeseries = _timeseries(cur, rows, store.ndi_all(), lo=lo_cur, hi=det_now, days=d)
 
     if briefing_result is None:
         briefing, signals = build_briefing_with_signals(
@@ -641,6 +750,7 @@ def build_change_landscape(
             baseline=baseline_w.n_articles,
             current=current_w.n_articles,
         ),
+        timeseries=timeseries,
         computed_at=now.isoformat(),
     )
 
