@@ -440,7 +440,7 @@ export default function ObservePage() {
     <div className="space-y-6">
       {/* 顶栏：标题 + 窗口切换 + data as of */}
       <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">{t("nav.observe")}</h1>
+        <h1 className="text-xl font-semibold">{t("nav.now")}</h1>
         <button
           type="button"
           onClick={() => setFiltersOpen((v) => !v)}

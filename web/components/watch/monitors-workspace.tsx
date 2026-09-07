@@ -396,7 +396,12 @@ export function MonitorsWorkspace() {
       .then((r) => {
         window.clearTimeout(busyTimer);
         setRunBusy(false);
-        toast.success(`${t("monitors.runNowOk")}: ${r.run_id}`);
+        // 立即状态反馈（P1-4）：queued 新运行 / 幂等复用（相同快照）分类提示
+        if (r.reused) {
+          toast.info(`${t("monitors.runNowReused")}: ${r.run_id}`);
+        } else {
+          toast.success(`${t("monitors.runNowOk")}: ${r.run_id}`);
+        }
         fetch(`/api/monitors/${encodeURIComponent(m.monitor_id)}/runs`, { cache: "no-store" })
           .then(async (res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);

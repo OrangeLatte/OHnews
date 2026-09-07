@@ -423,9 +423,9 @@ export const objectApi = {
   monitors: () => get<MonitorRow[]>("/monitors"),
   monitorScheduler: (monitorId: string) =>
     get<MonitorSchedulerRow>(`/monitors/${encodeURIComponent(monitorId)}/scheduler`),
-  /** 登记一次监测运行（写入 queued run；诚实纪律：无实时 scheduler 进程）。 */
+  /** 登记一次监测运行（写入 queued run；幂等复用返回 reused=true）。 */
   runMonitorNow: (monitorId: string) =>
-    post<{ run_id: string }>(`/monitors/${encodeURIComponent(monitorId)}/runs`, {}),
+    post<{ run_id: string; reused?: boolean }>(`/monitors/${encodeURIComponent(monitorId)}/runs`, {}),
   createMonitor: (body: {
     monitor_id: string;
     target_type: string;

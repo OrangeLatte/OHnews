@@ -38,6 +38,10 @@ export type QualifiedChange = {
   evidence_articles?: EvidenceArticle[];
   /** 检测器数值读数（jsd/n_recent/n_base 等）；旧载荷缺省 → undefined（显示 —）。 */
   metrics?: Record<string, number>;
+  /** 实体证据覆盖（P0-1）：按信源聚合命中数；旧载荷缺省 → undefined。 */
+  evidence_source_breakdown?: { source_id: string; n: number }[];
+  /** 实体证据覆盖等级；旧载荷缺省 → undefined（不拦截，向后兼容）。 */
+  evidence_flag?: "sufficient" | "single_source" | "none";
 };
 
 export type QualityWarning = {

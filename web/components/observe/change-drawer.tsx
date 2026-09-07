@@ -273,10 +273,23 @@ export function ChangeDrawer({
             ? ot("observe.drawer.badgeEntity", "Entity")
             : ot("observe.drawer.badgeEmotion", "Emotion");
 
-  // ③ 来源推动：按增量（n_current - n_baseline）降序 top-5
+  // ③ 来源推动（P0-1 按实体过滤）：change 型优先用实体证据信源分解（breakdown），
+  // 旧载荷无 breakdown 键 → 回退全局 topSources（诚实降级）。
+  const evBreakdown =
+    selection.kind === "change" ? (selection.change.evidence_source_breakdown ?? null) : null;
+  const evFlag = selection.kind === "change" ? (selection.change.evidence_flag ?? null) : null;
   const topSources = [...(landscape?.source_streams ?? [])]
     .sort((a, b) => b.n_current - b.n_baseline - (a.n_current - a.n_baseline))
     .slice(0, 5);
+  const flagLabel =
+    evFlag === "none"
+      ? ot("observe.drawer.flagNone", "No entity evidence — candidate only")
+      : evFlag === "single_source"
+        ? ot("observe.drawer.flagSingle", "Single-source candidate")
+        : null;
+  // P0-1 强约束①：Supporting 空（flag 非 sufficient）禁 Create Case；
+  // 旧载荷无 flag → 不拦截（向后兼容）。
+  const createCaseBlocked = selection.kind === "change" && evFlag !== null && evFlag !== "sufficient";
 
   // ④ 缺失上下文（按类型诚实列出；无则"暂无"）
   const missing: string[] = [];
@@ -310,6 +323,17 @@ export function ChangeDrawer({
               <span className="rounded-[6px] bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
                 {badge}
               </span>
+              {flagLabel ? (
+                <span
+                  title={ot(
+                    "observe.drawer.flagTitle",
+                    "Entity evidence coverage is disclosed per change; it does not qualify as sufficient evidence",
+                  )}
+                  className="rounded-[6px] border border-amber-500/50 bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+                >
+                  {flagLabel}
+                </span>
+              ) : null}
               {selection.kind === "change" && selection.change.at ? (
                 <span className="text-[10px] text-muted-foreground">{selection.change.at.slice(0, 10)}</span>
               ) : null}
@@ -412,9 +436,24 @@ export function ChangeDrawer({
           )}
         </DrawerSection>
 
-        {/* ③ 哪些来源推动 */}
+        {/* ③ 哪些来源推动（change 型 = 实体证据来源，按实体过滤） */}
         <DrawerSection label={t("observe.drawer.sources")}>
-          {topSources.length > 0 ? (
+          {selection.kind === "change" && evBreakdown !== null ? (
+            evBreakdown.length > 0 ? (
+              <ul className="space-y-1">
+                {evBreakdown.map((b) => (
+                  <li key={b.source_id} className="flex items-center justify-between text-[13px]">
+                    <span className="truncate">{b.source_id}</span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {ot("observe.drawer.entityHits", "{n} hits", { n: b.n })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <NoneYet text={ot("observe.drawer.noEntitySources", "No entity-evidence hits from any source")} />
+            )
+          ) : topSources.length > 0 ? (
             <ul className="space-y-1">
               {topSources.map((s) => (
                 <SourceDeltaRow
@@ -514,8 +553,10 @@ export function ChangeDrawer({
         <div className="mt-auto flex flex-wrap gap-2 border-t pt-3">
           <button
             type="button"
+            disabled={createCaseBlocked}
+            title={createCaseBlocked ? ot("observe.drawer.createCaseBlocked", "Entity evidence < 2 — search the Inbox first") : undefined}
             onClick={() => onCreateCase(selection)}
-            className="rounded-[6px] bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-opacity hover:opacity-85"
+            className="rounded-[6px] bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-opacity enabled:hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {t("observe.drawer.createCase")}
           </button>

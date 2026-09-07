@@ -525,7 +525,25 @@ export function HourglassPanel({
         <span className="ml-auto flex items-center gap-2">
           <button
             type="button"
-            onClick={() => window.dispatchEvent(new CustomEvent("oh:open-agent"))}
+            onClick={() => {
+              const top = qualified[0] ?? null;
+              const subj = top?.subjects[0] ?? "";
+              window.dispatchEvent(
+                new CustomEvent("oh:open-agent", {
+                  detail: {
+                    change_id: top?.change_id ?? "",
+                    subject: subj,
+                    message: subj
+                      ? ot(
+                          "observe.hero.agentPrompt",
+                          "请围绕变化「{subject}」分析：当前证据是否支持这一变化？应如何设计研究计划？",
+                          { subject: subj },
+                        )
+                      : "",
+                  },
+                }),
+              );
+            }}
             title={ot("observe.hero.agentTip", "Open the global Agent with this change as context")}
             className="rounded-[6px] border border-dashed px-2 py-0.5 text-xs text-muted-foreground hover:border-foreground/40 hover:text-foreground"
           >
@@ -574,6 +592,19 @@ export function HourglassPanel({
                         </span>
                         {c.at ? (
                           <span className="text-[10px] text-muted-foreground">{c.at.slice(0, 10)}</span>
+                        ) : null}
+                        {c.evidence_flag && c.evidence_flag !== "sufficient" ? (
+                          <span
+                            title={ot(
+                              "observe.drawer.flagTitle",
+                              "Entity evidence coverage is disclosed per change; it does not qualify as sufficient evidence",
+                            )}
+                            className="rounded-[6px] border border-amber-500/50 bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+                          >
+                            {c.evidence_flag === "none"
+                              ? ot("observe.drawer.flagNone", "No entity evidence — candidate only")
+                              : ot("observe.drawer.flagSingle", "Single-source candidate")}
+                          </span>
                         ) : null}
                         {c.subjects.length > 0 ? (
                           <span className="min-w-0 truncate text-[10px] text-muted-foreground" title={c.subjects.join(" / ")}>

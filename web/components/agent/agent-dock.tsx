@@ -516,11 +516,14 @@ export function AgentDock({
   const [draft, setDraft] = useState("");
   const [chatThreadId, setChatThreadId] = useState("");
   const [chatEntries, setChatEntries] = useState<ChatEntry[]>([]);
-  // 全局入口（如 NOW 变化卡「Ask Agent」）：打开 Dock 并切到 Chat 标签
+  // 全局入口（如 NOW 变化卡「Ask Agent」）：打开 Dock、切到 Chat 标签并预填上下文问题
+  // （detail.message 由派发方注入 change_id/主体词，用户可编辑后发送）
   useEffect(() => {
-    const openAgent = () => {
+    const openAgent = (e: Event) => {
       setOpen(true);
       setTab("chat");
+      const d = (e as CustomEvent).detail as { message?: string } | null;
+      if (d && typeof d.message === "string" && d.message) setDraft(d.message);
     };
     window.addEventListener("oh:open-agent", openAgent);
     return () => window.removeEventListener("oh:open-agent", openAgent);
