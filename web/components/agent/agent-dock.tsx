@@ -136,6 +136,11 @@ function newThreadId(): string {
   return `th-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** RTL 拖拽方向判定（模块级：仅事件处理器内调用，render 期禁读 document）。 */
+function isRtl(): boolean {
+  return typeof document !== "undefined" && document.documentElement.dir === "rtl";
+}
+
 function asMessageType(v: unknown): MessageType | undefined {
   return typeof v === "string" && NINE_TYPES.includes(v) ? (v as MessageType) : undefined;
 }
@@ -407,8 +412,13 @@ function ChatTab({
   return (
     <>
       {/* 会话管理条 */}
-      <div className="flex flex-wrap items-center gap-1 pb-1 text-[10px]">
-        <span className="text-muted-foreground">{t("chat.threads")}:</span>
+      <div
+        className="flex flex-nowrap items-center gap-1 overflow-x-auto overscroll-x-contain pb-1 text-[10px]"
+        aria-label={t("chat.threads")}
+      >
+        <span className="sticky left-0 z-[1] shrink-0 bg-background pr-1 text-muted-foreground">
+          {t("chat.threads")}:
+        </span>
         {threads.map((th) => (
           <button
             key={th.thread_id}
@@ -423,15 +433,15 @@ function ChatTab({
                 onThreadChange(th.thread_id);
               }
             }}
-            className={`ag-mini max-w-32 truncate ${th.thread_id === threadId ? "bg-foreground text-background" : ""}`}
+            className={`ag-mini max-w-32 shrink-0 truncate ${th.thread_id === threadId ? "bg-foreground text-background" : ""}`}
           >
             {th.title || th.thread_id}
           </button>
         ))}
-        <button type="button" onClick={newThread} className="ag-mini">
+        <button type="button" onClick={newThread} className="ag-mini shrink-0">
           + {t("chat.newThread")}
         </button>
-        <button type="button" onClick={() => setTick((n) => n + 1)} className="ag-mini">
+        <button type="button" onClick={() => setTick((n) => n + 1)} className="ag-mini shrink-0">
           ↻
         </button>
       </div>
@@ -573,16 +583,20 @@ export function AgentDock({
     const startX = e.clientX;
     const startW = width;
     const side = pos === "left" ? "right" : "left";
+    // RTL 下 dock 位置与 handle 侧经 CSS 逻辑属性镜像，屏幕方向反转 → delta 取反
+    const rtl = isRtl();
+    const deltaOf = (clientX: number): number => {
+      const d = side === "left" ? startX - clientX : clientX - startX;
+      return rtl ? -d : d;
+    };
     const move = (ev: PointerEvent) => {
-      const delta = side === "left" ? startX - ev.clientX : ev.clientX - startX;
-      const next = Math.min(60, Math.max(18, startW + delta / 16));
+      const next = Math.min(60, Math.max(18, startW + deltaOf(ev.clientX) / 16));
       setWidth(next);
     };
     const up = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      const delta = side === "left" ? startX - ev.clientX : ev.clientX - startX;
-      const final = Math.min(60, Math.max(18, startW + delta / 16));
+      const final = Math.min(60, Math.max(18, startW + deltaOf(ev.clientX) / 16));
       window.localStorage.setItem("ag-width", String(final));
     };
     window.addEventListener("pointermove", move);

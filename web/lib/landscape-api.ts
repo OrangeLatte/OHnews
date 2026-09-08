@@ -251,6 +251,11 @@ export function suggestSource(url: string): Promise<{
   suggestion: SourceSuggestion;
   rationale: string;
   preview?: Record<string, string>;
+  engine?: "llm" | "rule";
+  agent_status?: "succeeded" | "abstained";
+  model_hint?: string;
+  confidence?: number;
+  agent_error?: string;
 }> {
   return postJson("/api/sources/suggest", { url });
 }

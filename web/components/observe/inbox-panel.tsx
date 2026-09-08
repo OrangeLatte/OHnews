@@ -14,6 +14,7 @@ import { StatusDot } from "@/components/observe/status-dots";
 import { Skeleton, toast } from "@/components/ui/toast";
 import type { SourceRow } from "@/lib/landscape-api";
 import { useT } from "@/lib/i18n/use-t";
+import { IngestionCenter } from "@/components/sources/ingestion-center";
 
 /** item_key（含 :/ 等字符）→ URL 安全 id：非字母数字折叠为短 hash。 */
 function stableId(itemKey: string): string {
@@ -349,6 +350,7 @@ export function InboxPanel({
 
   return (
     <div className="space-y-4 pb-24">
+      <IngestionCenter sources={sources} onComplete={() => setTick(n => n + 1)} />
       {/* Drawer 传实体：置顶 facet chip（可 × 移除，移除后仅余 q 检索） */}
       {entity ? (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -390,7 +392,7 @@ export function InboxPanel({
       <div>
         <p className="mb-1 text-xs text-muted-foreground">{ot("observe.inbox.sources", "Sources")}</p>
         {sourcesErr ? (
-          <p className="text-xs text-red-600">{sourcesErr}</p>
+          <p className="text-xs text-#9c4634">{sourcesErr}</p>
         ) : (
           <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto pr-1">
             {sources.length === 0 ? (
@@ -485,7 +487,7 @@ export function InboxPanel({
       </div>
 
       {err ? (
-        <p className="flex items-center gap-2 text-[13px] text-red-600">
+        <p className="flex items-center gap-2 text-[13px] text-#9c4634">
           {err}
           <button
             type="button"
@@ -502,7 +504,7 @@ export function InboxPanel({
         <ul className="space-y-1" aria-busy="true">
           {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
             <li key={i}>
-              <Skeleton className="h-[44px] rounded-[6px]" />
+              <Skeleton className="h-10 rounded-[6px]" />
             </li>
           ))}
         </ul>
@@ -585,7 +587,10 @@ export function InboxPanel({
               <span>{ot("observe.inbox.hiddenCased", "{n} cased hidden", { n: hiddenCased })}</span>
             ) : null}
           </div>
-          <ul className="divide-y rounded-[12px] border">
+          <ul
+            className="max-h-[62vh] divide-y overflow-y-auto overscroll-contain rounded-[12px] border"
+            aria-label={ot("observe.inbox.results", "Article results")}
+          >
             {visibleRows.map((r) => {
               const open = expanded === r.item_key;
               return (
@@ -600,7 +605,7 @@ export function InboxPanel({
                         setExpanded(open ? null : r.item_key);
                       }
                     }}
-                    className="flex min-h-[44px] cursor-pointer items-center gap-2 px-2 py-1.5 transition-colors hover:bg-muted/50"
+                    className="flex min-h-[40px] cursor-pointer items-center gap-2 px-2 py-1 transition-colors hover:bg-muted/50"
                   >
                     <input
                       type="checkbox"
@@ -612,13 +617,13 @@ export function InboxPanel({
                       title={r.title_match === false
                         ? ot("observe.inbox.bodyOnlyTitle", "Keyword appears only in the body text, not the headline — lower relevance, review before adding to a Case.")
                         : undefined}
-                      className="accent-foreground disabled:opacity-40"
+                      className="size-3.5 shrink-0 accent-foreground disabled:opacity-40"
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold leading-5" title={r.title}>
+                      <p className="truncate text-[13px] font-semibold leading-4" title={r.title}>
                         {r.title}
                       </p>
-                      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <p className="flex items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
                         <span className="max-w-40 truncate">{r.source_id}</span>
                         <span aria-hidden>·</span>
                         {r.language ? (
@@ -651,7 +656,7 @@ export function InboxPanel({
                         {!r.cased && !r.dissected ? <StatusDot tone="gap" /> : null}
                       </p>
                     </div>
-                    <time className="shrink-0 text-xs tabular-nums text-muted-foreground" dateTime={r.published_at}>
+                    <time className="shrink-0 text-[11px] tabular-nums text-muted-foreground" dateTime={r.published_at}>
                       {rel(r.published_at)}
                     </time>
                     <span aria-hidden className="w-4 shrink-0 text-center text-xs text-muted-foreground">

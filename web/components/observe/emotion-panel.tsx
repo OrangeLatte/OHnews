@@ -11,11 +11,14 @@ import { Skeleton } from "@/components/ui/toast";
 import type { EmotionRow } from "@/lib/landscape-api";
 
 const EMOTION_COLORS: { key: string; cls: string; dot: string }[] = [
-  { key: "fear", cls: "stroke-red-500", dot: "bg-red-500" },
-  { key: "anger", cls: "stroke-orange-500", dot: "bg-orange-500" },
-  { key: "optimism", cls: "stroke-green-600", dot: "bg-green-600" },
-  { key: "uncertainty", cls: "stroke-amber-500", dot: "bg-amber-500" },
-  { key: "confidence", cls: "stroke-blue-500", dot: "bg-blue-500" },
+  { key: "fear", cls: "stroke-[#b3543f]", dot: "bg-[#b3543f]" },
+  { key: "anger", cls: "stroke-[#c07a4a]", dot: "bg-[#c07a4a]" },
+  { key: "optimism", cls: "stroke-[#6f8f6a]", dot: "bg-[#6f8f6a]" },
+  { key: "uncertainty", cls: "stroke-[#b08d3f]", dot: "bg-[#b08d3f]" },
+  { key: "confidence", cls: "stroke-[#5e83a8]", dot: "bg-[#5e83a8]" },
+  { key: "urgency", cls: "stroke-[#a05a78]", dot: "bg-[#a05a78]" },
+  { key: "concern", cls: "stroke-[#8a6fae]", dot: "bg-[#8a6fae]" },
+  { key: "relief", cls: "stroke-[#5e9c94]", dot: "bg-[#5e9c94]" },
 ];
 
 export function EmotionPanel({
@@ -44,6 +47,12 @@ export function EmotionPanel({
     );
   }
   const slice = emotion.slice(-30);
+  // 主导情绪 = 窗口内有读数日期的均值最高者（仅作视觉主层次，不改变任何数据值）
+  const means = EMOTION_COLORS.map((c) => {
+    const vals = slice.map((r) => r[c.key]).filter((v): v is number => typeof v === "number");
+    return { key: c.key, mean: vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : -1 };
+  }).sort((a, b) => b.mean - a.mean);
+  const dominantKey = means[0]?.mean > 0 ? means[0].key : null;
   // 最新一条有任一情绪读数的日期 → 最新值 chips
   const latest = [...slice].reverse().find((r) =>
     EMOTION_COLORS.some((c) => typeof r[c.key] === "number"),
@@ -54,14 +63,16 @@ export function EmotionPanel({
 
   return (
     <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">{ot("observe.emotion.desc", "Emotion temperature · daily article-level annotation density")}</p>
       <LineChart
-        height={160}
+        height={180}
         dates={slice.map((r) => r.date)}
         series={EMOTION_COLORS.map((c) => ({
           name: ot(`observe.emo.${c.key}`, c.key),
           color: c.cls,
           dot: c.dot,
           values: slice.map((r) => (typeof r[c.key] === "number" ? (r[c.key] as number) : null)),
+          dominant: c.key === dominantKey,
         }))}
       />
       {latest ? (
@@ -92,8 +103,10 @@ export function EmotionPanel({
       ) : null}
       <p className="text-[10px] text-muted-foreground">
         {slice[0]?.date} → {slice.at(-1)?.date} ·{" "}
-        {ot("observe.emotion.coverage", "{covered}/{total} days have readings", { covered: datedCount, total: slice.length })} ·{" "}
-        {ot("observe.emotion.nullNote", "missing dates are gapped, never interpolated.")}
+        {ot("observe.emotion.coverage", "{covered}/{total} days have readings", { covered: datedCount, total: slice.length })}
+        {datedCount < slice.length
+          ? ` · ${ot("observe.emotion.nullNote", "missing dates are gapped, never interpolated.")}`
+          : ` · ${ot("observe.emotion.carryNote", "missing dates carried forward from last reading.")}`}
       </p>
     </div>
   );

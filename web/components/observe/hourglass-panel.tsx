@@ -22,18 +22,18 @@ import type {
 import { useT } from "@/lib/i18n/use-t";
 import { openAgent } from "@/lib/agent-bridge";
 
-const BAND_COLORS = ["#2563eb", "#16a34a", "#d97706", "#7c3aed", "#0891b2"];
+const BAND_COLORS = ["#5e83a8", "#6f8f6a", "#b08d3f", "#8a6fae", "#5e9c94"];
 const TONE_HEX: Record<string, string> = {
-  ok: "#16a34a",
-  warn: "#d97706",
-  conflict: "#dc2626",
+  ok: "#6f8f6a",
+  warn: "#b08d3f",
+  conflict: "#b3543f",
   gap: "#6b7280",
 };
 const EMO_DOT: Record<string, string> = {
   fear: "#ef4444",
   anger: "#f97316",
-  optimism: "#16a34a",
-  uncertainty: "#d97706",
+  optimism: "#6f8f6a",
+  uncertainty: "#b08d3f",
   confidence: "#3b82f6",
 };
 
@@ -133,7 +133,7 @@ function HourglassSVG({
         const xTop = 96 + (i / Math.max(streams.length - 1, 1)) * 128;
         const xWaist = Math.min(Math.max(st.cursor + w / 2, 136), 184);
         const low = isLowSample(s.n_baseline, s.n_current);
-        st.acc.push({ s, w, xTop, xWaist, color: low ? "#d97706" : BAND_COLORS[i % BAND_COLORS.length], low });
+        st.acc.push({ s, w, xTop, xWaist, color: low ? "#b08d3f" : BAND_COLORS[i % BAND_COLORS.length], low });
         return { acc: st.acc, cursor: st.cursor + w + 3 };
       },
       { acc: [], cursor: 138 },
@@ -145,9 +145,9 @@ function HourglassSVG({
   const tone0 = topNdi.length > 0 ? ndiTone(topNdi[0].ndi) : "gap";
   const shiftColor =
     topNarrativeShift && topNarrativeShift.delta > 0.005
-      ? "#16a34a"
+      ? "#6f8f6a"
       : topNarrativeShift && topNarrativeShift.delta < -0.005
-        ? "#dc2626"
+        ? "#b3543f"
         : "#6b7280";
 
   return (
@@ -218,7 +218,7 @@ function HourglassSVG({
         height="56"
         rx="12"
         className="fill-card"
-        stroke="#2563eb"
+        stroke="#5e83a8"
         strokeWidth="2"
       >
         <title>{`${labels.gateStages} · ${labels.rateFormula}`}</title>
@@ -235,8 +235,8 @@ function HourglassSVG({
       {/* 质量门旁 ⓘ：pass rate 密度口径说明（P1 验收 4） */}
       <g className="cursor-help">
         <title>{labels.rateFormula}</title>
-        <circle cx="220" cy="201" r="7" fill="none" stroke="#2563eb" strokeWidth="1.2" opacity="0.8" />
-        <text x="220" y="204.5" textAnchor="middle" fontSize="9" fontWeight="700" fill="#2563eb">
+        <circle cx="220" cy="201" r="7" fill="none" stroke="#5e83a8" strokeWidth="1.2" opacity="0.8" />
+        <text x="220" y="204.5" textAnchor="middle" fontSize="9" fontWeight="700" fill="#5e83a8">
           i
         </text>
       </g>
@@ -287,7 +287,7 @@ function HourglassSVG({
       {/* 实体行 */}
       <g>
         <title>{labels.entities}</title>
-        <circle cx="98" cy="354" r="3.5" fill="#2563eb" />
+        <circle cx="98" cy="354" r="3.5" fill="#5e83a8" />
         <text x="108" y="357" className="fill-muted-foreground" fontSize="9">
           {labels.entities}
         </text>
@@ -303,7 +303,7 @@ function HourglassSVG({
       <text x="160" y="440" textAnchor="middle" className="fill-muted-foreground" fontSize="9">
         {labels.toCards}
       </text>
-      <circle cx="160" cy="44" r="2.5" fill="#2563eb" className="hg-particle" />
+      <circle cx="160" cy="44" r="2.5" fill="#5e83a8" className="hg-particle" />
 
       {/* 底行：当前窗口 */}
       <text x="10" y="462" className="fill-muted-foreground" fontSize="10">
@@ -474,7 +474,7 @@ export function HourglassPanel({
     )[0];
     if (nShift) {
       bypass.push({
-        dot: "#2563eb",
+        dot: "#5e83a8",
         label: ot("observe.hero.bypassNarrative", "Largest narrative shift"),
         main: nShift.label || nShift.frame,
         sub: `${(nShift.share_baseline * 100).toFixed(1)}% → ${(nShift.share_current * 100).toFixed(1)}%`,
@@ -646,7 +646,7 @@ export function HourglassPanel({
               {/* 最多 5 张；逐卡用 change_id/what/why_now 各自渲染，点击开统一 Drawer（P1 验收 2/3） */}
               <ul className="space-y-2">
                 {verified.slice(0, 5).map((c) => (
-                  <li key={c.change_id}>{renderChange(c, "#2563eb")}</li>
+                  <li key={c.change_id}>{renderChange(c, "#5e83a8")}</li>
                 ))}
               </ul>
               {candidates.length > 0 ? (
@@ -662,7 +662,7 @@ export function HourglassPanel({
                   </p>
                   <ul className="space-y-2">
                     {candidates.slice(0, 5).map((c) => (
-                      <li key={c.change_id}>{renderChange(c, "#d97706")}</li>
+                      <li key={c.change_id}>{renderChange(c, "#b08d3f")}</li>
                     ))}
                   </ul>
                 </>

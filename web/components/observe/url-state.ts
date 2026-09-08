@@ -23,7 +23,7 @@ export type ObserveUrlState = { mode: ObserveMode; days: number; entity: string 
 
 const DEFAULTS: ObserveUrlState = { mode: "signal", days: 7, entity: "" };
 
-const DAY_VALUES = new Set(["0", "1", "7", "30"]);
+const DAY_VALUES = new Set(["0", "1", "7", "15", "30"]);
 
 let cacheRaw: string | null = null;
 let cacheVal: ObserveUrlState = DEFAULTS;

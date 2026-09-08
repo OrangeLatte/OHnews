@@ -18,18 +18,19 @@ import { useT, useLocale } from "@/lib/i18n/use-t";
 import { Skeleton, toast } from "@/components/ui/toast";
 import { SourceFacets, EMPTY_FACETS, sourceMatches, type FacetGroup, type Facets } from "@/components/sources/source-facets";
 import { SourceTable, type SortDir, type SortKey } from "@/components/sources/source-table";
-import { RunCenter } from "@/components/sources/run-center";
+import { IngestionCenter } from "@/components/sources/ingestion-center";
 import { ExtendWizard } from "@/components/sources/extend-wizard";
 import { healthOf, useTr } from "@/components/sources/sources-ui";
 import { TIER_HINT_KEYS, TIER_LEGEND } from "@/lib/sources-meta";
 
 async function triggerRefresh(sourceId: string): Promise<void> {
-  const r = await fetch(`/api/sources/${encodeURIComponent(sourceId)}/refresh`, {
+  const r = await fetch("/api/ingestion/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ kind: "collect", source_ids: [sourceId], days: 1 }),
   });
-  if (!r.ok) throw new Error(`refresh: HTTP ${r.status}`);
+  const result = await r.json();
+  if (!r.ok) throw new Error(typeof result.detail === "string" ? result.detail : `HTTP ${r.status}`);
 }
 
 export function SourcesWorkspace() {
@@ -127,8 +128,8 @@ export function SourcesWorkspace() {
       .then(() => {
         toast.success(tr("sources.refreshOk", "Collection triggered"));
       })
-      .catch(() => {
-        toast.error(tr("sources.refreshFailed", "Trigger failed"));
+      .catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : tr("sources.refreshFailed", "Trigger failed"));
       })
       .finally(() => {
         setRefreshingId("");
@@ -183,6 +184,24 @@ export function SourcesWorkspace() {
           </div>
         </div>
 
+        <nav
+          className="flex flex-wrap items-center gap-2 rounded-xl border bg-muted/20 p-2"
+          aria-label={tr("sources.workspaceNav", "Source workspace shortcuts")}
+        >
+          <span className="px-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            {tr("sources.jumpTo", "Jump to")}
+          </span>
+          <a className="rounded-lg border bg-background px-2.5 py-1 text-xs hover:bg-muted" href="#source-directory">
+            {tr("sources.directory", "Source directory")}
+          </a>
+          <a className="rounded-lg border bg-background px-2.5 py-1 text-xs hover:bg-muted" href="#collection-plans">
+            {tr("sources.runCenter", "Collection plans")}
+          </a>
+          <a className="rounded-lg border bg-background px-2.5 py-1 text-xs hover:bg-muted" href="#extend-source">
+            {tr("sources.extend", "Add a source")}
+          </a>
+        </nav>
+
         {err ? <p className="text-sm text-[#dc2626]">{err}</p> : null}
 
         {loading ? (
@@ -192,7 +211,7 @@ export function SourcesWorkspace() {
             ))}
           </div>
         ) : (
-          <div className="grid items-start gap-6 lg:grid-cols-[240px_1fr]">
+          <div id="source-directory" className="scroll-mt-4 grid items-start gap-6 lg:grid-cols-[240px_1fr]">
             <SourceFacets
               rows={rows}
               facets={facets}
@@ -239,6 +258,7 @@ export function SourcesWorkspace() {
                     {tr("sources.clearFacets", "Clear")}
                   </button>
                 ) : null}
+                <a href="#collection-plans" className="rounded-lg border px-3 py-1.5 text-xs hover:bg-muted">{zh ? "采集与定时设置" : "Collection and scheduling"}</a>
               </div>
 
               {sorted.length === 0 ? (
@@ -283,8 +303,12 @@ export function SourcesWorkspace() {
         )}
       </div>
 
-      <RunCenter sources={rows} reloadToken={reloadToken} />
-      <ExtendWizard onRegistered={reload} />
+      <div id="collection-plans" className="scroll-mt-4">
+        <IngestionCenter sources={rows} onComplete={reload} />
+      </div>
+      <div id="extend-source" className="scroll-mt-4">
+        <ExtendWizard onRegistered={reload} />
+      </div>
     </div>
   );
 }

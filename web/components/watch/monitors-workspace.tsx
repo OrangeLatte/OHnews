@@ -812,7 +812,9 @@ export function MonitorsWorkspace() {
                             {schedRow.next_run_estimate ? absTime(schedRow.next_run_estimate, lang) : "—"}
                           </span>
                         </p>
-                        <p className="mt-1 text-[11px] text-muted-foreground">{schedRow.note}</p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          {t("monitors.scheduler.note")}
+                        </p>
                       </>
                     )}
                   </div>

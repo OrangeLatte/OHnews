@@ -25,6 +25,7 @@ export function ExtendWizard({ onRegistered }: { onRegistered: () => void }) {
   const [draft, setDraft] = useState<SourceSuggestion | null>(null);
   const [rationale, setRationale] = useState("");
   const [preview, setPreview] = useState<Record<string, string> | null>(null);
+  const [agentMeta, setAgentMeta] = useState<{ engine?: string; status?: string; model?: string; confidence?: number; error?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -38,6 +39,7 @@ export function ExtendWizard({ onRegistered }: { onRegistered: () => void }) {
     setStep(0);
     setDraft(null);
     setRationale("");
+    setAgentMeta(null);
     setErr("");
   };
 
@@ -54,6 +56,13 @@ export function ExtendWizard({ onRegistered }: { onRegistered: () => void }) {
         setDraft(res.suggestion);
         setRationale(res.rationale);
         setPreview(res.preview ?? null);
+        setAgentMeta({
+          engine: res.engine,
+          status: res.agent_status,
+          model: res.model_hint,
+          confidence: res.confidence,
+          error: res.agent_error,
+        });
         setBusy(false);
         setStep(1);
       })
@@ -126,7 +135,7 @@ export function ExtendWizard({ onRegistered }: { onRegistered: () => void }) {
             <p className="text-[11px] text-muted-foreground">
               {tr(
                 "sources.wizardUrlHint",
-                "The suggestion is a deterministic heuristic (read-only). Nothing is registered until you confirm.",
+                "The Agent proposes a source profile from the URL; rule fallback is disclosed. Nothing is registered until you confirm.",
               )}
             </p>
             {err ? <p className="text-xs text-[#dc2626]">{err}</p> : null}
@@ -170,6 +179,13 @@ export function ExtendWizard({ onRegistered }: { onRegistered: () => void }) {
               <p className="text-xs text-muted-foreground">
                 <span className="font-medium">{tr("sources.wizardRationale", "Why this suggestion")}: </span>
                 {rationale}
+              </p>
+            ) : null}
+            {agentMeta ? (
+              <p className="text-[11px] text-muted-foreground">
+                {agentMeta.engine === "llm"
+                  ? `Agent analysis · ${agentMeta.model ?? "model"}${typeof agentMeta.confidence === "number" ? ` · confidence ${(agentMeta.confidence * 100).toFixed(0)}%` : ""}`
+                  : `Rule fallback · ${agentMeta.error ?? "Agent result unavailable"}`}
               </p>
             ) : null}
             {preview ? (

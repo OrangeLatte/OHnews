@@ -84,13 +84,13 @@ export function SourceTable({
   const [expanded, setExpanded] = useState("");
 
   return (
-    <div className="overflow-x-auto rounded-xl border">
+    <div className="max-h-[70vh] overflow-auto rounded-xl border">
       <table className="w-full text-[13px]">
         <thead>
-          <tr className="border-b bg-muted/40 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
-            <th className="w-8 py-2 pl-3" aria-hidden="true" />
+          <tr className="border-b text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+            <th className="sticky top-0 z-10 w-8 bg-background py-2 pl-3" aria-hidden="true" />
             {COLUMNS.map((col) => (
-              <th key={col.key} className="px-2 py-2 font-semibold">
+              <th key={col.key} className="sticky top-0 z-10 bg-background px-2 py-2 font-semibold">
                 {col.sortable ? (
                   <button
                     type="button"
@@ -160,11 +160,11 @@ function SourceRowFragment({
           open ? "bg-[#2563eb]/5" : "hover:bg-muted/50"
         }`}
       >
-        <td className="py-2.5 pl-3">
+        <td className="py-2 pl-3">
           <Chevron open={open} />
         </td>
-        <td className="px-2 py-2.5 font-mono text-xs font-medium">{s.source_id}</td>
-        <td className="px-2 py-2.5">
+        <td className="px-2 py-2 font-mono text-xs font-medium">{s.source_id}</td>
+        <td className="px-2 py-2">
           <span
             className="cursor-help rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium"
             title={tierHintKey ? t(tierHintKey) : undefined}
@@ -172,14 +172,14 @@ function SourceRowFragment({
             {s.tier}
           </span>
         </td>
-        <td className="px-2 py-2.5 text-xs">{kindLabel(s.kind, t)}</td>
-        <td className="px-2 py-2.5 text-xs uppercase">{s.language}</td>
-        <td className="px-2 py-2.5 tabular-nums">{s.n_7d}</td>
-        <td className="px-2 py-2.5 tabular-nums text-muted-foreground">{s.n_30d}</td>
-        <td className="px-2 py-2.5 text-xs text-muted-foreground">
+        <td className="px-2 py-2 text-xs">{kindLabel(s.kind, t)}</td>
+        <td className="px-2 py-2 text-xs uppercase">{s.language}</td>
+        <td className="px-2 py-2 tabular-nums">{s.n_7d}</td>
+        <td className="px-2 py-2 tabular-nums text-muted-foreground">{s.n_30d}</td>
+        <td className="px-2 py-2 text-xs text-muted-foreground">
           {s.last_seen ? s.last_seen.slice(0, 10) : "—"}
         </td>
-        <td className="px-2 py-2.5">
+        <td className="px-2 py-2">
           <span
             className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] ${HEALTH_BADGE[health]}`}
             title={zh ? HEALTH_ZH[health] : HEALTH_EN[health]}

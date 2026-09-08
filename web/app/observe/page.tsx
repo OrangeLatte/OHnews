@@ -11,6 +11,7 @@ import { HelpIcon } from "@/components/help/help-icon";
 import { ChangeDrawer, drawerEntity, drawerSubject, type ChangeSelection } from "@/components/observe/change-drawer";
 import { DivergencePanel } from "@/components/observe/divergence-panel";
 import { EmotionPanel } from "@/components/observe/emotion-panel";
+import { ActionPanel } from "@/components/observe/action-panel";
 import { EntitiesPanel } from "@/components/observe/entities-panel";
 import { FlowPanel } from "@/components/observe/flow-panel";
 import { HourglassPanel } from "@/components/observe/hourglass-panel";
@@ -51,6 +52,7 @@ const ALL_DAYS_FETCH = 3650;
 const WINDOWS: { d: number; label: string }[] = [
   { d: 1, label: "1d" },
   { d: 7, label: "7d" },
+  { d: 15, label: "15d" },
   { d: 30, label: "30d" },
   { d: 0, label: "All" },
 ];
@@ -295,30 +297,18 @@ export default function ObservePage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Inbox 过滤：默认预选 3 个最活跃信源（n_7d 降序）
-  const defaultSelSources = useMemo(
-    () =>
-      (sources ?? [])
-        .slice()
-        .sort((a, b) => b.n_7d - a.n_7d)
-        .filter((s) => s.n_7d > 0)
-        .slice(0, 3)
-        .map((s) => s.source_id),
-    [sources],
-  );
-  const selSources = useMemo(
-    () => selSourcesRaw ?? defaultSelSources,
-    [selSourcesRaw, defaultSelSources],
-  );
+  // 筛选只表达用户显式选择。过去在首屏静默预选 Top3，但主舞台仍按全量计算，
+  // 造成“看起来已筛选、数据却未筛选”的幽灵状态。空数组现在始终等于全量。
+  const selSources = useMemo(() => selSourcesRaw ?? [], [selSourcesRaw]);
 
   const onToggleSource = useCallback(
     (id: string) => {
       setSelSourcesRaw((prev) => {
-        const cur = prev ?? defaultSelSources;
+        const cur = prev ?? [];
         return cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
       });
     },
-    [defaultSelSources],
+    [],
   );
   const onQInput = useCallback((v: string) => {
     setQInput(v);
@@ -702,6 +692,7 @@ export default function ObservePage() {
               {mode === "divergence" ? (
                 <DivergencePanel
                   ndi={mainData?.ndi ?? []}
+                  landscape={mainData?.landscape ?? null}
                   loading={mainData === null}
                   warnings={mainData?.landscape?.quality_warnings?.length ?? 0}
                   onOpenDrawer={(entity, label, ndi, nSources) =>
@@ -710,13 +701,7 @@ export default function ObservePage() {
                 />
               ) : null}
               {mode === "emotion" ? (
-                <EmotionPanel
-                  emotion={mainData?.emotion ?? []}
-                  loading={mainData === null}
-                  onOpenEmotion={(emotionKey, value, date) =>
-                    openDrawer({ kind: "emotion", emotionKey, value, date })
-                  }
-                />
+                <><EmotionPanel emotion={mainData?.emotion ?? []} loading={mainData === null} onOpenEmotion={(emotionKey, value, date) => openDrawer({ kind: "emotion", emotionKey, value, date })} /><ActionPanel days={fetchDays} /></>
               ) : null}
               {mode === "entities" ? (
                 <EntitiesPanel

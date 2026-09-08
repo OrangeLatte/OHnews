@@ -7,136 +7,72 @@
 
 import { MigrationBar } from "@/components/observe/charts";
 import { isLowShare, type ChangeSelection } from "@/components/observe/change-drawer";
+import { TimeChart, type TSLane, type TSSeries, type TSPoint } from "@/components/viz/TimeChart";
 import { useOt } from "@/components/observe/i18n-bridge";
 import { Skeleton } from "@/components/ui/toast";
-import type { Landscape, NarrativeStream } from "@/lib/landscape-api";
+import type { Landscape, NarrativeStream, TimeSeriesPayload } from "@/lib/landscape-api";
 import { useT } from "@/lib/i18n/use-t";
 
 const FRAME_HEX: Record<string, string> = {
-  gain: "#16a34a",
-  loss: "#d97706",
-  conflict: "#dc2626",
-  human_interest: "#db2777",
-  responsibility: "#2563eb",
+  gain: "#6f8f6a",
+  loss: "#b08d3f",
+  conflict: "#b3543f",
+  human_interest: "#a05a78",
+  responsibility: "#5e83a8",
   other: "#6b7280",
 };
-const FALLBACK = ["#2563eb", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#6b7280"];
+const FALLBACK = ["#5e83a8", "#6f8f6a", "#b08d3f", "#8a6fae", "#5e9c94", "#a05a78", "#6b7280"];
 const frameColor = (frame: string, i: number): string =>
   FRAME_HEX[frame] ?? FALLBACK[i % FALLBACK.length];
 
-/** 双态冲积图：左柱=基线份额，右柱=当前份额，中间流带连接同一框架。流带可点击开统一 Drawer。 */
-function NarrativeRiver({
-  streams,
-  onOpenNarrative,
-}: {
-  streams: NarrativeStream[];
-  onOpenNarrative: (sel: ChangeSelection) => void;
-}) {
-  const ot = useOt();
-  const H = 240;
-  const y0 = 24;
-  const gap = 3;
-  const lx = 110;
-  const rx = 504;
-  const barW = 26;
 
-  const baseTotal = streams.reduce((s, n) => s + n.share_baseline, 0);
-  const curTotal = streams.reduce((s, n) => s + n.share_current, 0);
-  const hasBase = baseTotal > 0.005;
-
-  const scale = (share: number, total: number): number =>
-    total > 0.005 ? (share / total) * (H - (streams.length - 1) * gap) : 0;
-
-  const segs = streams.reduce<{ acc: { n: NarrativeStream; yB: number; hB: number; yC: number; hC: number; color: string }[]; baseOff: number; curOff: number }>(
-    (st, n, i) => {
-      const hB = scale(n.share_baseline, baseTotal);
-      const hC = scale(n.share_current, curTotal);
-      st.acc.push({
-        n,
-        yB: y0 + st.baseOff, hB,
-        yC: y0 + st.curOff, hC,
-        color: frameColor(n.frame, i),
-      });
-      return { acc: st.acc, baseOff: st.baseOff + hB + gap, curOff: st.curOff + hC + gap };
-    },
-    { acc: [], baseOff: 0, curOff: 0 },
-  ).acc;
-  return (
-    <svg viewBox="0 0 640 300" className="h-auto w-full" role="img" aria-label="narrative frame shares">
-      {segs.map(({ n, yB, hB, yC, hC, color }) => {
-        const low = isLowShare(n.share_baseline);
-        const lowLabel = ot("observe.lowSample", "Low sample (n={n}); growth may be distorted", {
-          n: n.n_baseline,
-        });
-        return (
-          <g
-            key={n.frame}
-            className="cursor-pointer"
-            onClick={() => onOpenNarrative({ kind: "narrative", stream: n })}
-          >
-            {hasBase && hC > 0.5 && hB > 0.5 ? (
-              <path
-                d={`M${lx + barW},${yB} C320,${yB} 320,${yC} ${rx},${yC} L${rx},${yC + hC} C320,${yC + hC} 320,${yB + hB} ${lx + barW},${yB + hB} Z`}
-                fill={color}
-                opacity={low ? 0.2 : 0.28}
-                stroke={low ? "#d97706" : undefined}
-                strokeWidth={low ? 1 : undefined}
-                strokeDasharray={low ? "4 3" : undefined}
-                className="transition-opacity hover:opacity-60"
-              >
-                <title>
-                  {`${n.label || n.frame}: ${(n.share_baseline * 100).toFixed(1)}% → ${(n.share_current * 100).toFixed(1)}%${
-                    low ? ` · ${lowLabel}` : ""
-                  }`}
-                </title>
-              </path>
-            ) : null}
-            {hasBase && hB > 0.5 ? (
-              <rect
-                x={lx}
-                y={yB}
-                width={barW}
-                height={hB}
-                rx="3"
-                fill={color}
-                opacity="0.75"
-                stroke={low ? "#d97706" : undefined}
-                strokeWidth={low ? 1 : undefined}
-                strokeDasharray={low ? "3 2" : undefined}
-              >
-                <title>{low ? `${n.label || n.frame} · ${ot0(n.share_baseline)} · ${lowLabel}` : `${n.label || n.frame} · ${ot0(n.share_baseline)}`}</title>
-              </rect>
-            ) : null}
-            {hC > 0.5 ? (
-              <rect x={rx} y={yC} width={barW} height={hC} rx="3" fill={color} opacity="0.9">
-                <title>{`${n.label || n.frame} · ${ot0(n.share_current)}`}</title>
-              </rect>
-            ) : null}
-            {hasBase && hB > 12 ? (
-              <text x={lx - 8} y={yB + hB / 2 + 3} textAnchor="end" fontSize="11" className="fill-muted-foreground">
-                {`${n.label || n.frame} ${(n.share_baseline * 100).toFixed(0)}%`}
-              </text>
-            ) : null}
-            {hC > 12 ? (
-              <text x={rx + barW + 8} y={yC + hC / 2 + 3} fontSize="11" className="fill-foreground">
-                {`${n.label || n.frame} ${(n.share_current * 100).toFixed(0)}%`}
-              </text>
-            ) : null}
-          </g>
-        );
-      })}
-      <text x={lx + barW / 2} y={y0 - 8} textAnchor="middle" fontSize="10" className="fill-muted-foreground">
-        {hasBase ? "t-2w" : "—"}
-      </text>
-      <text x={rx + barW / 2} y={y0 - 8} textAnchor="middle" fontSize="10" className="fill-muted-foreground">
-        t-1w
-      </text>
-    </svg>
-  );
-}
-
-function ot0(x: number): string {
-  return `${(x * 100).toFixed(1)}%`;
+/**
+ * timeseries.frame_day → "框架份额时间带"（stacked_band，yDomain [0,1]）：
+ * 色板与下方冲积图 frameColor 同源（跨图同框架同色）；低样本日=当日各框架 n 之和<5。
+ * 缺数据返回 null（诚实不渲染）。
+ */
+function buildFrameLane(
+  ts: TimeSeriesPayload,
+  streams: NarrativeStream[],
+  title: string,
+  unit: string,
+  emptyHint: string,
+): TSLane | null {
+  const rows = ts.frame_day ?? [];
+  if (rows.length === 0) return null;
+  const labelOf = new Map(streams.map((n) => [n.frame, n.label || n.frame]));
+  const perFrame = new Map<string, Map<string, TSPoint>>();
+  const dayN = new Map<string, number>();
+  for (const r of rows) {
+    const m = perFrame.get(r.frame) ?? new Map<string, TSPoint>();
+    m.set(r.day, { day: r.day, value: r.share });
+    perFrame.set(r.frame, m);
+    dayN.set(r.day, (dayN.get(r.day) ?? 0) + r.n);
+  }
+  // 按窗口总份额降序 → 堆叠自下而上按序稳定
+  const order = [...perFrame.entries()]
+    .map(([frame, m]) => ({
+      frame,
+      total: [...m.values()].reduce((s, p) => s + (p.value ?? 0), 0),
+      m,
+    }))
+    .sort((a, b) => b.total - a.total);
+  const series: TSSeries[] = order.map(({ frame, m }, i) => ({
+    id: frame,
+    label: labelOf.get(frame) ?? frame,
+    points: [...m.values()],
+    color: frameColor(frame, i),
+  }));
+  return {
+    id: "narrative-frame-day",
+    title,
+    kind: "stacked_band",
+    series,
+    yDomain: [0, 1],
+    unit,
+    lowSampleDays: [...dayN].filter(([, n]) => n < 5).map(([d]) => d).sort(),
+    emptyHint,
+  };
 }
 
 export function NarrativePanel({
@@ -164,9 +100,25 @@ export function NarrativePanel({
     );
   }
   const baseTotal = landscape.narrative_streams.reduce((s, n) => s + n.share_baseline, 0);
+  // 框架份额时间带：timeseries 缺失（后端未部署）→ 不渲染新区块（诚实降级）
+  const ts = landscape.timeseries;
+  const frameLane = ts
+    ? buildFrameLane(
+        ts,
+        landscape.narrative_streams,
+        ot("viz.narrative.band", "Frame share by day"),
+        ot("viz.unit.share", "share"),
+        ot("viz.narrative.empty", "No per-day frame shares in this payload — shown honestly empty."),
+      )
+    : null;
   return (
     <div className="space-y-4">
-      <NarrativeRiver streams={landscape.narrative_streams} onOpenNarrative={onOpenNarrative} />
+      {frameLane ? (
+        <section aria-label={frameLane.title}>
+          <TimeChart lanes={[frameLane]} days={ts?.days ?? 30} heightPerLane={120} />
+        </section>
+      ) : null}
+      
       {baseTotal <= 0.005 ? (
         <p className="rounded-[12px] border border-dashed p-2 text-xs text-muted-foreground">
           {ot(

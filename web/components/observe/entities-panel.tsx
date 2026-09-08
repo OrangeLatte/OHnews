@@ -10,6 +10,7 @@ import { MiniColumns } from "@/components/observe/charts";
 import { useOt } from "@/components/observe/i18n-bridge";
 import { ndiTone, relParts } from "@/components/observe/rel-time";
 import { StatusDot } from "@/components/observe/status-dots";
+import { VIZ_SEMANTIC } from "@/components/viz/tokens";
 import { Skeleton } from "@/components/ui/toast";
 import type {
   EntityGraphPayload,
@@ -26,11 +27,13 @@ const TONE_TEXT_KEY: Record<string, [string, string]> = {
   gap: ["observe.timeline.tone.null", "no reading"],
 };
 
+// 节点色=NDI 语义色（色值与 viz/tokens.ts VIZ_SEMANTIC 同源；不用 seriesColor 循环——
+// 语义色编码 NDI 分歧档位，循环序号色会破坏图例语义）
 const TONE_HEX: Record<string, string> = {
-  ok: "#16a34a",
-  warn: "#d97706",
-  conflict: "#dc2626",
-  gap: "#6b7280",
+  ok: VIZ_SEMANTIC.ok,
+  warn: VIZ_SEMANTIC.warn,
+  conflict: VIZ_SEMANTIC.conflict,
+  gap: VIZ_SEMANTIC.gap,
 };
 
 /** 实体关系图：自适应单环布局，边=parent 层级弦线，环色=NDI 语义，标签上下交替防重叠。节点点击开统一 Drawer。 */
@@ -47,19 +50,54 @@ function EntityGraph({
   kg?: EntityGraphPayload | null;
   onOpenDrawer: (id: string, label?: string, ndi?: number | null) => void;
 }) {
-  const W = 640;
-  const H = 360;
+  // 留出足够的上下安全区，避免最上/最下节点的双行标签被 viewBox 裁切。
+  const W = 700;
+  const H = 420;
   const cx = W / 2;
   const cy = H / 2;
   const n = entities.length;
-  const r = Math.min(160, Math.max(100, (n * 42) / (2 * Math.PI)));
+  const r = Math.min(175, Math.max(112, (n * 48) / (2 * Math.PI)));
   const pos = new Map(
     entities.map((e, i) => {
       const a = (i / Math.max(n, 1)) * Math.PI * 2 - Math.PI / 2;
       return [e.entity_id, { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a), i }] as const;
     }),
   );
+  // 环形节点在左右两侧的 y 值最密集。将标签按左右半区分别做最小间距排布，
+  // 再用短引导线关联节点，避免实体多时名称叠成一团。
+  const labelPos = new Map<string, { x: number; y: number; anchor: "start" | "end" }>();
+  (["left", "right"] as const).forEach((side) => {
+    const items = entities
+      .map((entity) => ({ entity, point: pos.get(entity.entity_id)! }))
+      .filter(({ point }) => (side === "left" ? point.x < cx : point.x >= cx))
+      .sort((a, b) => a.point.y - b.point.y);
+    const gap = 15;
+    const top = 14;
+    const bottom = H - 14;
+    const ys: number[] = [];
+    items.forEach(({ point }, index) => {
+      ys[index] = Math.max(point.y, index === 0 ? top : ys[index - 1] + gap);
+    });
+    if (ys.length > 0 && ys[ys.length - 1] > bottom) {
+      const overflow = ys[ys.length - 1] - bottom;
+      for (let index = 0; index < ys.length; index += 1) ys[index] -= overflow;
+    }
+    items.forEach(({ entity, point }, index) => {
+      labelPos.set(entity.entity_id, {
+        x: point.x + (side === "left" ? -18 : 18),
+        y: ys[index],
+        anchor: side === "left" ? "end" : "start",
+      });
+    });
+  });
   const idOf = (id: string): string => TONE_HEX[ndiTone(ndiMap.get(id) ?? null)];
+  // hover 聚焦：其余节点降透明度；hovered 节点排到最后渲染（SVG 文档序 = 视觉顶层，标签不被压住）
+  const [hoverId, setHoverId] = useState("");
+  const ordered = hoverId
+    ? [...entities].sort(
+        (a, b) => (a.entity_id === hoverId ? 1 : 0) - (b.entity_id === hoverId ? 1 : 0),
+      )
+    : entities;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="entity graph">
@@ -75,7 +113,7 @@ function EntityGraph({
             y1={a.y}
             x2={b.x}
             y2={b.y}
-            stroke="#2563eb"
+            stroke={VIZ_SEMANTIC.info}
             strokeOpacity={0.5}
             strokeWidth={Math.min(3.2, 0.8 + e.weight * 0.5)}
           >
@@ -103,16 +141,21 @@ function EntityGraph({
           />
         );
       })}
-      {entities.map((e) => {
+      {ordered.map((e) => {
         const p = pos.get(e.entity_id);
         if (!p) return null;
+        const label = labelPos.get(e.entity_id);
+        if (!label) return null;
         const ndi = ndiMap.get(e.entity_id) ?? null;
         const selected = selEntity === e.entity_id;
-        const labelAbove = p.i % 2 === 1;
+        const hovered = hoverId === e.entity_id;
+        const dimmed = hoverId !== "" && !hovered;
         return (
           <g
             key={e.entity_id}
-            className="cursor-pointer"
+            className={`cursor-pointer transition-opacity ${dimmed ? "opacity-40" : ""}`}
+            onMouseEnter={() => setHoverId(e.entity_id)}
+            onMouseLeave={() => setHoverId("")}
             onClick={() => onOpenDrawer(e.entity_id, e.aliases[0], ndi)}
           >
             <title>
@@ -129,12 +172,24 @@ function EntityGraph({
               stroke={idOf(e.entity_id)}
               strokeWidth="3.5"
             />
+            <line
+              x1={p.x}
+              y1={p.y}
+              x2={label.x + (label.anchor === "end" ? 4 : -4)}
+              y2={label.y - 3}
+              className="stroke-muted-foreground/35"
+              strokeWidth="0.8"
+              aria-hidden
+            />
             <text
-              x={p.x}
-              y={labelAbove ? p.y - 20 : p.y + 27}
-              textAnchor="middle"
-              fontSize="10"
-              className="fill-foreground"
+              x={label.x}
+              y={label.y}
+              textAnchor={label.anchor}
+              fontSize="9"
+              className={`fill-foreground ${hovered ? "font-semibold" : ""}`}
+              stroke={hovered ? "var(--background)" : undefined}
+              strokeWidth={hovered ? 3 : undefined}
+              style={hovered ? { paintOrder: "stroke" } : undefined}
             >
               {e.entity_id.length > 12 ? `${e.entity_id.slice(0, 11)}…` : e.entity_id}
             </text>
@@ -180,7 +235,7 @@ export function EntitiesPanel({
 
   return (
     <div className="space-y-4">
-      {entityErr ? <p className="text-[13px] text-red-600">{entityErr}</p> : null}
+      {entityErr ? <p className="text-[13px] text-#9c4634">{entityErr}</p> : null}
 
       {entities !== null && entities.length > 0 ? (
         <div className="space-y-1">
@@ -233,22 +288,24 @@ export function EntitiesPanel({
         <p className="rounded-[12px] border border-dashed p-3 text-[13px] text-muted-foreground">
           {t("entity.pick")}
         </p>
-      ) : timeline === null ? (
+      ) : timeline === null || timeline.entity_id !== selEntity || timeline.days !== days ? (
+        // timeline 加载中（stale-while-revalidate：切实体/窗口时旧数据还在）→ 骨架，不闪旧实体数据
         <div className="space-y-2" aria-busy="true">
-          <Skeleton className="h-12 rounded-[12px]" />
-          <Skeleton className="h-24 rounded-[12px]" />
+          <div className="h-10 animate-pulse rounded bg-muted" />
+          <div className="h-10 animate-pulse rounded bg-muted" />
+          <div className="h-10 animate-pulse rounded bg-muted" />
         </div>
       ) : (
         <div className="space-y-4">
           <p className="text-xs text-muted-foreground">
-            {timelineStale ? <span className="text-amber-600">⟳ {ot("observe.refreshing", "refreshing…")} · </span> : null}
+            {timelineStale ? <span className="text-#9a7a33">⟳ {ot("observe.refreshing", "refreshing…")} · </span> : null}
             {t("entity.totalArticles", {
               n: timeline.points.reduce((s, p) => s + p.articles, 0),
             })}{" "}
             · {t("entity.totalEvents", { n: timeline.events.length })}
           </p>
 
-          {points.length > 1 ? <MiniColumns values={points.map((p) => p.articles)} /> : null}
+          {points.length > 1 ? <MiniColumns values={points.map((p) => p.articles)} dates={points.map((p) => p.date)} /> : null}
 
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">

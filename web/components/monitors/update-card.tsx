@@ -49,9 +49,48 @@ export function UpdateCard({
   lang: "en" | "zh";
 }) {
   const [picking, setPicking] = useState(false);
+  const [analysis, setAnalysis] = useState<{
+    engine: string;
+    status: string;
+    model_hint?: string;
+    error?: string;
+    analysis: {
+      executive_summary: string;
+      what_changed: string[];
+      evidence_assessment: string[];
+      uncertainties: string[];
+      recommended_review: string;
+    };
+  } | null>(null);
+  const [analysisBusy, setAnalysisBusy] = useState(false);
   const deltaEntries = Object.entries(u.delta ?? {});
   const reviewStatus = u.review_status ?? "unreviewed";
   const decided = reviewStatus !== "unreviewed";
+  const generateAnalysis = async (): Promise<void> => {
+    setAnalysisBusy(true);
+    try {
+      const response = await fetch(`/api/monitors/updates/${encodeURIComponent(u.update_id)}/analysis`, {
+        method: "POST",
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      setAnalysis((await response.json()) as typeof analysis);
+    } catch (error) {
+      setAnalysis({
+        engine: "offline",
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+        analysis: {
+          executive_summary: "Analysis could not be loaded.",
+          what_changed: [],
+          evidence_assessment: [],
+          uncertainties: [],
+          recommended_review: "Review the source evidence before deciding.",
+        },
+      });
+    } finally {
+      setAnalysisBusy(false);
+    }
+  };
 
   return (
     <li className="rounded-xl border bg-card p-3">
@@ -101,6 +140,51 @@ export function UpdateCard({
           ))}
         </div>
       )}
+      <div className="mt-3 rounded-lg border bg-muted/20 p-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-medium">{lang === "zh" ? "Agent 增量分析" : "Agent increment analysis"}</p>
+          <Button size="sm" variant="outline" disabled={analysisBusy} onClick={() => void generateAnalysis()}>
+            {analysisBusy
+              ? lang === "zh"
+                ? "分析中…"
+                : "Analyzing…"
+              : analysis
+                ? lang === "zh"
+                  ? "重新分析"
+                  : "Regenerate"
+                : lang === "zh"
+                  ? "生成分析"
+                  : "Generate analysis"}
+          </Button>
+        </div>
+        {analysis ? (
+          <div className="mt-2 space-y-2 text-xs">
+            <p className="leading-relaxed">{analysis.analysis.executive_summary}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {analysis.engine === "llm"
+                ? `LLM · ${analysis.model_hint ?? "model"}`
+                : `${lang === "zh" ? "规则降级（模型未产出）" : "Rule fallback (model did not produce output)"}${analysis.error ? ` · ${analysis.error}` : ""}`}
+            </p>
+            {[
+              [lang === "zh" ? "变化" : "Changes", analysis.analysis.what_changed],
+              [lang === "zh" ? "证据评估" : "Evidence assessment", analysis.analysis.evidence_assessment],
+              [lang === "zh" ? "不确定性" : "Uncertainties", analysis.analysis.uncertainties],
+            ].map(([title, rows]) =>
+              Array.isArray(rows) && rows.length > 0 ? (
+                <div key={String(title)}>
+                  <p className="font-medium text-muted-foreground">{title}</p>
+                  <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                    {rows.map((row) => <li key={row}>{row}</li>)}
+                  </ul>
+                </div>
+              ) : null,
+            )}
+            <p className="rounded-md border border-dashed p-1.5 text-muted-foreground">
+              {analysis.analysis.recommended_review}
+            </p>
+          </div>
+        ) : null}
+      </div>
       {!decided && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <ConfirmButton
