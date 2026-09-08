@@ -1,8 +1,10 @@
 # OH!News
 
-A cognitive-loop news intelligence terminal. English · [简体中文](README.zh.md)
+An **AI-native news intelligence terminal**: LangGraph agents extract 18 structured elements from every article, anchor every claim to character-level spans in the original text, and turn multi-source news into a traceable loop — *notice a change → inspect evidence → form your own judgment → track it over time*.
 
-**License**: [MIT](LICENSE) · Python 3.12+ · FastAPI · Next.js 16 · LangGraph · 627+ tests
+LLM-native by design: three-tier model routing with schema-validated structured output, deterministic verifiers over every model claim, and honest degradation to a lexicon engine when models fail. English · [简体中文](README.zh.md)
+
+**License**: [MIT](LICENSE) · Python 3.12+ · FastAPI · Next.js 16 · LangGraph · 629 tests
 
 ## The problem
 
@@ -50,6 +52,16 @@ recommendation, and never presents a model explanation as user belief.
 **PIT discipline.** All pipeline queries are point-in-time: `*_asof` accessors guarantee that nothing
 published after the as-of timestamp can leak into an answer. This makes results reproducible and the
 demo dataset coherent.
+
+## How AI works inside
+
+- **Three-tier model routing.** `io` / `execute` / `strategic` tiers pick the cheapest capable model per task (DeepSeek, Zhipu GLM). Every LLM call goes through a JSON-schema gate: invalid output ⇒ the candidate fails ⇒ the router falls to the next provider ⇒ if all fail, the step degrades honestly instead of guessing.
+- **Structured information extraction.** Each article is chunked on sentence boundaries, dissected concurrently (Semaphore ×3) into 18 element types (actor, hard facts, quantitative data, causal links, stance, intent…), and every element is anchored to the source text by a three-stage locator — exact match → normalized match → sequential word anchor. Long spans get narrowed against their own content; anything unlocatable is recorded, never invented.
+- **Deterministic verifiers over model claims.** Coordinates are mapped back into the original text, quotes that drift from their declared span are dropped, and coverage is computed as a set union over character ranges. The LLM proposes; the verifier disposes.
+- **Honest dual-engine design.** When models are unavailable or return empty output, the pipeline falls back to the dictionary engine (rule-based SVO/emotion lexicon) and labels the artifact `engine=offline` — a degraded result is always labeled, never passed off as model output.
+- **LangGraph agents with human gates.** Shared `AgentState` with incremental channels, a cross-cutting `user_gate` edge so you can inject context mid-run, `interrupt()` confirmation gates for anything persisted, and SQLite check-pointing for replay/time-travel.
+- **Cost discipline.** Dissections run on demand with caching; a scored suggestion queue (source reliability × recency × entity relevance) feeds a confirmation-gated queue so tokens go only to articles you approve.
+- **Prompt engineering discipline.** Versioned prompts (`dissect-v7`), density and anti-fabrication rules, per-language extraction guidance (en/zh/fr/es/de/ar), and prompt changes gated by tests that assert system-prompt invariants.
 
 ## Demo
 
