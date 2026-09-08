@@ -56,9 +56,9 @@ demo dataset coherent.
 Two complete walkthroughs (one English corpus, one Chinese corpus), each running the
 full loop — inbox → investigation → tracking → memory — recorded as GIFs:
 
-![English demo](docs/demo_en.gif)
+![English demo](docs/demo_en_v2.gif)
 
-![Chinese demo](docs/demo_zh.gif)
+![Chinese demo](docs/demo_zh_v2.gif)
 
 Full-resolution stills: [`docs/demo_en`](docs/demo_en), [`docs/demo_zh`](docs/demo_zh).
 

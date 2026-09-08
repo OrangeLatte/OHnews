@@ -48,9 +48,9 @@ OH!News 针对这三个断裂而建。
 
 两条完整走查（英文语料一条、中文语料一条），各走通 收件箱 → 研究 → 追踪 → 记忆 全流程，录制成 GIF：
 
-![英文演示](docs/demo_en.gif)
+![英文演示](docs/demo_en_v2.gif)
 
-![中文演示](docs/demo_zh.gif)
+![中文演示](docs/demo_zh_v2.gif)
 
 高清截图：[`docs/demo_en`](docs/demo_en)、[`docs/demo_zh`](docs/demo_zh)。
 
