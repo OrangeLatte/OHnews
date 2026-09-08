@@ -636,9 +636,9 @@ def test_report_rebuild_appends_revision_never_overwrites(store, case_id) -> Non
     rows = [a for a in store.artifacts_for_case(case_id) if a["report_type"] == "veracity"]
     assert len(rows) == 1
     # T2：Prompt 版本标注（revision content 顶层 + run output 双写）
-    assert revs[1]["content"]["prompt_version"] == "report-v2"
+    assert revs[1]["content"]["prompt_version"] == "report-v3"
     run2 = store.get_analysis_run(v2["run_id"])
-    assert run2 is not None and run2["output"]["prompt_version"] == "report-v2"
+    assert run2 is not None and run2["output"]["prompt_version"] == "report-v3"
 
 
 def test_report_feedback_revision_records_lineage_and_prompt(store, case_id) -> None:
@@ -663,7 +663,7 @@ def test_report_feedback_revision_records_lineage_and_prompt(store, case_id) -> 
     # 版本保留：revised_from 指向上一版 + feedback 原文 + prompt 版本（仅新版携带）
     assert revs[1]["content"]["revised_from"] == v1["revision_id"]
     assert revs[1]["content"]["feedback"] == feedback
-    assert revs[1]["content"]["prompt_version"] == "report-v2"
+    assert revs[1]["content"]["prompt_version"] == "report-v3"
     assert "revised_from" not in revs[0]["content"]
     assert "feedback" not in revs[0]["content"]
     run2 = store.get_analysis_run(v2["run_id"])

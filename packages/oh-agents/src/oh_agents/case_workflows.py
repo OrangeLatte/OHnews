@@ -24,6 +24,17 @@ from .report_agent import REPORT_PROMPT_VERSION, build_report_graph
 from .translation_agent import TRANSLATE_PROMPT_VERSION, build_translation_graph
 
 
+def _clean_body(body: str) -> str:
+    """case 拆解使用时清洗：旧 revisions 的脏 body 也受益（webtext 公共函数）。"""
+    try:
+        from oh_sources.webtext import clean_article_text
+
+        cleaned = clean_article_text(body)
+        return cleaned if len(cleaned) >= 80 else body
+    except Exception:
+        return body
+
+
 def _dumps(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
@@ -212,7 +223,7 @@ class CaseWorkflows:
         state_in: dict[str, Any] = {
             "item_key": document_revision_id,
             "title": str(rev.get("canonical_url") or rev.get("document_id") or ""),
-            "text": str(rev.get("body") or ""),
+            "text": _clean_body(str(rev.get("body") or "")),
             "language": str(rev.get("language") or ""),
             "publisher": str(rev.get("source_id") or ""),
         }
@@ -368,7 +379,13 @@ class CaseWorkflows:
             else:
                 confidence = 1.0 if dissection.engine == "llm" else 0.0
                 uncertainty = "" if dissection.engine == "llm" else "offline 兜底拆解"
-            if el.spans and not span_ids:
+            if not el.spans and not span_ids:
+                # LLM 原本就没给 spans（_ensure_spans 三级查找也未命中）——
+                # 诚实留痕，与「给了但全丢弃」区分。
+                uncertainty = (
+                    f"{uncertainty};no_spans_returned" if uncertainty else "no_spans_returned"
+                )
+            elif el.spans and not span_ids:
                 uncertainty = (
                     f"{uncertainty};span_anchor_failed" if uncertainty else "span_anchor_failed"
                 )
@@ -428,7 +445,7 @@ class CaseWorkflows:
             {
                 "item_key": document_revision_id,
                 "title": str(rev.get("canonical_url") or ""),
-                "text": str(rev.get("body") or ""),
+                "text": _clean_body(str(rev.get("body") or "")),
                 "source_language": str(rev.get("language") or ""),
                 "target_language": target_language,
             }
@@ -850,7 +867,13 @@ class CaseWorkflows:
             raise RuntimeError(str(exc)) from exc
         if self._report_graph is None:
             self._report_graph = build_report_graph(
-                router=self._router, store=self._silver, now_fn=self._graph_now
+                router=self._router,
+                store=self._silver,
+                now_fn=self._graph_now,
+                # A report is an interactive artifact. Keep its graph deadline
+                # bounded even when the API worker allows longer-running jobs,
+                # so a stalled provider cannot monopolize the case queue.
+                llm_timeout=min(self._llm_timeout, 120.0),
             )
         state_in: dict[str, Any] = {
             "item_key": item_key or title,
