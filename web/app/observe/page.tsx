@@ -432,7 +432,10 @@ export default function ObservePage() {
 
   const langCounts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const s of sources ?? []) m.set(s.language, (m.get(s.language) ?? 0) + s.n_7d);
+    for (const s of sources ?? []) {
+      if ((s.n_7d ?? 0) <= 0) continue; // demo 裁剪：零产出语言不进目录
+      m.set(s.language, (m.get(s.language) ?? 0) + s.n_7d);
+    }
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [sources]);
 
