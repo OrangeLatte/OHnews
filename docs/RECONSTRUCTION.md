@@ -1,5 +1,7 @@
 # OH!News 产品重构计划 v4 — 从数据监测到情报解释
 
+> **当前状态（2026-09-09，M6 收官）**：v4 计划已全部实施完成并多轮演化。产品现为「OH!News 认知闭环情报终端」——报纸风浅色 UI，主路径 = 发现变化 → 检验证据 → 形成判断 → 持续追踪（NOW → INVESTIGATE/observe → WATCH → MEMORY/archive）。工程里程碑 M1（契约层）→ M2（情报管道）→ M3（语义栈）→ M5（Agent 工程：langgraph 四图 + 18 元素拆解 + 六型报告 + 跟踪预警统一 + 三档案库 + 跨语言整合 + parent 总控）→ M6（收官 demo）均落库。历史过程文档（BLUEPRINT/REDESIGN/REFACTOR_V2/PRODUCT_AUDIT/FEATURE_PLAN_M5/HANDOVER_M2）已迁出至 `../OHnews_backup_20260909/docs_migrated/`（备注见该目录 MIGRATION_NOTES.md）。本文件保留作架构与数据模型真源；运行与演示说明见 README.md / README.zh.md。
+
 > 真源链：BLUEPRINT.md（v2 架构裁决）→ REDESIGN.md/REDESIGN_AGENT.md（v3 产品与 Agent）→ **本文件（v4 情报本体重构）**。
 > 执行约束：Ontology → Data model → Evidence model → Pipeline → IA → Interaction → UI。禁止为美学改 UI；每个组件必须回答「回答什么问题/代表什么情报对象/数据从哪来/证据是什么/下一步动作」。
 
