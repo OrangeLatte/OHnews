@@ -103,6 +103,7 @@ def build_emotion_density(
     d = max(1, min(days, 120))
     lo = now - timedelta(days=d)
     sums: dict[str, dict[str, float]] = defaultdict(dict)
+    counts: dict[str, dict[str, int]] = defaultdict(dict)
     for ann in annotations:
         ts_raw = ann.get("annotated_at")
         if not ts_raw:
@@ -124,11 +125,49 @@ def build_emotion_density(
         for k, v in expressed.items():
             if k in EMOTION_KEYS and isinstance(v, (int, float)):
                 agg[k] = agg.get(k, 0.0) + float(v)
+                day_counts = counts[day]
+                day_counts[k] = day_counts.get(k, 0) + 1
+    # 日期连续化（用户反馈：缺测日在图上被压缩导致日期轴错位）——
+    # 窗口内每日都产出点位，无标注日各情绪键为 None（前端跳线留白，日期对齐日历）。
     out: list[dict[str, Any]] = []
-    for day, agg in sorted(sums.items()):
-        n = max(1, len(agg))
-        out.append({"date": day, **{k: round(v / n, 4) for k, v in agg.items()}})
-    return out
+    seen = {day: agg for day, agg in sums.items()}
+    cur = (now - timedelta(days=d)).date()
+    end = now.date()
+    while cur <= end:
+        day = cur.isoformat()
+        agg = seen.get(day)
+        if agg is None:
+            out.append({"date": day, **{k: None for k in EMOTION_KEYS}})
+        else:
+            out.append(
+                {
+                    "date": day,
+                    **{k: round(v / max(1, counts[day].get(k, 0)), 4) for k, v in agg.items()},
+                }
+            )
+        cur += timedelta(days=1)
+    # 缺测日补值（用户裁决：不留白断线）——上一有效值 carry-forward；
+    # 窗口开头的缺口用下一有效值回填；全窗无读数的键保持 None（诚实）。
+    filled: list[dict[str, Any]] = []
+    last: dict[str, float] = {}
+    for row in out:
+        r = dict(row)
+        for k in EMOTION_KEYS:
+            v = r.get(k)
+            if v is None and k in last:
+                r[k] = last[k]
+            elif v is not None:
+                last[k] = v
+        filled.append(r)
+    nxt: dict[str, float] = {}
+    for row in reversed(filled):
+        for k in EMOTION_KEYS:
+            v = row.get(k)
+            if v is None and k in nxt:
+                row[k] = nxt[k]
+            elif v is not None:
+                nxt[k] = v
+    return filled
 
 
 __all__ = ["EMOTION_KEYS", "build_emotion_density", "build_flow_daily", "build_ndi_rank"]

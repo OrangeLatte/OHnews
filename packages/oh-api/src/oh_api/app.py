@@ -14,7 +14,8 @@ import re
 import threading
 from collections import Counter, defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from contextlib import asynccontextmanager
+from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -132,6 +133,31 @@ class AppPaths:
     now_fn: Any = None  # () -> datetime；None = datetime.now(UTC)
 
 
+class SourceDiscoveryOutput(BaseModel):
+    """Agent 对 URL 的可注册建议；注册仍必须经过用户确认。"""
+
+    source_id: str = Field(pattern=r"^[a-z0-9_-]{2,40}$")
+    adapter: Literal["rss", "json_api", "html", "browser"]
+    tier: Literal["L1", "L2", "L3", "L4"]
+    language: str = Field(pattern=r"^[a-z]{2,8}$")
+    source_subject: str = Field(min_length=1, max_length=160)
+    method: str = Field(min_length=1, max_length=240)
+    expected_frequency: str = Field(min_length=1, max_length=80)
+    rationale: str = Field(min_length=1, max_length=500)
+    caveats: list[str] = Field(default_factory=list, max_length=5)
+    confidence: float = Field(ge=0, le=1)
+
+
+class MonitorAnalysisOutput(BaseModel):
+    """监测增量的结构化分析；只允许基于 update 与引用文章。"""
+
+    executive_summary: str = Field(min_length=1, max_length=700)
+    what_changed: list[str] = Field(default_factory=list, max_length=5)
+    evidence_assessment: list[str] = Field(default_factory=list, max_length=5)
+    uncertainties: list[str] = Field(default_factory=list, max_length=5)
+    recommended_review: str = Field(min_length=1, max_length=400)
+
+
 def _load_tier_map(path: Path) -> dict[str, SourceTier]:
     if not path.exists():
         return {}
@@ -197,7 +223,23 @@ class _WatchLike:
 
 def create_app(paths: AppPaths | None = None) -> FastAPI:
     paths = paths or AppPaths()
-    app = FastAPI(title="OH!News API", version="0.1.0")
+    from oh_api.ingestion import Ingestion, build_ingestion_router
+
+    ingestion = Ingestion(paths.root, paths.sources_yaml)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if os.getenv("OHNEWS_SCHEDULER", "1") == "1":
+            ingestion.start()
+        try:
+            yield
+        finally:
+            ingestion.stop.set()
+            if ingestion.thread:
+                await asyncio.to_thread(ingestion.thread.join, 8)
+
+    app = FastAPI(title="OH!News API", version="0.1.0", lifespan=lifespan)
+    app.include_router(build_ingestion_router(ingestion))
 
     # 惰性单例（lifespan 不持有 IO）。
     # thread-local：FastAPI sync 端点在线程池执行，sqlite 连接禁止跨线程复用
@@ -576,7 +618,8 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             {
                 "item_key": item_key,
                 "title": str((rec.normalized or {}).get("title") or ""),
-                "text": text[:2500],
+                # 全文传图（agent 内部按句界分块，spans 覆盖全文）；20000 防极端超长
+                "text": text[:20000],
                 "language": str((rec.normalized or {}).get("language") or ""),
                 "hints": json.dumps(hint, ensure_ascii=False)[:1500],
             }
@@ -956,6 +999,57 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         return build_emotion_density(
             _store().annotations_asof(_now()), now=_now(), days=max(1, min(days, 120))
         )
+
+    @app.get("/api/annotations/actions")
+    def annotations_actions(days: int = 30) -> dict[str, Any]:
+        """动作脉冲：按文章发布时间聚合词典 SRL action，绝不把它伪装成情绪。"""
+        now = _now()
+        since = now - timedelta(days=max(1, min(days, 120)))
+        daily: Counter[str] = Counter()
+        directions: Counter[str] = Counter()
+        evidence: dict[str, list[dict[str, str]]] = defaultdict(list)
+        registry = EntityRegistry()
+        for rec in _bronze().iter_records():
+            raw_ts = (rec.normalized or {}).get("published_at") or rec.published_at
+            try:
+                ts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            if not since <= ts <= now:
+                continue
+            body = strip_html(str((rec.normalized or {}).get("body") or ""))[:6000]
+            actions = [a for sent in parse_passage(body, registry) for a in sent.get("actions", [])]
+            if not actions:
+                continue
+            day = ts.date().isoformat()
+            daily[day] += len(actions)
+            for action in actions:
+                direction = str(action.get("direction") or "unknown")
+                directions[direction] += 1
+                if len(evidence[direction]) < 3:
+                    evidence[direction].append(
+                        {
+                            "item_key": rec.item_key,
+                            "title": str((rec.normalized or {}).get("title") or "")[:140],
+                        }
+                    )
+        # 每日连续化（用户要求：窗口内每天都要有可视化呈现；无动作日 count=0 基线柱）
+        cur = (now - timedelta(days=max(1, min(days, 120)))).date()
+        end = now.date()
+        filled: list[dict[str, Any]] = []
+        while cur <= end:
+            day = cur.isoformat()
+            filled.append({"date": day, "count": daily.get(day, 0)})
+            cur += timedelta(days=1)
+        return {
+            "daily": filled,
+            "top_actions": [
+                {"action": k, "count": v, "evidence": evidence[k]}
+                for k, v in directions.most_common(8)
+            ],
+        }
 
     @app.get("/api/change-field", response_model=ChangeFieldPayload)
     def change_field(days: int = 30) -> ChangeFieldPayload:
@@ -1748,11 +1842,103 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             rows = [r for r in rows if q.lower() in str(r["source_id"]).lower()]
         return {"n": len(rows), "sources": rows}
 
-    @app.post("/api/sources/suggest")
-    def source_suggest(body: dict[str, Any]) -> dict[str, Any]:
-        """C2：URL → 信源注册建议（确定性启发式，无 LLM 依赖）。
+    @app.post("/api/monitors/updates/{update_id}/analysis")
+    async def monitor_update_analysis(update_id: str) -> dict[str, Any]:
+        """按需生成 MonitorUpdate 的 Agent 分析，严格限定于本次增量证据。
 
-        用户确认后走 POST /api/sources 落库；本端点只读不写。
+        只读产物不会替用户 accept/ignore 更新或创建 Case；模型不可用时返回同形
+        规则摘要，并明确 engine=offline，保证用户仍可完成证据复核。
+        """
+        update = _research().get_update(update_id)
+        if update is None:
+            raise HTTPException(404, f"monitor update not found: {update_id}")
+        monitor = _research().get_monitor(update.monitor_id)
+        refs = set(update.evidence_refs)
+        evidence: list[dict[str, str]] = []
+        for rec in _bronze().iter_records():
+            if rec.item_key not in refs:
+                continue
+            normalized = rec.normalized or {}
+            evidence.append(
+                {
+                    "item_key": rec.item_key,
+                    "source_id": rec.source_id,
+                    "title": str(normalized.get("title") or ""),
+                    "excerpt": _strip_tags(str(normalized.get("body") or ""))[:420],
+                }
+            )
+            if len(evidence) >= 10:
+                break
+        delta = update.delta if isinstance(update.delta, dict) else {}
+        fallback = {
+            "executive_summary": update.summary,
+            "what_changed": [
+                f"新增相关文档：{delta.get('new_articles', '—')}",
+                f"窗口内总命中：{delta.get('total_hits', '—')}",
+            ],
+            "evidence_assessment": [
+                f"本次可复核证据：{len(evidence)} 条引用（最多展示 10 条）",
+                "该摘要未比较全文立场；请在创建或加入 Case 前打开原文核对。",
+            ],
+            "uncertainties": [
+                "监测命中是关键词相关性，不等同于事实确认或因果结论。",
+                "未确认快照前，新增量不应作为已采纳判断。",
+            ],
+            "recommended_review": "先核对证据来源与原文，再选择新建 Case、加入已有 Case 或忽略。",
+        }
+        llm = _chat_router()
+        if llm is None:
+            return {"engine": "offline", "status": "abstained", "analysis": fallback}
+        system = (
+            "你是 OH!News 跟踪预警分析师。只能依据提供的 Monitor 增量与原文摘录分析，"
+            "禁止编造外部事实、禁止把关键词命中写成事实确认或预测。明确证据不足、样本限制，"
+            "最后仅给出人工复核建议，不得自动决定写入操作。"
+        )
+        user = json.dumps(
+            {
+                "monitor": {
+                    "question": monitor.question if monitor else "",
+                    "target": monitor.target_ref if monitor else "",
+                    "window": monitor.window if monitor else "",
+                },
+                "update": {
+                    "summary": update.summary,
+                    "delta": delta,
+                    "evidence_refs": update.evidence_refs,
+                },
+                "evidence": evidence,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            async with asyncio.timeout(90.0):
+                analysis, ref, usage = await llm.invoke(
+                    Tier.EXECUTE, system, user, MonitorAnalysisOutput
+                )
+            return {
+                "engine": "llm",
+                "status": "succeeded",
+                "model_hint": f"{ref.provider}/{ref.model_id}",
+                # Router Usage is a frozen dataclass, not a Pydantic model.
+                # Keep telemetry serialization from turning a successful model
+                # response into an apparent offline fallback.
+                "usage": asdict(usage) if usage else None,
+                "analysis": analysis.model_dump(),
+            }
+        except Exception as exc:  # noqa: BLE001 - 同形离线分析，但不伪装模型成功
+            return {
+                "engine": "offline",
+                "status": "abstained",
+                "error": str(exc) or type(exc).__name__,
+                "analysis": fallback,
+            }
+
+    @app.post("/api/sources/suggest")
+    async def source_suggest(body: dict[str, Any]) -> dict[str, Any]:
+        """URL → Agent 信源建议 → HITL 注册。
+
+        Agent 只提出主体、语言、适配器和采集频率；不声称已访问 URL，也不静默注册。
+        模型不可用/超时时保留可审计的规则建议，而非伪装为 AI 结果。
         """
         url = str(body.get("url") or "").strip()
         if not url.startswith(("http://", "https://")):
@@ -1794,26 +1980,76 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             if kind == "rss"
             else "需渲染抓取；尊重 robots.txt 与访问限制，超时退避"
         )
-        return {
-            "url": url,
-            "suggestion": {
-                "source_id": core,
-                "adapter": kind,
-                "tier": tier,
-                "language": language,
-                "params": {"url": url},
-            },
-            "rationale": "启发式建议（主机名/路径/域名后缀推断），注册前请人工确认等级与语言",
-            "preview": {
-                "subject": f"识别主体：{host}（建议 id：{core}）",
-                "method": f"采集方法：{method_map[kind]}",
-                "expected_frequency": f"预计频率：{freq_map[kind]}（可调整）",
-                "robots_policy": f"访问限制：{robots}",
-                "dedupe_strategy": "去重策略：item_key = 规范化 URL + 发布方 + 发布时间",
-                "ingest_plan": "落库方案：bronze parquet（raw+normalized）"
-                "→ silver 标注管线异步处理",
-            },
+        heuristic = {
+            "source_id": core,
+            "adapter": kind,
+            "tier": tier,
+            "language": language,
+            "params": {"url": url},
         }
+        preview = {
+            "subject": f"识别主体：{host}（建议 id：{core}）",
+            "method": f"采集方法：{method_map[kind]}",
+            "expected_frequency": f"预计频率：{freq_map[kind]}（可调整）",
+            "robots_policy": f"访问限制：{robots}",
+            "dedupe_strategy": "去重策略：item_key = 规范化 URL + 发布方 + 发布时间",
+            "ingest_plan": "落库方案：bronze parquet（raw+normalized）→ silver 标注管线异步处理",
+        }
+        result: dict[str, Any] = {
+            "url": url,
+            "suggestion": heuristic,
+            "rationale": "启发式建议（主机名/路径/域名后缀推断），注册前请人工确认等级与语言",
+            "preview": preview,
+            "engine": "rule",
+            "agent_status": "abstained",
+        }
+        llm = _chat_router()
+        if llm is None:
+            result["agent_error"] = "LLM 未配置；已返回规则建议，需人工复核。"
+            return result
+        system = (
+            "你是新闻情报平台的信源接入分析师。仅根据 URL 与规则初判输出保守建议。"
+            "不得声称已访问 URL、不得绕过 robots.txt；不确定时使用 html，并在 caveats 说明。"
+            "所有注册必须由用户确认。"
+        )
+        user = (
+            f"URL: {url}\n规则初判: {json.dumps(heuristic, ensure_ascii=False)}\n"
+            "请识别信源主体、adapter、tier、语言、建议频率、理由与风险。"
+        )
+        try:
+            async with asyncio.timeout(45.0):
+                discovered, ref, usage = await llm.invoke(
+                    Tier.EXECUTE, system, user, SourceDiscoveryOutput
+                )
+            data = discovered.model_dump()
+            result.update(
+                {
+                    "suggestion": {
+                        "source_id": data["source_id"],
+                        "adapter": data["adapter"],
+                        "tier": data["tier"],
+                        "language": data["language"],
+                        "params": {"url": url},
+                    },
+                    "rationale": data["rationale"],
+                    "preview": {
+                        **preview,
+                        "subject": f"识别主体：{data['source_subject']}",
+                        "method": f"采集方法：{data['method']}",
+                        "expected_frequency": f"预计频率：{data['expected_frequency']}",
+                        "agent_caveats": "风险提示："
+                        + ("；".join(data["caveats"]) or "需人工复核"),
+                    },
+                    "engine": "llm",
+                    "agent_status": "succeeded",
+                    "model_hint": f"{ref.provider}/{ref.model_id}",
+                    "confidence": data["confidence"],
+                    "usage": asdict(usage) if usage else None,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - 降级必须显式
+            result["agent_error"] = str(exc) or type(exc).__name__
+        return result
 
     @app.post("/api/sources")
     def source_register(body: dict[str, Any]) -> dict[str, Any]:

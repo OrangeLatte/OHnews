@@ -789,9 +789,18 @@ def build_change_field(
         lane = _LANE_BY_TIER.get(str(tier) if tier else "", "unknown")
         lane_map = buckets.setdefault(day, {})
         lane_map.setdefault(lane, Counter())[str(r.frame)] += 1
+    # 逐日连续化（T8 v2）：窗口内每天输出点位，缺测日 lanes 为空（前端占位），
+    # 保证横轴以天为维度且与日历对齐（m2587 反馈：每天都要有数据可视化呈现）。
+    cal_days = {
+        (lo + timedelta(days=i)).date().isoformat() for i in range(d + 1)
+    }
+    all_days = sorted(set(buckets) | cal_days)
     series = [
-        ChangeFieldPoint(date=day, lanes={k: dict(c) for k, c in lane_map.items()})
-        for day, lane_map in sorted(buckets.items())
+        ChangeFieldPoint(
+            date=day,
+            lanes={k: dict(c) for k, c in buckets.get(day, {}).items()},
+        )
+        for day in all_days
     ]
     return ChangeFieldPayload(
         days=d,

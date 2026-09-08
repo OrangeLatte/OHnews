@@ -88,8 +88,12 @@ def test_emotion_density_daily_mean() -> None:
         },
     ]
     rows = build_emotion_density(anns, now=NOW, days=7)
-    assert len(rows) == 1
+    # 日期连续化 + 缺测日 carry-forward：全部 8 天都有值（唯一有效值前后填充）
+    assert len(rows) == 8
+    assert all(r["fear"] is not None for r in rows)
+    assert all(abs(r["fear"] - 0.3) < 1e-6 for r in rows)
     d1 = rows[0]
     # fear 均值 = (0.5+0.1)/2
     assert abs(d1["fear"] - 0.3) < 1e-6
-    assert "optimism" in d1 and "bogus" not in d1
+    # optimism 只有一篇文档出现，不应被当天其它情绪键错误稀释。
+    assert abs(d1["optimism"] - 0.2) < 1e-6 and "bogus" not in d1
