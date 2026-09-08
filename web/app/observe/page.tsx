@@ -422,6 +422,7 @@ export default function ObservePage() {
   const tierGroups = useMemo(() => {
     const m = new Map<string, SourceRow[]>();
     for (const s of sources ?? []) {
+      if ((s.n_7d ?? 0) <= 0) continue; // demo 裁剪：零产出源不进目录
       const arr = m.get(s.tier) ?? [];
       arr.push(s);
       m.set(s.tier, arr);
