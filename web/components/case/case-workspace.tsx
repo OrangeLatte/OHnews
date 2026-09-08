@@ -95,6 +95,7 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
   const [busy, setBusy] = useState(false);
   const [activeDoc, setActiveDoc] = useState<string | null>(null);
   const [dissecting, setDissecting] = useState<string | null>(null);
+  const [dissectError, setDissectError] = useState<{ rid: string; error: string } | null>(null);
   const [cmpOut, setCmpOut] = useState<WorkflowOut | null>(null);
   const [reportOut, setReportOut] = useState<WorkflowOut | null>(null);
   // R6 ?claim= 深链：读一次保留（URL 不清除），透传 HistoryView 高亮主张卡
@@ -275,9 +276,12 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
         setEx((p) => ({ ...p, [rid]: rows }));
         const status = out.output?.status ?? out.status;
         if (status === "succeeded") {
+          setDissectError(null);
           toast.success(`${t("case.dissectDone")} · n=${out.output?.n_elements ?? rows.length}`);
         } else {
-          toast.info(`${t("case.status")}: ${status}${out.error ? ` · ${out.error}` : ""}`);
+          const msg = out.error || status;
+          setDissectError({ rid, error: msg });
+          toast.info(`${t("case.dissectFailed")}: ${msg}`);
         }
       })
       .catch((err: unknown) =>
@@ -442,6 +446,7 @@ export default function CaseWorkspace({ caseId }: { caseId: string }) {
           initialSpan={initialSpan}
           busy={roBusy}
           dissecting={dissecting}
+          lastDissectError={dissectError}
           onDissect={runDissect}
           onReview={reviewExtraction}
           reloadDocs={reloadDocs}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useT } from "@/lib/i18n/use-t";
 
 // 18 元素闭集色板（snake_case，与 DB element_key 一一对应；顺序即拆解展示序）。
@@ -11,6 +11,7 @@ import {
   elementEdge,
   elementShape,
   elementShort,
+  elementZh,
 } from "@/lib/element-tokens";
 
 /** 兼容导出：底色真源在 lib/element-tokens（bg/edge/short/shape 三层辨识）。 */
@@ -54,7 +55,7 @@ type Props = {
   activeExtractionId?: string | null;
 };
 
-type Segment = { text: string; span: AnnoSpan | null };
+type Segment = { text: string; spans: AnnoSpan[] };
 
 function classRank(elementKey: string): number {
   if (FACT_CLASS_KEYS.has(elementKey)) return 0;
@@ -110,16 +111,11 @@ function buildSegments(
   for (let i = 0; i < points.length - 1; i += 1) {
     const a = points[i];
     const b = points[i + 1];
-    // 重叠归属：覆盖该段的候选 span 中取 compareSpans 全序最小者（见其注释）。
-    let cover: AnnoSpan | null = null;
-    for (const s of valid) {
-      if (s.char_start <= a && b <= s.char_end) {
-        if (!cover || compareSpans(s, cover, activeExtractionId) < 0) {
-          cover = s;
-        }
-      }
-    }
-    segments.push({ text: text.slice(a, b), span: cover });
+    // 交叠渲染：保留覆盖该段的全部候选（compareSpans 排序，短/事实优先在前），
+    // 渲染层按此序嵌套高亮——同段多元素并见，不再单元素覆盖（m2587 问题 2）。
+    const covers = valid.filter((s) => s.char_start <= a && b <= s.char_end);
+    covers.sort((x, y) => compareSpans(x, y, activeExtractionId));
+    segments.push({ text: text.slice(a, b), spans: covers });
   }
   return segments.filter((seg) => seg.text.length > 0);
 }
@@ -132,17 +128,26 @@ export function AnnotatedText({
   activeExtractionId,
 }: Props) {
   const t = useT();
+  // 点击浮窗（m2826）：显示元素种类人话名称；点空白/再点关闭。
+  const [pop, setPop] = useState<{ x: number; y: number; key: string } | null>(null);
+  useEffect(() => {
+    if (!pop) return;
+    const close = () => setPop(null);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [pop]);
   const segments = useMemo(
     () => buildSegments(text, spans, activeExtractionId),
     [text, spans, activeExtractionId],
   );
   if (!text) return null;
   const annotated = spans.length > 0;
+  const clampX = Math.min(Math.max(pop?.x ?? 0, 8), (typeof window !== "undefined" ? window.innerWidth : 1280) - 230);
   return (
     // min-w-0 + overflow-wrap:anywhere：390px 下长行/长 token 允许任意断行（继承至 mark 子元素）
     <div className="min-w-0 whitespace-pre-wrap text-sm leading-7 [overflow-wrap:anywhere]">
       {segments.map((seg, i) => {
-        if (!seg.span) {
+        if (seg.spans.length === 0) {
           if (!annotated) return <span key={i}>{seg.text}</span>;
           return (
             <span
@@ -154,39 +159,63 @@ export function AnnotatedText({
             </span>
           );
         }
-        const color = ELEMENT_COLORS[seg.span.element_key] ?? "#fef9c3";
-        const edge = elementEdge(seg.span.element_key);
-        const shape = elementShape(seg.span.element_key);
-        const flashed = highlightSpanId != null && seg.span.span_id === highlightSpanId;
+        // 单层高亮（m2826）：每段取 compareSpans 首位（选中/事实/更短最精确）单一归属，
+        // 不再嵌套叠加；点击弹浮窗显示元素种类。
+        const sp = seg.spans[0];
+        const color = ELEMENT_COLORS[sp.element_key] ?? "#fef9c3";
+        const edge = elementEdge(sp.element_key);
+        const shape = elementShape(sp.element_key);
+        const flashed = highlightSpanId != null && sp.span_id === highlightSpanId;
         return (
-          <mark
-            key={i}
-            // tooltip 与元素卡 element_key 同一数据源（AnnoSpan.element_key），保证完全一致
-            title={seg.span.element_key}
-            onClick={() => onSpanClick?.(seg.span!.element_key)}
-            data-span-id={seg.span.span_id}
-            data-element={seg.span.element_key}
-            style={{
-              backgroundColor: color,
-              cursor: onSpanClick ? "pointer" : "default",
-              border: `1px solid ${edge}`,
-              ...(shape === "underline"
-                ? {
-                    textDecoration: "underline",
-                    textDecorationThickness: "2px",
-                    textUnderlineOffset: "2px",
-                  }
-                : {}),
-              ...(shape === "leftbar" ? { borderLeft: `3px solid ${edge}`, paddingLeft: 2 } : {}),
-            }}
-            className={`rounded px-0.5 transition-opacity hover:opacity-80 ${
-              flashed ? "ring-2 ring-sky-500 ring-offset-1" : ""
-            }`}
-          >
-            {seg.text}
-          </mark>
+          <span key={i}>
+            <mark
+              onClick={(e) => {
+                e.stopPropagation();
+                setPop({ x: e.clientX, y: e.clientY, key: sp.element_key });
+                onSpanClick?.(sp.element_key);
+              }}
+              data-span-id={sp.span_id}
+              data-element={sp.element_key}
+              style={{
+                backgroundColor: color,
+                cursor: onSpanClick ? "pointer" : "default",
+                border: `1px solid ${edge}`,
+                ...(shape === "underline"
+                  ? {
+                      textDecoration: "underline",
+                      textDecorationThickness: "2px",
+                      textUnderlineOffset: "2px",
+                    }
+                  : {}),
+                ...(shape === "leftbar" ? { borderLeft: `3px solid ${edge}`, paddingLeft: 2 } : {}),
+              }}
+              className={`rounded px-0.5 transition-opacity hover:opacity-80 ${
+                flashed ? "ring-2 ring-sky-500 ring-offset-1" : ""
+              }`}
+            >
+              {seg.text}
+            </mark>
+          </span>
         );
       })}
+      {pop && (
+        <div
+          role="status"
+          className="fixed z-50 max-w-52 rounded border border-[var(--border)] bg-background px-2.5 py-1.5 text-xs shadow-md"
+          style={{ left: clampX, top: (pop.y ?? 0) + 14 }}
+          onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
+        >
+          <span className="inline-flex items-center gap-1.5 font-medium">
+            <span
+              aria-hidden
+              className="inline-block h-2.5 w-2.5 rounded-sm"
+              style={{ backgroundColor: ELEMENT_COLORS[pop.key] ?? "#fef9c3", border: `1px solid ${elementEdge(pop.key)}` }}
+            />
+            {elementZh(pop.key)}
+          </span>
+          <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">{pop.key}</span>
+        </div>
+      )}
       {annotated && (
         <div className="mt-3 space-y-1 border-t pt-2 text-xs text-muted-foreground">
           <p className="flex flex-wrap gap-1.5">

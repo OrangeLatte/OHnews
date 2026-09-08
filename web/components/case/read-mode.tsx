@@ -59,6 +59,7 @@ type Props = {
   initialSpan?: string;
   busy: boolean;
   dissecting: string | null;
+  lastDissectError?: { rid: string; error: string } | null;
   onDissect: (rid: string) => void;
   onReview: (extractionId: string, status: "confirmed" | "rejected") => void;
   reloadDocs: () => Promise<DocRow[]>;
@@ -75,6 +76,7 @@ export default function ReadMode({
   initialSpan,
   busy,
   dissecting,
+  lastDissectError,
   onDissect,
   onReview,
   reloadDocs,
@@ -369,6 +371,11 @@ export default function ReadMode({
                     >
                       {dissecting === activeRow.document_revision_id ? t("case.dissecting") : t("case.dissect")}
                     </button>
+                    {lastDissectError && lastDissectError.rid === activeRow.document_revision_id ? (
+                      <p className="w-full text-xs text-destructive">
+                        {t("case.dissectFailed")}: {lastDissectError.error}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
                 {dissectingActive ? (

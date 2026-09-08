@@ -73,3 +73,29 @@ export const SHAPE_GLYPH: Record<ElementShape, string> = {
   outline: "◇",
   plain: "●",
 };
+
+/** 18 元素中文名（浮窗/图例人话展示；顺序与契约 ELEMENT_KEYS 一致）。 */
+export const ELEMENT_ZH: Record<string, string> = {
+  actor: "主体",
+  target: "客体",
+  stakeholder: "利益相关方",
+  hard_fact: "核心事实",
+  quant_data: "硬核数据",
+  data_scope: "数据定义域",
+  action: "核心动作",
+  causal_link: "因果链",
+  timeline: "时间线",
+  perspective: "叙事视角",
+  explicit_stance: "显性立场",
+  implicit_bias: "隐性倾向",
+  tone: "情绪基调",
+  diction: "修辞用词",
+  source_reliability: "信源属性",
+  argument_structure: "论证逻辑",
+  intent: "发布动机",
+  context: "背景",
+};
+
+export function elementZh(key: string): string {
+  return ELEMENT_ZH[key] ?? key;
+}
