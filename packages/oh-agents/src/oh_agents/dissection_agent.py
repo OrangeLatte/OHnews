@@ -3,8 +3,13 @@
 流程（langgraph）：hints（词典层标注锚） → llm（Tier.EXECUTE 结构化输出） →
 persist（article_dissections，engine=llm/model_hint 溯源）。
 
-降级语义：LLM 全候选失败 → offline 兜底（调用方注入的词典 fallback elements，
-engine=offline 诚实标注——不冒充 LLM 产物）。缓存幂等由 API 层负责。
+长文分块：llm 节点把全文按句界切成 ≤1800 字符的块，逐块调 LLM（块内偏移
+标 spans），合并时把块内坐标平移块 offset 映射为全文坐标——无论文章多长，
+元素与 spans 标注完整覆盖全文，单块超时/失败只丢该块（记 errors）不整体失败。
+
+降级语义：全部块 LLM 失败 → offline 兜底（调用方注入的词典 fallback elements，
+engine=offline 诚实标注——不冒充 LLM 产物）；部分块失败 → engine=llm（部分
+成功是真实状态），缺块信息落 errors。缓存幂等由 API 层负责。
 依赖（router/store/fallback/now）通过 build 参数闭包注入，不进 State。
 """
 
@@ -14,14 +19,24 @@ import operator
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
-from oh_contracts.dissection import ELEMENT_KEYS, ArticleDissection, DissectionElement
+from oh_contracts.dissection import (
+    ELEMENT_KEYS,
+    ArticleDissection,
+    DissectionElement,
+    DissectionSpan,
+)
 from oh_contracts.enums import Tier
 from pydantic import BaseModel, field_validator, model_validator
 
 from .agent_base import AgentSessions, make_checkpointer, output_language_line
 
-# 拆解 prompt 版本（纪律改动须同步递增；run output 双写供审计）
-DISSECT_PROMPT_VERSION = "dissect-v2"
+# 拆解 prompt 版本（纪律改动须同步递增；run output 双写供审计）。
+# v3：长文分块拆解——user prompt 注入块序号/字符区间，spans 用块内偏移；
+# system prompt 注明块内坐标纪律。
+DISSECT_PROMPT_VERSION = "dissect-v5"
+
+_CHUNK_SIZE = 1800  # 单块字符上限：确保单块输出窗口装得下全部元素+spans 标注
+_SENTENCE_BOUNDARIES = "。！？!?\n"
 
 _DISSECT_SYSTEM = (
     "你是新闻拆解专家。对给定文章做结构化拆解，仅输出 JSON。"
@@ -47,6 +62,17 @@ _DISSECT_SYSTEM = (
     "argument_structure 等需要归纳或串联的元素上限 0.85；intent/perspective/implicit_bias/"
     "tone/diction 等纯分析判断上限 0.75；≤0.5 为证据不足或需外部知识的判断。"
     "对任何元素输出 1.0 前自问：原文是否逐字可引？若含一点改写即降档。禁止对推断类元素输出 1.0。"
+    "长文分块纪律：user 消息的正文是全文的一个连续块（注明块序号与字符区间），"
+    "只分析本块内容，spans 用块内偏移（0 起算，服务端统一映射为全文坐标），"
+    "quote 仍须逐字来自本块；本块没有依据的元素直接省略。"
+    "多语言细粒度纪律（v4）：文章可能是 en/zh/fr/es/de/ar 等任意语言，"
+    "按文章实际语言理解与输出（content 用文章主要语言）。"
+    "一句话/一段话常同时包含多种元素（如事实中嵌主体与意图）——交叠标注："
+    "同一文本区间必须分别给出各元素的独立 spans（短元素嵌在长元素内），"
+    "严禁用一个元素的大段覆盖吞掉其它元素；每个元素 spans 尽量分散多点，"
+    "避免集中单点；无法定位的元素宁可省略 spans 交给系统回填，也不要编造偏移。"
+    "span 长度纪律（v5）：每个 span 不超过 120 字符——宁短勿长，只锚定该元素最核心的"
+    "词句；严禁把整段或整句标为单一元素；内容较长时拆成多个短 spans 分布在相关位置。"
 )
 
 
@@ -87,6 +113,57 @@ class DissectionOutputP(BaseModel):
         return self
 
 
+def _chunk_text(text: str, size: int = _CHUNK_SIZE) -> list[tuple[int, str]]:
+    """全文 → [(offset, chunk)]：按句界回退切分，块拼接恰为原文。
+
+    - len(text) ≤ size（含空文本）→ 单块 [(0, text)]；
+    - 优先在窗口内最后一个句界字符之后断开（句界字符归前块）；
+    - 数字夹住的小数点（如 3.14 的 .）不作句界，防数值被切断；
+    - 窗口内无句界 → 硬切（无标点超长段仍保证覆盖全文）。
+    不变量："".join(c for _, c in out) == text，offset 单调递增无缝衔接。
+    """
+    if len(text) <= size:
+        return [(0, text)]
+    out: list[tuple[int, str]] = []
+    cursor, n = 0, len(text)
+    while cursor < n:
+        end = min(cursor + size, n)
+        if end == n:
+            out.append((cursor, text[cursor:]))
+            break
+        cut = 0
+        for i in range(end - 1, cursor, -1):
+            ch = text[i]
+            if ch not in _SENTENCE_BOUNDARIES:
+                continue
+            if ch == "." and text[i - 1].isdigit() and text[i + 1].isdigit():
+                continue  # 小数点不作句界
+            cut = i + 1
+            break
+        if not cut:
+            cut = end  # 无句界 → 硬切
+        out.append((cursor, text[cursor:cut]))
+        cursor = cut
+    return out
+
+
+def _map_element_spans(el: DissectionElement, offset: int) -> DissectionElement:
+    """块内 span 坐标 → 全文坐标：start/end 平移块 offset（quote 原样保留）。
+
+    平移保持 end>start 不变，无需重校验；无 spans 或 offset=0 时原样返回。
+    """
+    if not el.spans or offset == 0:
+        return el
+    return el.model_copy(
+        update={
+            "spans": [
+                s.model_copy(update={"start": s.start + offset, "end": s.end + offset})
+                for s in el.spans
+            ]
+        }
+    )
+
+
 class DissectionState(TypedDict, total=False):
     item_key: str
     title: str
@@ -112,7 +189,10 @@ def build_dissection_graph(
     sessions: AgentSessions | None = None,
     llm_timeout: float = 90.0,
 ):
-    """组装拆解图；router/store/兜底元素工厂/时钟均闭包注入。"""
+    """组装拆解图；router/store/兜底元素工厂/时钟均闭包注入。
+
+    llm_timeout 为每块超时（长文逐块调用，单块超时只丢该块不整体失败）。
+    """
 
     async def hints_node(state: DissectionState) -> dict[str, Any]:
         if not state.get("hints"):
@@ -122,36 +202,87 @@ def build_dissection_graph(
     async def llm_node(state: DissectionState) -> dict[str, Any]:
         if router is None:
             return {"errors": ["llm_unavailable: router 未配置"], "llm_failed": "router 未配置"}
-        user = (
-            f"标题：{state.get('title', '')}\n语言：{state.get('language', '')}\n"
-            f"本文档发布方（publisher，来自信源注册目录，不可质疑）："
-            f"{state.get('publisher') or '（未注册，按 unknown 处理，禁止臆测）'}\n"
-            f"词典标注锚：{state.get('hints', '')}\n正文：\n{state.get('text', '')}"
-        )
+        chunks = _chunk_text(state.get("text", ""))
+        total = len(chunks)
         # analysis_locale 显式指定时约束输出语言；空则维持默认（不追加）
         lang_line = output_language_line(state.get("analysis_locale", ""))
-        if lang_line:
-            user = f"{user}\n{lang_line}"
-        user = f"{user}\n（Prompt 版本：{DISSECT_PROMPT_VERSION}）"
-        try:
-            async with asyncio.timeout(llm_timeout):
-                parsed, ref, usage = await router.invoke(
-                    Tier.EXECUTE, _DISSECT_SYSTEM, user, DissectionOutputP
-                )
-        except Exception as exc:  # noqa: BLE001 —— 根因落 errors，persist 降级 offline
-            msg = str(exc) or type(exc).__name__
-            return {"errors": [f"llm_failed: {msg}"], "llm_failed": msg}
+        merged: list[DissectionElement] = []
+        seen: set[tuple[str, str]] = set()  # (element, content) 跨块精确重复去重
+        model_hint = ""
+        usage_agg: dict[str, Any] = {}
+        chunk_errors: list[str] = []
+        sem = asyncio.Semaphore(3)  # 并发 3：防限流，12 块 ~4 批
+
+        async def _one(idx: int, offset: int, chunk: str) -> dict[str, Any]:
+            user = (
+                f"标题：{state.get('title', '')}\n文章语言：{state.get('language') or 'unknown'}\n"
+                f"本文档发布方（publisher，来自信源注册目录，不可质疑）："
+                f"{state.get('publisher') or '（未注册，按 unknown 处理，禁止臆测）'}\n"
+                f"词典标注锚：{state.get('hints', '')}\n"
+                f"本块为全文第 {idx}/{total} 块，字符区间 [{offset}, {offset + len(chunk)})；"
+                f"spans 用块内偏移（0 起算），服务端负责映射为全文坐标。\n正文：\n{chunk}"
+            )
+            if lang_line:
+                user = f"{user}\n{lang_line}"
+            user = f"{user}\n（Prompt 版本：{DISSECT_PROMPT_VERSION}）"
+            try:
+                # llm_timeout 为每块超时：单块失败/超时不拖垮其余块
+                async with sem, asyncio.timeout(llm_timeout):
+                    parsed, ref, usage = await router.invoke(
+                        Tier.EXECUTE, _DISSECT_SYSTEM, user, DissectionOutputP
+                    )
+            except Exception as exc:  # noqa: BLE001 —— 单块失败记 errors 继续下一块
+                msg = str(exc) or type(exc).__name__
+                return {
+                    "idx": idx,
+                    "offset": offset,
+                    "error": f"llm_failed: 第 {idx}/{total} 块（offset={offset}）失败: {msg}",
+                }
+            return {"idx": idx, "offset": offset, "parsed": parsed, "ref": ref, "usage": usage}
+
+        results = await asyncio.gather(
+            *(_one(idx, offset, chunk) for idx, (offset, chunk) in enumerate(chunks, start=1))
+        )
+        for res in sorted(results, key=lambda r: r["idx"]):  # 按块序聚合，保持确定性
+            if "error" in res:
+                chunk_errors.append(res["error"])
+                continue
+            ref, usage, offset = res["ref"], res["usage"], res["offset"]
+            if not model_hint:
+                model_hint = f"{ref.provider}/{ref.model_id}"
+            if usage_agg:
+                usage_agg["prompt_tokens"] += usage.prompt_tokens if usage else 0
+                usage_agg["completion_tokens"] += usage.completion_tokens if usage else 0
+                usage_agg["total_tokens"] += usage.total_tokens if usage else 0
+                usage_agg["latency_ms"] += usage.latency_ms if usage else 0
+            else:
+                usage_agg = {
+                    "provider": ref.provider,
+                    "model": ref.model_id,
+                    "prompt_tokens": usage.prompt_tokens if usage else 0,
+                    "completion_tokens": usage.completion_tokens if usage else 0,
+                    "total_tokens": usage.total_tokens if usage else 0,
+                    "latency_ms": usage.latency_ms if usage else 0,
+                }
+            for el in res["parsed"].elements:
+                key = (el.element, el.content)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(_map_element_spans(el, offset))
+        if not merged:
+            # 全部块失败（DissectionOutputP 保证成功块必有产出）→ 维持整体失败
+            # 语义，由 persist 诚实降级 offline，不冒充 LLM 产物
+            last = chunk_errors[-1] if chunk_errors else "llm_empty_output: 全部块无产出"
+            return {
+                "errors": chunk_errors or [last],
+                "llm_failed": f"{total}/{total} 块失败: {last}",
+            }
         return {
-            "elements": list(parsed.elements),
-            "_model_hint": f"{ref.provider}/{ref.model_id}",
-            "usage": {
-                "provider": ref.provider,
-                "model": ref.model_id,
-                "prompt_tokens": usage.prompt_tokens if usage else 0,
-                "completion_tokens": usage.completion_tokens if usage else 0,
-                "total_tokens": usage.total_tokens if usage else 0,
-                "latency_ms": usage.latency_ms if usage else 0,
-            },
+            "elements": merged,
+            "_model_hint": model_hint,
+            "usage": usage_agg,
+            "errors": chunk_errors,  # 部分块失败：engine=llm（部分成功是真实状态），缺块留痕
         }
 
     async def persist_node(state: DissectionState) -> dict[str, Any]:
@@ -173,6 +304,32 @@ def build_dissection_graph(
             else:
                 engine = "llm"
                 model_hint = state.get("_model_hint") or ""
+        text = state.get("text") or ""
+        unanchored = 0
+        for i, el in enumerate(elements):
+            if el.spans:
+                continue
+            needle = (el.content or "").strip()
+            if len(needle) < 6:
+                continue
+            found = _locate_span(text, needle)
+            if found:
+                elements[i] = el.model_copy(
+                    update={"spans": [DissectionSpan(start=found[0], end=found[1])]}
+                )
+            else:
+                unanchored += 1
+        if unanchored:
+            state.setdefault("errors", []).append(
+                f"unanchored_elements: {unanchored} 个元素三级查找均未定位到原文"
+            )
+        if engine == "llm":
+            elements, narrowed = _narrow_long_spans(text, elements)
+            if narrowed:
+                state.setdefault("errors", []).append(
+                    f"narrowed_long_spans: {narrowed} 个超长 span 已按 content 收窄"
+                )
+
         d = ArticleDissection(
             item_key=state["item_key"],
             title=state.get("title", ""),
@@ -203,6 +360,60 @@ def build_dissection_graph(
     if sessions is not None:
         return g.compile(checkpointer=make_checkpointer(sessions))
     return g.compile()
+
+
+def _norm_index(s: str) -> tuple[str, list[int]]:
+    """归一化文本 + 每个归一化字符到原文字符位置的映射表。"""
+    out: list[str] = []
+    idx: list[int] = []
+    for i, ch in enumerate(s):
+        if ch.isalnum() or "\u4e00" <= ch <= "\u9fff":
+            out.append(ch.lower())
+            idx.append(i)
+    return "".join(out), idx
+
+
+def _locate_span(text: str, needle: str) -> tuple[int, int] | None:
+    """三级递进定位：①原文 find ②归一化 find+位置映射 ③词首字符序列 find。
+
+    任一命中返回原文 (start, end)；全部失败返回 None（调用方记 errors 留痕）。
+    """
+    needle = needle.strip()
+    if not needle:
+        return None
+    # ① 原文直接 find
+    pos = text.find(needle)
+    if pos >= 0:
+        return pos, pos + len(needle)
+    # ② 归一化 find（大小写/空白/标点全归一，映射回原文区间）
+    n_text, n_idx = _norm_index(text)
+    n_needle, _ = _norm_index(needle)
+    if len(n_needle) >= 4:
+        p2 = n_text.find(n_needle)
+        if p2 >= 0:
+            lo, hi = n_idx[p2], n_idx[p2 + len(n_needle) - 1]
+            return lo, hi + 1
+    # ③ 词首字符序列 find（容忍 LLM 摘写改写：按词首字母序列定位）
+    import re as _re
+
+    words = [w.lower() for w in _re.findall(r"[\w\u4e00-\u9fff]{2,}", needle) if w]
+    if len(words) >= 2:
+        # 顺序词锚定：needle 各词在原文中依序出现（允许词间跳隔），span=首词头到末词尾
+        cursor = 0
+        lo = hi = -1
+        ok = True
+        for w in words:
+            pos = text.lower().find(w, cursor)
+            if pos < 0:
+                ok = False
+                break
+            if lo < 0:
+                lo = pos
+            hi = pos + len(w)
+            cursor = hi
+        if ok:
+            return lo, hi
+    return None
 
 
 def fallback_elements_from_hints(hints: dict[str, Any]) -> list[DissectionElement]:
@@ -304,3 +515,35 @@ def build_queue_suggestions(
             )
     out.sort(key=lambda x: (-x["score"], x["item_key"]))
     return out[:limit]
+
+
+def _narrow_long_spans(
+    text: str, elements: list[DissectionElement], *, limit: int = 150
+) -> tuple[list[DissectionElement], int]:
+    """v5：span 过长（>limit）时用 content 在原 span 范围内重新定位收窄。
+
+    命中→替换为 content 的窄区间（全文坐标）；未命中保持原 span。
+    返回（新元素表, 收窄数）。
+    """
+    out: list[DissectionElement] = []
+    narrowed = 0
+    for el in elements:
+        spans = el.spans or []
+        if not spans:
+            out.append(el)
+            continue
+        new_spans = []
+        for sp in spans:
+            if sp.end - sp.start <= limit or not el.content or len(el.content) < 6:
+                new_spans.append(sp)
+                continue
+            seg = text[sp.start : sp.end]
+            hit = _locate_span(seg, el.content[:100])
+            if hit is not None:
+                a, b = hit
+                new_spans.append(DissectionSpan(start=sp.start + a, end=sp.start + b))
+                narrowed += 1
+            else:
+                new_spans.append(sp)
+        out.append(el.model_copy(update={"spans": new_spans}))
+    return out, narrowed

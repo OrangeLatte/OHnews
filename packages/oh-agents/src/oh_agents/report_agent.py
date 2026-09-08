@@ -47,7 +47,7 @@ _REPORT_SYSTEM = (
 
 # Prompt 版本标注：随 revision content / run output 落库（版本保留 Prompt 版本，P0-C T2）。
 # 修改 _REPORT_SYSTEM 注入纪律时必须同步递增（report-v2, report-v3, ...）。
-REPORT_PROMPT_VERSION = "report-v2"
+REPORT_PROMPT_VERSION = "report-v3"
 
 
 class ReportOutputP(BaseModel):
@@ -95,6 +95,7 @@ def build_report_graph(
     store: Any = None,
     now_fn: Any = None,
     sessions: AgentSessions | None = None,
+    llm_timeout: float = 120.0,
 ):
     """组装报告图；router/store/时钟闭包注入。"""
 
@@ -129,9 +130,12 @@ def build_report_graph(
         # Prompt 版本标注随请求注入（溯源：产出版本可对回确切 prompt 纪律）
         user = f"{user}\n（Prompt 版本：{REPORT_PROMPT_VERSION}）"
         try:
-            async with asyncio.timeout(90.0):
+            # 报告曾走 Strategic（GLM 长结构化输出）并被 90 秒外层抢先取消，
+            # fallback 根本没有机会执行。Execute 链优先走已验证的 JSON 路径；
+            # timeout 仅包住完整路由调用，失败仍会留下明确 abstention 根因。
+            async with asyncio.timeout(max(1.0, llm_timeout)):
                 parsed, ref, usage = await router.invoke(
-                    Tier.STRATEGIC, _REPORT_SYSTEM, user, ReportOutputP
+                    Tier.EXECUTE, _REPORT_SYSTEM, user, ReportOutputP
                 )
         except Exception as exc:  # noqa: BLE001 —— 根因落 errors，persist 降级
             msg = str(exc) or type(exc).__name__
