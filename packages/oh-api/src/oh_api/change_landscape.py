@@ -53,6 +53,15 @@ _FRAME_ZH: dict[str, str] = {
     "other": "其他",
 }
 
+_FRAME_EN: dict[str, str] = {
+    "loss": "Loss",
+    "gain": "Gain",
+    "responsibility": "Responsibility",
+    "conflict": "Conflict",
+    "human_interest": "Human stories",
+    "other": "Other",
+}
+
 _MAX_SOURCE_STREAMS = 12
 _MAX_QUALIFIED = 5
 _MAX_EVIDENCE_REFS = 20
@@ -190,6 +199,7 @@ def _narrative_streams(
     lo_base: datetime,
     now: datetime,
     tier_map: dict[str, SourceTier],
+    lang: str = "zh",
 ) -> list[NarrativeStream]:
     """两窗框架份额流带（stance 行 ts 分窗；cluster_split=官方 vs 市场份额）。
 
@@ -244,7 +254,7 @@ def _narrative_streams(
     return [
         NarrativeStream(
             frame=f,  # type: ignore[arg-type]
-            label=_FRAME_ZH[f],
+            label=_FRAME_ZH[f] if lang == "zh" else _FRAME_EN.get(f, f),
             share_baseline=round(base_share.get(f, 0.0), 4),
             share_current=round(cur_share.get(f, 0.0), 4),
             n_baseline=base_frames.get(f, 0),
@@ -723,7 +733,8 @@ def build_change_landscape(
     )
     streams = _source_streams(base, cur, tier_map)
     rows = store.stances_asof(det_now)
-    narr = _narrative_streams(rows, lo_cur, lo_base, det_now, tier_map)
+    corpus_lang = lang or _corpus_lang(records, lang_by_source)
+    narr = _narrative_streams(rows, lo_cur, lo_base, det_now, tier_map, corpus_lang)
     timeseries = _timeseries(cur, rows, store.ndi_all(), lo=lo_cur, hi=det_now, days=d)
 
     corpus_lang = lang or _corpus_lang(records, lang_by_source)
