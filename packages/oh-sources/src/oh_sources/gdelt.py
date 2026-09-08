@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -108,7 +109,10 @@ class GDELTDocAdapter(SourceAdapter):
         )
         seen: set[str] = set()
         out: list[Draft] = []
-        for start, end in ranges:
+        for idx, (start, end) in enumerate(ranges):
+            if idx > 0:
+                # GDELT ArtList 限流严格（429）：分片间隔退避，回溯批量时保命
+                await asyncio.sleep(min(6.0, 1.5 * idx))
             for draft in await self._fetch_range(start, end):
                 if draft.external_id not in seen:
                     seen.add(draft.external_id)
@@ -134,13 +138,21 @@ class GDELTDocAdapter(SourceAdapter):
             routes.append(self.proxy_url)
         last_exc: Exception | None = None
         for route in routes:
-            try:
-                async with self.make_client(
-                    proxy=route, headers={"User-Agent": USER_AGENT}, timeout=self._TIMEOUT
-                ) as client:
-                    text = await self.get_text(client, GDELT_DOC_URL, params=params)
-                return _parse_articles(json.loads(text), lang=self.meta.language)
-            except Exception as exc:  # noqa: BLE001 —— 回退链逐段尝试
-                last_exc = exc
+            for attempt in range(3):  # 429 限流退避：1s/4s/9s
+                try:
+                    async with self.make_client(
+                        proxy=route, headers={"User-Agent": USER_AGENT}, timeout=self._TIMEOUT
+                    ) as client:
+                        text = await self.get_text(client, GDELT_DOC_URL, params=params)
+                    return _parse_articles(json.loads(text), lang=self.meta.language)
+                except httpx.HTTPStatusError as exc:
+                    last_exc = exc
+                    if exc.response.status_code == 429 and attempt < 2:
+                        await asyncio.sleep(1.0 * (attempt + 1) ** 2)
+                        continue
+                    break
+                except Exception as exc:  # noqa: BLE001 —— 回退链逐段尝试
+                    last_exc = exc
+                    break
         assert last_exc is not None
         raise last_exc

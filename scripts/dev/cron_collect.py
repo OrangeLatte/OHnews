@@ -1,5 +1,8 @@
 """C1 定时采集入口（供系统 crontab 调用）：全部 enabled 源各采近 1 天。
 
+链路：采集 bronze → 增量标注（backfill_annotations --missing，只补表内
+缺失项，PIT 锚定 published_at）。
+
 用法：uv run python scripts/dev/cron_collect.py [--days 1] [--only sid1,sid2]
 """
 
@@ -19,6 +22,18 @@ paths = AppPaths()
 from oh_sources.registry import build_registry  # noqa: E402
 from oh_sources.runner import run_collector  # noqa: E402
 from oh_storage.bronze_parquet import ParquetBronzeWriter  # noqa: E402
+
+
+def annotate_missing() -> bool:
+    """采集后增量标注（复用回填入口；脚本同目录可直接导入）。"""
+    try:
+        import backfill_annotations
+
+        backfill_annotations.main(["--missing"])
+    except Exception as exc:
+        print(f"[annotate] fail: {exc}", flush=True)
+        return False
+    return True
 
 
 def main() -> int:
@@ -48,6 +63,8 @@ def main() -> int:
         if not result.ok:
             failures += 1
         print(f"{sid}: written={result.n_written} {status}", flush=True)
+    if not annotate_missing():
+        failures += 1
     return 1 if failures else 0
 
 
