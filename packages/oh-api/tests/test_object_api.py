@@ -216,6 +216,41 @@ def test_update_review_status_derived(client: TestClient) -> None:
     assert body["review_status"] == "accepted" and body["case_id"].startswith("case-")
 
 
+def test_monitor_update_agent_analysis_has_honest_offline_shape(client: TestClient) -> None:
+    """Monitor 分析端点：无模型时也必须给出可复核的同形摘要，绝不假称 LLM 成功。"""
+    assert (
+        client.post(
+            "/api/monitors",
+            json={
+                "monitor_id": "mon-analysis",
+                "target_type": "topic",
+                "target_ref": "tariff",
+                "question": "关税叙事有什么变化？",
+            },
+        ).status_code
+        == 200
+    )
+    run_id = client.post("/api/monitors/mon-analysis/runs").json()["run_id"]
+    _await_monitor_run(client, "mon-analysis", run_id)
+    assert (
+        client.post(
+            "/api/monitors/mon-analysis/updates",
+            json={
+                "update_id": "u-analysis",
+                "run_id": run_id,
+                "monitor_id": "mon-analysis",
+                "summary": "窗口内新增相关文档",
+                "delta": {"new_articles": 2, "total_hits": 3},
+                "created_at": "2026-09-03T12:30:00+00:00",
+            },
+        ).status_code
+        == 200
+    )
+    body = client.post("/api/monitors/updates/u-analysis/analysis").json()
+    assert body["engine"] == "offline" and body["status"] == "abstained"
+    assert body["analysis"]["what_changed"] and body["analysis"]["recommended_review"]
+
+
 def test_hitl_flow(client: TestClient) -> None:
     client.post(
         "/api/agent/threads",
@@ -372,7 +407,7 @@ def test_report_feedback_passthrough_pins_version_chain(app_env: tuple[TestClien
     assert out2["output"]["feedback"] == "请补充九月决议的概率区间并引用挑战问题"
     assert out2["output"]["artifact_id"] == out1["output"]["artifact_id"]
     assert out2["output"]["revised_from"] == out1["output"]["revision_id"]
-    assert out2["output"]["prompt_version"] == "report-v2"
+    assert out2["output"]["prompt_version"] == "report-v3"
 
 
 def test_async_protocol_idempotent_cancel(app_env: tuple[TestClient, Path]) -> None:
@@ -777,7 +812,10 @@ def test_monitor_scheduler_health(client: TestClient) -> None:
         "started_at": "2026-09-03T12:00:00+00:00",
     }
     assert r["next_run_estimate"] == "2026-09-03T18:00:00+00:00"
-    assert r["note"] == "estimate from last run + schedule; no live scheduler process"
+    assert r["note"] == (
+        "next run is estimated from last run + schedule; "
+        "worker liveness is reported by /api/scheduler/heartbeat"
+    )
 
     # cron 文本解析不了 → 诚实 unscheduled + estimate=None（不猜 cron 语义；
     # 配置问题优先于历史状态暴露）

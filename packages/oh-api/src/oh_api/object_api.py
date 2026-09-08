@@ -420,12 +420,21 @@ def build_object_router(
         store = _store()
         if not store.get_case(case_id):
             raise HTTPException(404, f"case not found: {case_id}")
+        body = doc.body
+        # 方案 C：RSS 摘要源（<300 字）且有原文链接 → 按需抓全文（失败保持原 body）
+        if len((body or "").strip()) < 300 and doc.canonical_url:
+            from oh_sources.webtext import fetch_page_text
+
+            fetched = fetch_page_text(doc.canonical_url)
+            if len(fetched) > len(body or ""):
+                # cap 12000：防极端长文入案导致拆解块数爆炸（43 块×时延不可接受）
+                body = fetched[:12000]
         try:
             store.add_document_revision(
                 doc.document_revision_id,
                 doc.document_id,
                 source_id=doc.source_id,
-                body=doc.body,
+                body=body,
                 fetched_at=_now(),
                 canonical_url=doc.canonical_url,
                 content_hash=doc.content_hash,
@@ -754,7 +763,10 @@ def build_object_router(
             "last_run": last_run,
             "next_run_estimate": next_run,
             "scheduler_health": health,
-            "note": "estimate from last run + schedule; no live scheduler process",
+            "note": (
+                "next run is estimated from last run + schedule; "
+                "worker liveness is reported by /api/scheduler/heartbeat"
+            ),
         }
 
     @router.post("/api/monitors/{monitor_id}/updates")
