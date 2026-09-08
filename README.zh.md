@@ -1,60 +1,173 @@
-# OH!News — 认知闭环情报终端（非商业）
+# OH!News
 
-OH!News 把多语种财经新闻流炼成**叙事分歧监测**，并引导用户走完一条完整的认知闭环：
+认知闭环的新闻情报终端。简体中文 · [English](README.md)
 
-> **发现变化 → 检验证据 → 形成自己的判断 → 持续追踪。**
+**许可**：[MIT](LICENSE) · Python 3.12+ · FastAPI · Next.js 16 · LangGraph · 627+ 测试
 
-四个入口：**NOW**（`/observe`）· **INVESTIGATE**（`/cases`）· **WATCH**（`/watch`）· **MEMORY**（`/archive`）。
+## 问题
 
-> **措辞纪律（写死）**：NDI（叙事分歧指数）是**描述性**监测指标（EPU 式条件变量），**不是收益预测器**；全项目禁用「预测 / 择时 / 买卖」表述。所有结论强制证据链（主张 → 原文摘录 + 来源 + PIT 时间）。
+今天的新闻消费在三个地方断裂：
 
-## 你能得到什么
+1. **变化不可信。** 聚合器告诉你「发生了什么」，却没有任何东西告诉你：官方与市场的叙事是否真的
+   出现分歧——或者你以为的「转变」只是来源构成的改变。
+2. **证据不可达。** 结论引用「据报道」，但你永远打不开那条报道。从结论回到原文原句的路径是缺失的。
+3. **判断不留痕。** 你读完、形成看法，三周后无法回忆自己当时相信什么、依据是什么、之后出现的
+   信息是否本应改变它。
 
-| 层 | 职责 |
-|---|---|
-| `oh-sources` | 8 种适配器（rss / gdelt / fred / json_api / html / browser / reddit_cdp 等）→ Bronze parquet 分区 |
-| `oh-pipeline` | 事件聚类、立场标注、NDI（Jeffreys 平滑 JSD + bootstrap 置信区间）、Hero 质量门、叙事场 |
-| `oh-storage` | SQLite 存储族：silver（事件/立场/NDI/标注/拆解）、research（案例/元素提取/证据 span）、tracking、archive、belief、产品埋点 |
-| `oh-agents` | langgraph Agent 族：18 元素**文章拆解**（分块并发+span 三级锚点）、六型**研究报告**、**跟踪预警**统一单元、**档案与档案报纸**、跨语言翻译（「翻译学家」prompt 工作流）、parent 总控台 |
-| `oh-api` | FastAPI 门面：observe 看板、cases、tracking、archive、agent/*、简报与变化总览聚合 |
-| `oh-llm` | 三层模型路由（io/execute/strategic）+ JSON 模式护栏 + 候选降级 + 并发限制 |
-| `web` | Next.js 16 + React 19 报纸风浅色界面，21 语言 i18n（含 RTL）、「ⓘ」术语浮窗、带弃权语义的图表封装 |
+OH!News 针对这三个断裂而建。
+
+## 核心概念
+
+**认知闭环。** 产品按闭环组织，而不是信息流：
+
+```
+现在（什么变了）→ 调查（对证据验证）→ 追踪（跟踪后果）
+→ 记忆（存档你确认过的东西）→ 带着新基线回到现在
+```
+
+每个阶段是独立的界面，承担不同的义务——发现必须诚实、验证必须有锚、追踪必须说明「自你上次
+复核以来变了什么」、记忆里只有你显式确认过的内容。
+
+**诚实测量。** 叙事分歧指数（NDI）度量同一事件上官方级报道与市场级报道的分歧程度：对两簇的
+框架分布做 Jeffreys 平滑，计算 Jensen–Shannon 距离并给出 bootstrap 置信区间。当任一簇的独立
+信源不足时，系统**弃权**——报告「不可测」而不是编造一个数字。同样的纪律贯穿全系统：LLM 不可用
+时拆解回退到标注为 `offline` 的词典引擎；缺测日期以断线呈现，绝不插值；覆盖率低于阈值时给出
+警告而不是掩盖。
+
+**有锚的论断。** AI 提取的每个元素（主体、核心事实、因果链、发布动机……）都携带 spans——原文中
+精确的字符区间。阅读视图将其渲染为颜色高亮；点击任一高亮即显示元素类型。坐标在服务端校验
+（越界或漂移的 span 被丢弃或重锚定），所以每个高亮都是原文引用，而非转述。
+
+**用户所有的判断。** 认知快照（立场+信心+理由）只在用户显式确认后写入。系统不会修订已存的判断，
+不会把指标转成建议，也不会把模型解释冒充为用户信念。
+
+**PIT 纪律。** 管道查询全部是时点查询：`*_asof` 访问器保证任何晚于 as-of 时刻发布的内容不会泄入
+答案。这使结果可复现、demo 数据集自洽。
+
+## 截图
+
+Demo 数据集：15 天真实新闻、两个信源（英文：卫报；中文：华尔街见闻），覆盖收件箱到记忆的全流程。
+完整图集：[`docs/demo_en`](docs/demo_en)、[`docs/demo_zh`](docs/demo_zh)。
+
+总览（英文界面）：
+
+![overview](docs/demo_en/01-observe-signal.png)
+
+案例精读标注（英文界面）：
+
+![case read](docs/demo_en/08-case-read.png)
+
+案例精读（中文界面）：
+
+![case read zh](docs/demo_zh/08-case-read.png)
+
+总览（中文界面）：
+
+![overview zh](docs/demo_zh/01-observe-signal.png)
+
+## 架构
+
+![架构图](docs/archi.png)
+
+| 层 | 包 | 职责 |
+|---|---|---|
+| 采集 | `oh-sources` | 7 种适配器（RSS/GDELT/FRED/JSON/HTML/Playwright/Reddit-CDP），按源退避的定时采集，入案时按需抓全文并深度清洗 |
+| 语义 | `oh-pipeline` | 规则标注（SVO，6 域×13 方向）、8 类情绪词典、事件聚类（5-shingle Jaccard）、NDI 与温差、四类信号检测、智能分排序 |
+| 契约 | `oh-contracts` | 严格 Pydantic 模型——唯一真源；前端类型由 FastAPI OpenAPI schema 生成 |
+| 存储 | `oh-storage` | SQLite（silver/research/annotations/translations）与 Parquet bronze；时点 `*_asof` 访问器 |
+| Agent | `oh-agents` | LangGraph 图（拆解/报告/翻译/追踪/总控）、认知/追踪/档案库、产品埋点账本 |
+| API | `oh-api` | FastAPI 门面：简报、变化场、叙事场、案例、agent、图表聚合 |
+| LLM | `oh-llm` | 三层模型路由（io/execute/strategic），schema 校验结构化输出 + 候选链降级 |
+| 前端 | `web` | Next.js 16、React 19、Tailwind 4、零依赖 SVG 图表、21 语言 i18n |
 
 ## 快速开始
 
+前置：Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)、Node 20+，可选一个 LLM API Key。
+没有 Key 系统照样端到端运行（词典引擎 + 模板报告）。
+
 ```bash
-# 后端（FastAPI，端口 8787）
+# 1. 后端
+uv sync
 uv run python scripts/dev/serve.py --port 8787
 
-# 前端（Next.js dev，端口 3001）
-cd web && npx next dev -p 3001
+# 2. 前端
+cd web && npm install && npx next dev -p 3001
 
-# 采集 + 标注（适合 cron；采集后自动补词典标注）
-uv run python scripts/dev/cron_collect.py --days 1
-uv run python scripts/dev/run_daily.py --days 15   # 管道：事件 → 立场 → NDI
+# 3. 模型 Key（可选；也可在网页 ⚙ 设置 → API Keys 配置）
+export DEEPSEEK_API_KEY=sk-...    # io 层
+export ZHIPU_API_KEY=...          # execute / strategic 层
+export TAVILY_API_KEY=tvly-...    # agent 联网搜索
+
+# 4. 采集与构建
+uv run python scripts/dev/cron_collect.py --days 15   # 采集，随后自动标注
+uv run python scripts/dev/run_daily.py --days 15      # 事件/立场/NDI
+
+# 5. 打开 http://localhost:3001
 ```
 
-模型 Key（DeepSeek / 智谱 / Tavily）在 `/settings/developer` 配置，落盘 `data/runtime_keys.json`（chmod 600）。未配置 Key 时所有 LLM 功能**诚实降级**（词典/离线引擎并如实标注）。
+### 环境变量
 
-## 演示
+| 变量 | 必须 | 用途 |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | 否 | io 层 LLM（JSON 模式结构化输出） |
+| `ZHIPU_API_KEY` | 否 | execute / strategic 层 |
+| `TAVILY_API_KEY` | 否 | agent 联网搜索 |
 
-仓库当前处于**演示态**：15 天数据、两条全文信源（英文 `guardian_world`、中文 `wallstreetcn`）、两条端到端种子案例（收件箱 → 案例研究 → 追踪 → 档案）。
+## 教程：走完一个闭环
 
-- 英文导览：[`docs/demo_en/`](docs/demo_en/)（10 张截图，界面英文）
-- 中文导览：[`docs/demo_zh/`](docs/demo_zh/)（10 张截图，界面中文）
+1. **观察**（`/observe`）——七个面板：信号、信源流、叙事框架、叙事分歧、情绪与行动、实体、
+   收件箱。每个面板对所选窗口的每一天渲染；缺测日有标记，不会跳过。
+2. **调查**（`/investigate`、`/cases`）——收件箱选一篇，建 case。系统抓取全文（剔除脚本与模板
+   噪音），拆解为 18 类元素并锚定字符区间，按需产出研究报告（真实性核查/意图动机/归因因果/
+   叙事框架/动态趋势/结构化摘要）。
+3. **追踪**（`/watch`）——为实体、主题、问题或文章元素（如 `tone:optimism`）建跟踪单元。
+   每个单元回答「自上次复核以来发生了什么」，复核日期显式呈现。
+4. **存档**（`/archive`）——只有你确认的才入库。档案可组合成一份带编者按的「档案报纸」。
+5. **下判断**——在任何变化页记录立场（维持/调整/反转/不确定）与信心。认知时间线只增不改，
+   系统永不改写。
 
-## 测试与质量门
+## 尚未实现（可拓展方向）
+
+当前版本是单用户、非商业的研究构建。以下是刻意留白的部分，均有一条清晰的拓展路径：
+
+- **语义检索。** 搜索目前是对 bronze 的子串匹配；没有 embedding，没有 FTS5 索引。标注库是
+  bge-small 级本地 embedding 层的天然底座（原计划 M3-S4，已推迟），落地后可解锁元素级、
+  情绪级的相似检索。
+- **LLM 增量标注。** 词典层按构造覆盖 100% 文章；对词典无法解析的子集（否定、反讽、隐含立场）
+  加一轮 LLM 标注可以提升立场质量。契约已区分 `engine=lexicon|llm`。
+- **知识图谱时序边。** 实体边库记录共现/层级/关系边及首末见时间，但没有时间切片的图遍历，
+  也没有图数据库。按 NDI 窗口投影边可以让叙事扩散可观察。
+- **作为模型的信念更新。** 认知快照已存储并可 diff，但系统不对信念修正建模（例如对新证据做
+  贝叶斯更新）。这是刻意的：闭环不应朝着「改变用户想法」的方向自我优化。
+- **多用户与鉴权。** 单用户；无账号、无同步。埋点账本已按 session 键控，是天然的挂点。
+- **流式采集。** 采集是批量/cron。流式路径（webhook、RSS pubsub）可以缩短新鲜度指示器当前
+  诚实呈现的时滞。
+- **跨语言对齐自动化。** 翻译由 LLM 生成并做确定性专名校验，但跨语言论断对齐（同一事实在两种
+  语言中的报道对齐）仍是人工。这是产品里最大的研究级空白。
+- **NDI 作为因果工具。** NDI 是分歧度量，不是预测器——界面如此声明。向因果归因拓展
+  （哪个来源簇移动了分歧）是开放问题。
+
+## 仓库结构
+
+```
+packages/          uv workspace：oh-contracts / oh-sources / oh-pipeline / oh-storage /
+                   oh-agents / oh-api / oh-llm
+web/               Next.js 16 前端（App Router）
+scripts/dev/       serve / run_daily / cron_collect / backfill 工具
+docs/              RECONSTRUCTION.md（设计决策，M1–M6 里程碑）· ARCHITECTURE_MAP.md ·
+                   demo_en/ demo_zh/（全流程截图）
+data/              运行时 SQLite + Parquet bronze（不入库）
+```
+
+## 测试
 
 ```bash
-uv run ruff check packages && uv run pytest -q        # 后端（600+ 测试）
-cd web && npx tsc --noEmit && npx eslint .            # 前端
+uv run pytest -q          # 全仓 627+ 测试
+cd web && npx tsc --noEmit && npx eslint .
+uv run ruff check packages scripts
 ```
 
-## 文档
+## 许可
 
-- 架构与数据模型真源：[`docs/RECONSTRUCTION.md`](docs/RECONSTRUCTION.md)（另见 `ARCHITECTURE_MAP.md`、`archi.svg`）
-- 已被取代的规格与规划记录迁出至 `../OHnews_backup_20260909/docs_migrated/`（迁移原因见该目录 `MIGRATION_NOTES.md`）；裁剪前完整数据备份同目录。
-
-## 许可与边界
-
-仅限非商业研究用途。不输出交易建议；系统永不改写用户判断；Agent 不修改确定性指标。
+[MIT](LICENSE)。非商业研究版。新闻内容版权归原发布方所有；OH!News 仅存储元数据、
+摘要片段与派生标注，用于研究目的。
