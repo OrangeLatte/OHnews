@@ -19,6 +19,8 @@ _BLOCK_TAGS = ("script", "style", "noscript", "nav", "footer", "header", "aside"
 
 _NOISE_PHRASES = (
     "skip to main",
+    "skip to navigation",
+    "view image in fullscreen",
     "top stories",
     "subscribe",
     "sign in",

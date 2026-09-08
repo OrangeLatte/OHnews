@@ -33,7 +33,7 @@ from .agent_base import AgentSessions, make_checkpointer, output_language_line
 # 拆解 prompt 版本（纪律改动须同步递增；run output 双写供审计）。
 # v3：长文分块拆解——user prompt 注入块序号/字符区间，spans 用块内偏移；
 # system prompt 注明块内坐标纪律。
-DISSECT_PROMPT_VERSION = "dissect-v6"
+DISSECT_PROMPT_VERSION = "dissect-v7-1"
 
 _CHUNK_SIZE = 1800  # 单块字符上限：确保单块输出窗口装得下全部元素+spans 标注
 _SENTENCE_BOUNDARIES = "。！？!?\n"
@@ -44,8 +44,12 @@ _DISSECT_SYSTEM = (
     + ",".join(ELEMENT_KEYS)
     + "。每个元素给 content（一句中文提炼）、confidence（0-1 置信度，按下方校准规则）"
     "与可选 spans（原文 start/end 字符偏移，并给 quote=该偏移切片的逐字原文用于锚点校验）。"
-    "标注密度纪律（v6）：宁多勿漏——尽可能多产出元素与 spans，直接证据覆盖目标为原文的"
-    "60% 以上；同一事实可同时给出多个不同粒度的短 spans。"
+    "标注密度纪律（v7）：高密度全覆盖——标注必须覆盖原文的 80% 以上；纯叙述、背景交代、"
+    "时间推进、立场表达、修辞渲染等句子也必须归入相应元素（timeline/context/perspective/"
+    "explicit_stance/implicit_bias/tone/diction 等），不得留下大片无标注区域；"
+    "文章开头的导语与背景段同样必须逐句标注——场景描写归 human_interest/perspective，"
+    "历史背景归 timeline/context；宁多勿漏，"
+    "同一片段可给出多个不同元素的多重短 spans。"
     "span 覆盖纪律：每个元素的 spans 必须标注支撑它的完整原文片段——"
     "覆盖整句或完整短语（通常 20-120 字符），不要只标最小词组；"
     "元素结论若综合了文中某一段叙述，就把该段完整标注；"
