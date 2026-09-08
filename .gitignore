@@ -31,3 +31,7 @@ Thumbs.db
 
 # 标注委员会生成物
 config/gold_set/annotated_*.jsonl
+
+# GIF 中间帧（构建产物）
+docs/frames_en/
+docs/frames_zh/

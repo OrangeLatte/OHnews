@@ -12,6 +12,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 
 from oh_api.briefing import (
+    _corpus_lang,
     bucket_evidence,
     build_briefing_with_signals,
     data_freshness,
@@ -487,6 +488,7 @@ def _warnings(
     freshness_staleness: str,
     gated_out: int = 0,
     narr: list[NarrativeStream] | None = None,
+    lang: str = "zh",
 ) -> list[QualityWarning]:
     out: list[QualityWarning] = []
     if cur.n_articles == 0:
@@ -496,7 +498,11 @@ def _warnings(
         out.append(
             QualityWarning(
                 code="low_coverage",
-                message=f"当前窗口仅 {cur.n_articles} 篇文章，覆盖不足以支撑稳健对比",
+                message=(
+                    f"当前窗口仅 {cur.n_articles} 篇文章，覆盖不足"
+                    if lang == "zh"
+                    else f"Only {cur.n_articles} articles in the window; too few"
+                ),
             )
         )
     if streams:
@@ -505,23 +511,44 @@ def _warnings(
             out.append(
                 QualityWarning(
                     code="single_source_dominant",
-                    message=f"「{top.label}」占当前窗口覆盖过半，观点可能单一",
+                    message=(
+                        f"「{top.label}」占当前窗口覆盖过半，观点可能单一"
+                        if lang == "zh"
+                        else f"'{top.label}' dominates current coverage; views may be one-sided"
+                    ),
                 )
             )
     if freshness_staleness == "stale":
-        out.append(QualityWarning(code="stale_data", message="数据已明显过期，请谨慎解读时间对比"))
+        out.append(
+            QualityWarning(
+                code="stale_data",
+                message=(
+                    "数据已明显过期，请谨慎解读时间对比"
+                    if lang == "zh"
+                    else "Data is clearly stale; interpret time comparisons with caution"
+                ),
+            )
+        )
     if gated_out > 0:
         out.append(
             QualityWarning(
                 code="gate_insufficient_coverage",
-                message=f"{gated_out} 个变化因覆盖不足（独立来源/相关性/引文质量）未进入主视图",
+                message=(
+                    f"{gated_out} 个变化因覆盖不足未进入主视图"
+                    if lang == "zh"
+                    else f"{gated_out} changes hidden for low coverage (quality gate)"
+                ),
             )
         )
     if not changes:
         out.append(
             QualityWarning(
                 code="no_qualified_changes",
-                message="窗口内没有通过质量门的变化，腰部为空",
+                message=(
+                    "窗口内没有通过质量门的变化，腰部为空"
+                    if lang == "zh"
+                    else "No change passed the quality gate; the middle band is empty"
+                ),
             )
         )
     if narr is not None:
@@ -644,6 +671,8 @@ def build_change_landscape(
     briefing_result: tuple[BriefingResponse, list[Signal]] | None = None,
     source_ids: tuple[str, ...] | list[str] = (),
     language: str | None = None,
+    lang_by_source: dict[str, str] | None = None,
+    lang: str | None = None,
 ) -> ChangeLandscape:
     """变化场场景唯一聚合入口（后端拼图，前端渲染）。
 
@@ -697,6 +726,8 @@ def build_change_landscape(
     narr = _narrative_streams(rows, lo_cur, lo_base, det_now, tier_map)
     timeseries = _timeseries(cur, rows, store.ndi_all(), lo=lo_cur, hi=det_now, days=d)
 
+    corpus_lang = lang or _corpus_lang(records, lang_by_source)
+    freshness = data_freshness(records, now=now, lookback_days=max(1, days), lang=corpus_lang)
     if briefing_result is None:
         briefing, signals = build_briefing_with_signals(
             bronze_iter=iter(records),
@@ -707,6 +738,7 @@ def build_change_landscape(
             days=max(1, days),
             top=top,
             min_per_source=min_per_source,
+            lang=corpus_lang,
         )
     else:
         briefing, signals = briefing_result
@@ -722,8 +754,9 @@ def build_change_landscape(
         registry=registry,
         now=det_now,
     )
-    freshness = data_freshness(records, now=now, lookback_days=max(1, days))
-    warnings = _warnings(current_w, streams, changes, freshness.staleness, gated_out, narr)
+    warnings = _warnings(
+        current_w, streams, changes, freshness.staleness, gated_out, narr, corpus_lang
+    )
 
     seed = f"{baseline_w.start}|{current_w.end}"
     scene_id = f"hg-{now:%Y%m%d}-{hashlib.sha1(seed.encode()).hexdigest()[:8]}"

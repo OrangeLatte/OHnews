@@ -389,17 +389,17 @@ export const api = {
     threshold?: number;
   }) => post<components["schemas"]["TrackingUnit"]>("/tracking", body),
   trackingDelete: (id: string) => del<{ removed: string }>(`/tracking/${id}`),
-  trackingUpdate: (id: string) =>
+  trackingUpdate: (id: string, lang = "zh") =>
     get<{ summary: string; review_hint: string; new_changes: unknown[]; since: string | null }>(
-      `/tracking/${encodeURIComponent(id)}/update`,
+      `/tracking/${encodeURIComponent(id)}/update?lang=${lang}`,
     ),
   trackingReview: (id: string) => post<{ ok: boolean }>(`/tracking/${encodeURIComponent(id)}/review`, {}),
   watchUpdate: (id: string) =>
     get<components["schemas"]["WatchUpdate"]>(`/watches/${encodeURIComponent(id)}/update`),
   watchReview: (id: string) =>
     post<components["schemas"]["WatchReview"]>(`/watches/${encodeURIComponent(id)}/review`, {}),
-  home: (days = 7, top = 5) =>
-    get<components["schemas"]["HomePayload"]>(`/home?days=${days}&top=${top}`),
+  home: (days = 7, top = 5, lang = "zh") =>
+    get<components["schemas"]["HomePayload"]>(`/home?days=${days}&top=${top}&lang=${lang}`),
   dissectArticle: (itemKey: string, force = false, signal?: AbortSignal) =>
     post<components["schemas"]["ArticleDissection"]>(
       "/agent/dissect",
@@ -457,10 +457,10 @@ export const api = {
     get<Array<{ entity: string; label: string; ndi: number; event_id: string; ts: string; n_sources: number }>>(`/ndi/rank?limit=${limit}`),
   emotionDensity: (days = 30) =>
     get<Array<Record<string, number | string>>>(`/annotations/emotion?days=${days}`),
-  changeField: (days = 30) =>
-    get<components["schemas"]["ChangeFieldPayload"]>(`/change-field?days=${days}`),
-  changeLandscape: (days = 7, top = 5) =>
-    get<components["schemas"]["ChangeLandscape"]>(`/change-landscape?days=${days}&top=${top}`),
+  changeField: (days = 30, lang = "zh") =>
+    get<components["schemas"]["ChangeFieldPayload"]>(`/change-field?days=${days}&lang=${lang}`),
+  changeLandscape: (days = 7, top = 5, lang = "zh") =>
+    get<components["schemas"]["ChangeLandscape"]>(`/change-landscape?days=${days}&top=${top}&lang=${lang}`),
   eventSpectrum: (id: string) =>
     get<SpectrumDoc[]>(`/events/${encodeURIComponent(id)}/spectrum`),
   eventAnatomy: (id: string) =>
@@ -541,8 +541,8 @@ export const api = {
   alertCheck: () =>
     post<{ triggered: number; hits: AlertHit[] }>("/alerts/check", {}),
   // —— 阶段 1 黄金路径（类型真源 = OpenAPI 生成） ——
-  briefing: (days = 3, top = 5) =>
-    get<BriefingResponse>(`/briefing?days=${days}&top=${top}`),
+  briefing: (days = 3, top = 5, lang = "zh") =>
+    get<BriefingResponse>(`/briefing?days=${days}&top=${top}&lang=${lang}`),
   changeDossier: (changeId: string) =>
     get<ChangeDossier>(`/changes/${encodeURIComponent(changeId)}`),
   changeEvidence: (changeId: string, bucket: EvidenceBucket) =>

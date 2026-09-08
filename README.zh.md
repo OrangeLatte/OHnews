@@ -44,41 +44,38 @@ OH!News 针对这三个断裂而建。
 **PIT 纪律。** 管道查询全部是时点查询：`*_asof` 访问器保证任何晚于 as-of 时刻发布的内容不会泄入
 答案。这使结果可复现、demo 数据集自洽。
 
-## 截图
+## 演示
 
-Demo 数据集：15 天真实新闻、两个信源（英文：卫报；中文：华尔街见闻），覆盖收件箱到记忆的全流程。
-完整图集：[`docs/demo_en`](docs/demo_en)、[`docs/demo_zh`](docs/demo_zh)。
+两条完整走查（英文语料一条、中文语料一条），各走通 收件箱 → 研究 → 追踪 → 记忆 全流程，录制成 GIF：
 
-总览（英文界面）：
+![英文演示](docs/demo_en.gif)
 
-![overview](docs/demo_en/01-observe-signal.png)
+![中文演示](docs/demo_zh.gif)
 
-案例精读标注（英文界面）：
+高清截图：[`docs/demo_en`](docs/demo_en)、[`docs/demo_zh`](docs/demo_zh)。
 
-![case read](docs/demo_en/08-case-read.png)
-
-案例精读（中文界面）：
-
-![case read zh](docs/demo_zh/08-case-read.png)
-
-总览（中文界面）：
-
-![overview zh](docs/demo_zh/01-observe-signal.png)
 
 ## 架构
 
-![架构图](docs/archi.png)
+数据单向流动：信源采集进不可变 bronze 层，管道把原始文本变成被测量的信号，agent 与 API
+组装证据，网页呈现。全链 SQLite，除 LLM 供应商外无外部基础设施。
 
-| 层 | 包 | 职责 |
-|---|---|---|
-| 采集 | `oh-sources` | 7 种适配器（RSS/GDELT/FRED/JSON/HTML/Playwright/Reddit-CDP），按源退避的定时采集，入案时按需抓全文并深度清洗 |
-| 语义 | `oh-pipeline` | 规则标注（SVO，6 域×13 方向）、8 类情绪词典、事件聚类（5-shingle Jaccard）、NDI 与温差、四类信号检测、智能分排序 |
-| 契约 | `oh-contracts` | 严格 Pydantic 模型——唯一真源；前端类型由 FastAPI OpenAPI schema 生成 |
-| 存储 | `oh-storage` | SQLite（silver/research/annotations/translations）与 Parquet bronze；时点 `*_asof` 访问器 |
-| Agent | `oh-agents` | LangGraph 图（拆解/报告/翻译/追踪/总控）、认知/追踪/档案库、产品埋点账本 |
-| API | `oh-api` | FastAPI 门面：简报、变化场、叙事场、案例、agent、图表聚合 |
-| LLM | `oh-llm` | 三层模型路由（io/execute/strategic），schema 校验结构化输出 + 候选链降级 |
-| 前端 | `web` | Next.js 16、React 19、Tailwind 4、零依赖 SVG 图表、21 语言 i18n |
+```mermaid
+flowchart LR
+    S[oh-sources<br/>7 类适配器<br/>RSS / GDELT / FRED / ...] --> B[(bronze parquet<br/>不可变原始层)]
+    B --> P[oh-pipeline<br/>标注 · NDI · 检测 ·<br/>词典语义 · 知识图谱]
+    B --> A[oh-agents<br/>拆解 · 报告 ·<br/>简报 · 追踪 · 判断]
+    P --> ST[(oh-storage<br/>silver sqlite)]
+    A --> ST
+    ST --> API[oh-api<br/>FastAPI 门面<br/>observe / cases / tracking / archive]
+    LLM[oh-llm<br/>三级路由<br/>deepseek / zhipu] --> A
+    API --> W[web<br/>Next.js 报纸风前端<br/>NOW / INVESTIGATE / WATCH / MEMORY]
+    ST --> PE[(product_events<br/>12 类事件账本)]
+```
+
+认知闭环四阶段对应四个路由：NOW 呈现合格变化，INVESTIGATE 打开带锚定证据的变化档案，
+WATCH 追踪实体与元素，MEMORY 保存判断史与研究档案。
+
 
 ## 快速开始
 

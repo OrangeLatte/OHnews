@@ -51,42 +51,40 @@ recommendation, and never presents a model explanation as user belief.
 published after the as-of timestamp can leak into an answer. This makes results reproducible and the
 demo dataset coherent.
 
-## Screenshots
+## Demo
 
-Demo dataset: 15 days of real news from two sources (English: *The Guardian*; Chinese: *Wallstreetcn*),
-covering the full loop from inbox to memory. Full sets: [`docs/demo_en`](docs/demo_en),
-[`docs/demo_zh`](docs/demo_zh).
+Two complete walkthroughs (one English corpus, one Chinese corpus), each running the
+full loop — inbox → investigation → tracking → memory — recorded as GIFs:
 
-Overview (English UI):
+![English demo](docs/demo_en.gif)
 
-![overview](docs/demo_en/01-observe-signal.png)
+![Chinese demo](docs/demo_zh.gif)
 
-Annotated case reading (English UI):
-
-![case read](docs/demo_en/08-case-read.png)
-
-Case reading (Chinese UI):
-
-![case read zh](docs/demo_zh/08-case-read.png)
-
-Overview (Chinese UI):
-
-![overview zh](docs/demo_zh/01-observe-signal.png)
+Full-resolution stills: [`docs/demo_en`](docs/demo_en), [`docs/demo_zh`](docs/demo_zh).
 
 ## Architecture
 
-![architecture](docs/archi.png)
+Data flows one way: sources collect into an immutable bronze layer, pipelines turn
+raw text into measured signals, agents and the API assemble evidence, and the web
+presents it. SQLite everywhere; no external infrastructure beyond the LLM providers.
 
-| Layer | Package | Responsibility |
-|---|---|---|
-| Ingestion | `oh-sources` | 7 adapters (RSS / GDELT / FRED / JSON / HTML / Playwright / Reddit-CDP), scheduled collection with per-source backoff, on-attach full-text fetch with deep cleaning |
-| Semantics | `oh-pipeline` | Rule tagger (SVO, 6 domains × 13 directions), 8-emotion lexicon, event clustering (5-shingle Jaccard), NDI & temperature gap, four signal detectors, Intelligence Score ranking |
-| Contracts | `oh-contracts` | Strict Pydantic models — the single source of truth; frontend types are generated from the FastAPI OpenAPI schema |
-| Storage | `oh-storage` | SQLite stores (silver / research / annotations / translations) and Parquet bronze; point-in-time `*_asof` accessors |
-| Agents | `oh-agents` | LangGraph graphs (dissection / report / translation / tracking / parent), belief, tracking and archive stores, product-event ledger |
-| API | `oh-api` | FastAPI facade: briefing, change landscape, change field, cases, agents, chart aggregates |
-| LLM | `oh-llm` | Three-tier model router (io / execute / strategic) with schema-validated structured output and candidate fallback |
-| Web | `web` | Next.js 16, React 19, Tailwind 4, zero-dependency SVG charts, 21-language i18n |
+```mermaid
+flowchart LR
+    S[oh-sources<br/>7 adapters<br/>RSS / GDELT / FRED / ...] --> B[(bronze parquet<br/>immutable raw)]
+    B --> P[oh-pipeline<br/>tagger · NDI · detect ·<br/>semantics lexicon · KG]
+    B --> A[oh-agents<br/>dissection · reports ·<br/>briefing · watch · beliefs]
+    P --> ST[(oh-storage<br/>silver sqlite)]
+    A --> ST
+    ST --> API[oh-api<br/>FastAPI facade<br/>observe / cases / tracking / archive]
+    LLM[oh-llm<br/>3-tier router<br/>deepseek / zhipu] --> A
+    API --> W[web<br/>Next.js newspaper UI<br/>NOW / INVESTIGATE / WATCH / MEMORY]
+    ST --> PE[(product_events<br/>12-event ledger)]
+```
+
+The four stages of the loop map onto the web routes: NOW surfaces qualified changes,
+INVESTIGATE opens a change dossier with anchored evidence, WATCH tracks entities and
+elements, MEMORY keeps judgment history and archived research.
+
 
 ## Quickstart
 

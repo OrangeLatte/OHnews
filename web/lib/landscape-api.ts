@@ -157,6 +157,10 @@ export async function fetchLandscape(params: LandscapeParams | number): Promise<
   const qs = new URLSearchParams({ days: String(p.days) });
   for (const sid of p.sourceIds ?? []) qs.append("source_id", sid);
   if (p.language) qs.set("language", p.language);
+  // 数据卡文案语言跟随 UI locale（en demo 全英文/zh demo 全中文）
+  const lang =
+    typeof window !== "undefined" ? localStorage.getItem("oh-locale") || "zh" : "zh";
+  qs.set("lang", lang);
   const r = await fetch(`/api/change-landscape?${qs.toString()}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`change-landscape: HTTP ${r.status}`);
   return r.json();

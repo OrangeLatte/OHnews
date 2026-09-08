@@ -41,15 +41,19 @@ def _latest_belief_at(beliefs: BeliefStore | None, subject_id: str) -> datetime 
     return _parse(snaps[-1].believed_at)
 
 
-def _summary_for(new_changes: list[ChangeBrief], since_label: str) -> str:
+def _summary_for(new_changes: list[ChangeBrief], since_label: str, lang: str = "zh") -> str:
     n = len(new_changes)
     if n == 0:
+        if lang == "en":
+            return f"No new changes since {since_label}"
         return f"自{since_label}以来没有新变化"
     first = new_changes[0].headline
+    if lang == "en":
+        return f"{n} new changes since {since_label}, latest: '{first}'"
     return f"自{since_label}以来有 {n} 件新变化，最新：「{first}」"
 
 
-def _since_label(since: datetime | None, now: datetime) -> str:
+def _since_label(since: datetime | None, now: datetime, lang: str = "zh") -> str:
     if since is None:
         return "上次查看"
     days = (now - since).days
@@ -67,6 +71,7 @@ def compute_watch_update(
     beliefs: BeliefStore | None = None,
     now: datetime,
     topic_hits: int | None = None,
+    lang: str = "zh",
 ) -> WatchUpdate:
     """从 BriefingResponse 派生单条 watch 的增量视图（只读，不写回）。
 
@@ -79,7 +84,7 @@ def compute_watch_update(
     believed_at = _latest_belief_at(beliefs, watch.query) if watch.type == "entity" else None
     candidates = [t for t in (checked_at, believed_at) if t is not None]
     since = max(candidates) if candidates else None
-    label = _since_label(since, now)
+    label = _since_label(since, now, lang)
 
     if watch.type == "entity":
         # v1 局限（诚实标注）：ChangeBrief 无独立时间字段，无法逐条判「已见」；
@@ -96,7 +101,7 @@ def compute_watch_update(
             query=watch.query,
             since=_iso(since) if since else None,
             has_changes=has,
-            summary=_summary_for(new, label),
+            summary=_summary_for(new, label, lang),
             review_hint=hint,
             freshness=briefing.freshness,
             new_changes=new,
@@ -110,7 +115,11 @@ def compute_watch_update(
             query=watch.query,
             since=_iso(since) if since else None,
             has_changes=n > 0,
-            summary=f"自{label}以来有 {n} 篇相关报道" if n else f"自{label}以来没有新报道",
+            summary=(
+            f"自{label}以来有 {n} 篇相关报道"
+            if lang == "zh"
+            else f"{n} related reports since {label}" if n else f"No related reports since {label}"
+        ),
             freshness=briefing.freshness,
             new_articles=n,
         )
@@ -121,7 +130,11 @@ def compute_watch_update(
         query=watch.query,
         since=_iso(since) if since else None,
         has_changes=False,
-        summary="问题型订阅暂不支持增量比较",
+        summary=(
+            "问题型订阅暂不支持增量比较"
+            if lang == "zh"
+            else "Question-based subscriptions do not support incremental comparison yet"
+        ),
         note="v1 边界：question 订阅的增量比较将在 Agent 嵌入阶段（阶段 4）接入。",
         freshness=briefing.freshness,
     )

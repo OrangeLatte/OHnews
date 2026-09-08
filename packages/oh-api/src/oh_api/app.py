@@ -51,7 +51,7 @@ from oh_agents.tracking import TrackingStore
 from oh_agents.translation_agent import build_translation_graph
 from oh_agents.watch_update import compute_watch_update
 from oh_api.agents import build_router as build_agent_sessions_router
-from oh_api.briefing import build_briefing, build_briefing_with_signals, build_dossier
+from oh_api.briefing import _corpus_lang, build_briefing, build_briefing_with_signals, build_dossier
 from oh_api.change_landscape import build_change_field, build_change_landscape
 from oh_api.charts import build_emotion_density, build_flow_daily, build_ndi_rank
 from oh_api.metrics import build_router as build_metrics_router
@@ -156,6 +156,21 @@ class MonitorAnalysisOutput(BaseModel):
     evidence_assessment: list[str] = Field(default_factory=list, max_length=5)
     uncertainties: list[str] = Field(default_factory=list, max_length=5)
     recommended_review: str = Field(min_length=1, max_length=400)
+
+
+def _lang_map(path: Path) -> dict[str, str]:
+    """source_id → language（双语化数据层：briefing/watch 按语料 majority 语言出文案）。"""
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8") as f:
+        doc = yaml.safe_load(f) or {}
+    out: dict[str, str] = {}
+    for item in doc.get("sources", []):
+        sid = item.get("source_id")
+        lang = item.get("language")
+        if sid and lang:
+            out[str(sid)] = str(lang)
+    return out
 
 
 def _load_tier_map(path: Path) -> dict[str, SourceTier]:
@@ -266,6 +281,12 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
 
     def _tier_map() -> dict[str, SourceTier]:
         return _lazy("tier_map", lambda: _load_tier_map(paths.sources_yaml))
+
+    def _lang_map_safe() -> dict[str, str]:
+        return _lazy("lang_map", lambda: _lang_map(paths.sources_yaml))
+
+    def _corpus_lang_safe() -> str:
+        return _corpus_lang(list(_bronze().iter_records()), _lang_map_safe())
 
     def _alerts() -> Any:
         from oh_agents.alerts import AlertStore
@@ -944,7 +965,9 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         }
 
     @app.get("/api/briefing", response_model=BriefingResponse)
-    def briefing(days: int = 3, top: int = 5, min_per_source: int = 10) -> BriefingResponse:
+    def briefing(
+        days: int = 3, top: int = 5, lang: str = "zh", min_per_source: int = 10
+    ) -> BriefingResponse:
         """产品 Briefing（阶段 1-b）：DataFreshness + ChangeBrief 队列（人话语义）。
 
         changes 为空 = 「今天没有值得看的变化」显式状态（硬验收 7）。
@@ -954,6 +977,8 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             store=_store(),
             registry=_registry(),
             tier_map=_tier_map(),
+            lang=lang,
+            lang_by_source=_lang_map_safe(),
             now=_now(),
             days=max(1, days),
             top=top,
@@ -1052,7 +1077,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         }
 
     @app.get("/api/change-field", response_model=ChangeFieldPayload)
-    def change_field(days: int = 30) -> ChangeFieldPayload:
+    def change_field(days: int = 30, lang: str = "zh") -> ChangeFieldPayload:
         """叙事场时序（T8）：每日×泳道×框架计数 + 合格变化点（前端只渲染）。"""
         now = _now()
         records = list(_bronze().iter_records())
@@ -1061,6 +1086,8 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             store=_store(),
             registry=_registry(),
             tier_map=_tier_map(),
+            lang=lang,
+            lang_by_source=_lang_map_safe(),
             now=now,
             days=7,
         )
@@ -1080,6 +1107,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         min_per_source: int = 10,
         source_id: list[str] = Query(default_factory=list),  # noqa: B008
         language: str | None = None,
+        lang: str = "zh",
     ) -> ChangeLandscape:
         """叙事变化场聚合（阶段 1.5-c，T1 更名去沙漏）：后端拼图，前端只渲染。
 
@@ -1090,6 +1118,8 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             store=_store(),
             registry=_registry(),
             tier_map=_tier_map(),
+            lang=lang,
+            lang_by_source=_lang_map_safe(),
             now=_now(),
             days=max(1, days),
             top=top,
@@ -1099,7 +1129,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         )
 
     @app.get("/api/home", response_model=HomePayload)
-    def home(days: int = 7, top: int = 5) -> HomePayload:
+    def home(days: int = 7, lang: str = "zh", top: int = 5) -> HomePayload:
         """首页单次聚合（T4）：briefing + 变化场 + watchlist 一次返回。
 
         消除前端 4 并发请求竞态；briefing_viewed 去重到前端单一数据源。
@@ -1111,6 +1141,8 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             store=_store(),
             registry=_registry(),
             tier_map=_tier_map(),
+            lang=lang,
+            lang_by_source=_lang_map_safe(),
             now=now,
             days=max(1, days),
             top=top,
@@ -1122,6 +1154,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                 store=_store(),
                 registry=_registry(),
                 tier_map=_tier_map(),
+                lang_by_source=_lang_map_safe(),
                 now=now,
                 days=max(1, days),
                 top=top,
@@ -1464,13 +1497,16 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             store=_store(),
             registry=_registry(),
             tier_map=_tier_map(),
+            lang_by_source=_lang_map_safe(),
             now=now,
             days=3,
             top=30,
         )
         beliefs = _beliefs() if w.type == "entity" else None
         topic_hits = _topic_hits(w.query, now) if w.type == "topic" else None
-        return compute_watch_update(w, briefing, beliefs=beliefs, now=now, topic_hits=topic_hits)
+        return compute_watch_update(
+            w, briefing, beliefs=beliefs, now=now, topic_hits=topic_hits, lang=_corpus_lang_safe()
+        )
 
     @app.post("/api/watches/{watch_id}/review", response_model=WatchReview)
     def watch_review(watch_id: str) -> WatchReview:
@@ -1595,7 +1631,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         return Response(status_code=204)
 
     @app.get("/api/tracking/{unit_id}/update")
-    def tracking_update(unit_id: str) -> dict[str, Any]:
+    def tracking_update(unit_id: str, lang: str = "zh") -> dict[str, Any]:
         """增量视图：track=briefing 命中；alert=最近触发；element=拆解元素命中。"""
         st = _tracking()
         unit = st.get(unit_id)
@@ -1616,17 +1652,22 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                 store=_store(),
                 registry=_registry(),
                 tier_map=_tier_map(),
+            lang_by_source=_lang_map_safe(),
                 now=now,
                 days=7,
                 top=30,
             )
-            upd = compute_watch_update(_WatchLike(unit), briefing, beliefs=_beliefs(), now=now)
+            upd = compute_watch_update(
+                _WatchLike(unit), briefing, beliefs=_beliefs(), now=now, lang=lang
+            )
         elif unit.kind == "topic":
             briefing, _sig = build_briefing_with_signals(
                 bronze_iter=_bronze().iter_records(),
                 store=_store(),
                 registry=_registry(),
                 tier_map=_tier_map(),
+                lang=lang,
+                lang_by_source=_lang_map_safe(),
                 now=now,
                 days=7,
                 top=30,
@@ -1637,6 +1678,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                 beliefs=None,
                 now=now,
                 topic_hits=_topic_hits(unit.query, now),
+                lang=lang,
             )
         elif unit.kind == "element":
             ek, _, val = unit.query.partition(":")

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
@@ -66,6 +67,31 @@ _WHY_NOW: dict[ChangeKind, str] = {
     "expectation_gap": "官方与市场语料的温差在本窗口达到显著水平",
 }
 
+_HEADLINE_EN: dict[ChangeKind, str] = {
+    "attention_spike": "Unusual clustering of coverage on one topic",
+    "narrative_shift": "The dominant narrative in coverage has shifted",
+    "divergence_rise": "Official and market accounts are drifting apart",
+    "expectation_gap": "Official tone and market expectations are misaligned",
+}
+
+_WHAT_EN: dict[ChangeKind, str] = {
+    "attention_spike": "Coverage volume in this window clearly exceeds the recent baseline",
+    "narrative_shift": "The leading framing of recent reports has moved away from the prior period",
+    "divergence_rise": "Interpretation gaps between official and market corpora have widened",
+    "expectation_gap": "Official tone stresses stability; market coverage centers on risk",
+}
+
+_WHY_NOW_EN: dict[ChangeKind, str] = {
+    "attention_spike": "Several previously quiet sources published densely in the same window",
+    "narrative_shift": "The framing reversal happened inside the current reporting window",
+    "divergence_rise": "The narrative divergence index reached a recent high or jumped this window",
+    "expectation_gap": "The temperature gap between official and market corpora is significant now",
+}
+
+_HEADLINE_ZH = _HEADLINE
+_WHAT_ZH = _WHAT
+_WHY_NOW_ZH = _WHY_NOW
+
 _STANCE_ZH: dict[str, str] = {
     "SUPPORTIVE": "支持",
     "CRITICAL": "质疑",
@@ -92,6 +118,7 @@ def data_freshness(
     *,
     now: datetime,
     lookback_days: int = 3,
+    lang: str = "zh",
 ) -> DataFreshness:
     """数据新鲜度：以 bronze 最新 published_at 为准（PIT 有效记录）。
 
@@ -113,11 +140,19 @@ def data_freshness(
         return DataFreshness(
             as_of=now,
             staleness="stale",
-            note="数据尚未覆盖任何有效记录",
+            note=(
+                "No coverage in the corpus yet"
+                if lang == "en"
+                else "数据尚未覆盖任何有效记录"
+            ),
         )
     gap_hours = (now - newest).total_seconds() / 3600
     level: StalenessLevel = "fresh" if gap_hours < 24 else "aging" if gap_hours < 72 else "stale"
-    note = f"数据截至 {newest:%m月%d日 %H:%M} UTC"
+    note = (
+        f"Data as of {newest:%b %d %H:%M} UTC"
+        if lang == "en"
+        else f"数据截至 {newest:%m月%d日 %H:%M} UTC"
+    )
     return DataFreshness(
         as_of=newest,
         coverage_start=window_start,
@@ -127,9 +162,17 @@ def data_freshness(
     )
 
 
-def _subjects(signal: Signal, registry: EntityRegistry) -> list[SubjectRef]:
+def _subjects(
+    signal: Signal, registry: EntityRegistry, lang: str = "zh"
+) -> list[SubjectRef]:
     """信号 → 用户引用：实体必带；event 维度信号附事件引用。"""
-    label = _cjk_label(registry, signal.entity_id)
+    spec = registry.get(signal.entity_id)
+    aliases = list(spec.aliases) if spec is not None else []
+    if lang == "zh":
+        label = _cjk_label(registry, signal.entity_id)
+    else:
+        latin = (a for a in aliases if not any("\u4e00" <= c <= "\u9fff" for c in a))
+        label = next(latin, signal.entity_id)
     refs = [SubjectRef(kind="entity", id=signal.entity_id, label=label)]
     for evid in signal.evidence_ids:
         if evid.startswith("ev-"):
@@ -149,19 +192,33 @@ def _strength_word(strength: float) -> StrengthWord:
     return "insufficient"
 
 
-def _brief(signal: Signal, registry: EntityRegistry) -> ChangeBrief:
+def _corpus_lang(
+    records: list[BronzeRecord], lang_by_source: dict[str, str] | None
+) -> str:
+    """语料语言 = 窗口内各信源语言的多数派（缺省 zh，demo 英文源 majority=en）。"""
+    if not lang_by_source:
+        return "zh"
+    counts: Counter[str] = Counter()
+    for rec in records:
+        lang = lang_by_source.get(rec.source_id)
+        if lang:
+            counts[lang] += 1
+    return counts.most_common(1)[0][0] if counts else "zh"
+
+
+def _brief(signal: Signal, registry: EntityRegistry, lang: str = "zh") -> ChangeBrief:
     kind = _KIND_TO_CHANGE.get(signal.kind.value, "attention_spike")
     is_score = float(signal.metrics.get("intelligence_score", 0.0) or 0.0)
     urgency = "high" if is_score >= 80 else "medium" if is_score >= 50 else "low"
     return ChangeBrief(
         change_id=signal.signal_id,
         kind=kind,
-        headline=_HEADLINE[kind],
-        what=_WHAT[kind],
-        why_now=_WHY_NOW[kind],
+        headline=(_HEADLINE_ZH if lang == "zh" else _HEADLINE_EN)[kind],
+        what=(_WHAT_ZH if lang == "zh" else _WHAT_EN)[kind],
+        why_now=(_WHY_NOW_ZH if lang == "zh" else _WHY_NOW_EN)[kind],
         strength_word=_strength_word(float(signal.strength)),
         urgency=urgency,
-        subjects=_subjects(signal, registry),
+        subjects=_subjects(signal, registry, lang),
     )
 
 
@@ -175,10 +232,16 @@ def build_briefing_with_signals(
     days: int = 3,
     top: int = 5,
     min_per_source: int = 10,
+    lang_by_source: dict[str, str] | None = None,
+    lang: str | None = None,
 ) -> tuple[BriefingResponse, list[Signal]]:
-    """Briefing 数据面 + 对应 Signal 对象（沙漏聚合等需要证据链回查的场景）。"""
+    """Briefing 数据面 + 对应 Signal 对象（沙漏聚合等需要证据链回查的场景）。
+
+    lang_by_source 提供时，数据卡文案按语料语言多数派输出（en/zh）。
+    """
     records = list(bronze_iter)
-    fresh = data_freshness(records, now=now, lookback_days=days)
+    lang = lang or _corpus_lang(records, lang_by_source)
+    fresh = data_freshness(records, now=now, lookback_days=days, lang=lang)
     signals = detect_signals(
         iter(records),
         store,
@@ -190,7 +253,7 @@ def build_briefing_with_signals(
     )
     response = BriefingResponse(
         freshness=fresh,
-        changes=[_brief(s, registry) for s in signals],
+        changes=[_brief(s, registry, lang) for s in signals],
     )
     return response, signals
 
@@ -205,6 +268,8 @@ def build_briefing(
     days: int = 3,
     top: int = 5,
     min_per_source: int = 10,
+    lang_by_source: dict[str, str] | None = None,
+    lang: str | None = None,
 ) -> BriefingResponse:
     """Briefing 页数据面：DataFreshness + 有限 ChangeBrief 队列。
 
@@ -220,6 +285,8 @@ def build_briefing(
         days=days,
         top=top,
         min_per_source=min_per_source,
+        lang=lang,
+        lang_by_source=lang_by_source,
     )
     return response
 
