@@ -192,7 +192,7 @@ def detect_ndi_alerts(
     jump: float = NDI_JUMP,
 ) -> list[Signal]:
     """NDI_ALERT：最新 ok 点位处于高位或相对上一 ok 点大幅上升。"""
-    entities_of = {e.event_id: (e.entities or ["?"]) for e in events}
+    entities_of = {e.event_id: (e.entities or []) for e in events}
     by_event: dict[str, list[Any]] = {}
     for p in points:
         # PIT 纪律：丢弃 ts 晚于 now 的点位（ndi_all 为全量接口，过滤责任在消费侧）
@@ -202,12 +202,16 @@ def detect_ndi_alerts(
             by_event.setdefault(p.event_id, []).append(p)
     sigs: list[Signal] = []
     for event_id, ps in sorted(by_event.items()):
+        ents = entities_of.get(event_id) or []
+        if not ents:
+            # 事件缺实体归属（含被锚点过滤的显式事件）：跳过而非产 '?' 脏信号
+            continue
         ps = sorted(ps, key=lambda x: x.ts)
         latest, prev = ps[-1], (ps[-2] if len(ps) >= 2 else None)
         delta = (latest.ndi - prev.ndi) if prev is not None else 0.0
         if latest.ndi < high and delta < jump:
             continue
-        entity_id = entities_of.get(event_id, ["?"])[0]
+        entity_id = ents[0]
         if delta >= jump:
             what = f"叙事分歧指数由 {prev.ndi:.2f} 升至 {latest.ndi:.2f}（Δ{delta:+.2f}）"
             strength = min(100.0, delta * 400.0)
@@ -247,14 +251,18 @@ def detect_expectation_gaps(
     threshold: float = GAP_HIGH,
 ) -> list[Signal]:
     """EXPECTATION_GAP：官方-市场温差 ΔT（认知/预期错位）。"""
-    entities_of = {e.event_id: (e.entities or ["?"]) for e in events}
+    entities_of = {e.event_id: (e.entities or []) for e in events}
     sigs: list[Signal] = []
     for event_id in sorted(rows_by_event):
         rows = rows_by_event[event_id]
         gap = temperature_gap(rows, tier_map, min_per_source=min_per_source)
         if gap is None or gap < threshold:
             continue
-        entity_id = entities_of.get(event_id, ["?"])[0]
+        ents = entities_of.get(event_id) or []
+        if not ents:
+            # 事件缺实体归属：跳过而非产 '?' 脏信号
+            continue
+        entity_id = ents[0]
         sigs.append(
             Signal(
                 signal_id=f"sig-gap-{event_id}-{now:%Y%m%d}",
@@ -326,7 +334,9 @@ def _enhance_signals(
         gap = temperature_gap(rows, tier_map, min_per_source=min_per_source) if rows else None
         novelty = novelty_factor(0.0)
         score = intelligence_score(
-            importance=entity_importance(registry.entity_type(sig.entity_id)),
+            importance=entity_importance(
+                registry.entity_type(sig.entity_id) if sig.entity_id in registry.ids() else "other"
+            ),
             novelty=novelty,
             evidence=evidence,
             persistence=persistence,
