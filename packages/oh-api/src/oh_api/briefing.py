@@ -486,6 +486,26 @@ def _evidence_gaps(
     return gaps
 
 
+def detection_anchor(
+    records: Iterable[BronzeRecord],
+    store: SqliteStore,
+    now: datetime,
+) -> datetime:
+    """数据末梢锚定：采集断流时（now 距最新数据 >1d）检测锚点跟随数据覆盖期。
+
+    锚点取各数据面（bronze 正文 / silver stances）最旧的尾——检测窗口必须落在
+    每个数据面的覆盖期内，否则慢面（stances 通常滞后 bronze）的 recent 窗为空、
+    信号恒零。signal_id 内嵌锚点日期，所有实时重检的端点必须共用本函数，
+    否则跨日失配（列表 ID 与详情 ID 不一致 → 详情 404）。
+    """
+    pubs = [r.published_at for r in records if r.published_at]
+    stance_tail = max((r.ts for r in store.stances_asof(now)), default=None)
+    tails = [t for t in (max(pubs) if pubs else None, stance_tail) if t]
+    if tails and (now - min(tails)) > timedelta(days=1):
+        return min(tails)
+    return now
+
+
 def build_dossier(
     change_id: str,
     *,
@@ -506,7 +526,7 @@ def build_dossier(
         store,
         registry,
         tier_map,
-        now,
+        detection_anchor(records, store, now),
         min_per_source=min_per_source,
         top_n=50,
     )

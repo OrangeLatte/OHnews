@@ -16,6 +16,7 @@ from oh_api.briefing import (
     bucket_evidence,
     build_briefing_with_signals,
     data_freshness,
+    detection_anchor,
 )
 from oh_api.search import search_bronze
 from oh_contracts.briefing import BriefingResponse, EvidenceCitation, EvidenceSet
@@ -704,18 +705,10 @@ def build_change_landscape(
             if (not _sid or r.source_id in _sid)
             and (not language or (r.normalized.get("language") or "") == language)
         ]
-    # 数据末梢锚定：采集断流时（now 距最新数据 >1d），检测与窗口锚点跟随数据
-    # 覆盖期，避免检测尾窗空转导致信号恒零；数据过时事实仍由 freshness
-    # 警告如实承担（staleness 以真实 now 计算，不因锚定而被掩盖）。
-    # 锚点取各数据面（bronze 正文 / silver stances）最旧的尾——检测窗口
-    # 必须落在每个数据面的覆盖期内，否则慢面（stances 通常滞后 bronze）
-    # 的 recent 窗为空、信号恒零。
-    _pubs = [r.published_at for r in records if r.published_at]
-    _stance_tail = max((r.ts for r in store.stances_asof(now)), default=None)
-    _tails = [t for t in (max(_pubs) if _pubs else None, _stance_tail) if t]
-    det_now = now
-    if _tails and (now - min(_tails)) > timedelta(days=1):
-        det_now = min(_tails)
+    # 数据末梢锚定：与 build_dossier 共用 detection_anchor，保证 signal_id
+    # 内嵌锚点日期一致（列表 ID 与详情 ID 可互查）；数据过时事实仍由
+    # freshness 警告如实承担（staleness 以真实 now 计算，不因锚定被掩盖）。
+    det_now = detection_anchor(records, store, now)
     d = max(1, days)
     lo_base, lo_cur, _ = _iso_window(det_now, d)
     base = _split_window(records, lo_base, lo_cur)
