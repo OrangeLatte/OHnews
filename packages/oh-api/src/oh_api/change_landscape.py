@@ -399,6 +399,7 @@ def _qualified_changes(
     tier_map: dict[str, SourceTier],
     registry: EntityRegistry,
     now: datetime,
+    lang: str = "zh",
 ) -> tuple[list[QualifiedChange], list[EvidenceCitation], int]:
     """腰部 Change Point + 证据引用（supporting 桶前 2 条/变化）+ Gate 拦截计数。
 
@@ -419,6 +420,7 @@ def _qualified_changes(
                 tier_map=tier_map,
                 as_of=now,
                 registry=registry,
+                lang=lang,
             )
         except (KeyError, ValueError):
             gated_out += 1
@@ -764,6 +766,7 @@ def build_change_landscape(
         tier_map=tier_map,
         registry=registry,
         now=det_now,
+        lang=corpus_lang,
     )
     warnings = _warnings(
         current_w, streams, changes, freshness.staleness, gated_out, narr, corpus_lang
@@ -815,6 +818,7 @@ def build_change_field(
     now: datetime,
     days: int = 30,
     changes: list[QualifiedChange] | None = None,
+    lang: str = "zh",
 ) -> ChangeFieldPayload:
     """叙事场时序（T8）：每日×泳道(tier 簇)×框架计数矩阵。
 
@@ -835,9 +839,7 @@ def build_change_field(
         lane_map.setdefault(lane, Counter())[str(r.frame)] += 1
     # 逐日连续化（T8 v2）：窗口内每天输出点位，缺测日 lanes 为空（前端占位），
     # 保证横轴以天为维度且与日历对齐（m2587 反馈：每天都要有数据可视化呈现）。
-    cal_days = {
-        (lo + timedelta(days=i)).date().isoformat() for i in range(d + 1)
-    }
+    cal_days = {(lo + timedelta(days=i)).date().isoformat() for i in range(d + 1)}
     all_days = sorted(set(buckets) | cal_days)
     series = [
         ChangeFieldPoint(
@@ -850,5 +852,5 @@ def build_change_field(
         days=d,
         series=series,
         changes=list(changes or []),
-        freshness=data_freshness(records, now=now, lookback_days=d),
+        freshness=data_freshness(records, now=now, lookback_days=d, lang=lang),
     )

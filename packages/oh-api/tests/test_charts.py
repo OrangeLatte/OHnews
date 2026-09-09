@@ -70,6 +70,13 @@ def test_ndi_rank_top_and_entity_labels() -> None:
     assert rows[1]["label"] == "美联储"
     assert all(r["entity"] != "x" for r in rows)
 
+    # lang=en：拉丁别名优先；zh：CJK 别名优先，无 CJK 别名回退首别名
+    rows_en = build_ndi_rank(pts, registry=_Reg(), now=NOW, limit=8, lang="en")
+    assert rows_en[1]["label"] == "Fed"
+    rows_zh = build_ndi_rank(pts, registry=_Reg(), now=NOW, limit=8, lang="zh")
+    assert rows_zh[0]["label"] == "boj"  # 无注册表 → 回退 entity id
+    assert rows_zh[1]["label"] == "美联储"
+
 
 def test_emotion_density_daily_mean() -> None:
     anns = [

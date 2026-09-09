@@ -43,6 +43,7 @@ def build_ndi_rank(
     registry: Any,
     now: datetime,
     limit: int = 8,
+    lang: str = "zh",
 ) -> list[dict[str, Any]]:
     """G3：实体分歧榜——每实体取最新可测 NDI 点，降序 Top-N（弃权点不计）。"""
     latest: dict[str, Any] = {}
@@ -60,11 +61,17 @@ def build_ndi_rank(
         if entity in seen_entities:
             continue
         spec = registry.get(entity) if entity else None
-        aliases = spec.aliases if spec else []
-        label = next(
-            (a for a in aliases if any("\u4e00" <= ch <= "\u9fff" for ch in a)),
-            entity,
-        )
+        aliases = list(spec.aliases) if spec else []
+        if lang == "en":
+            label = next(
+                (a for a in aliases if not any("\u4e00" <= ch <= "\u9fff" for ch in a)),
+                entity,
+            )
+        else:
+            label = next(
+                (a for a in aliases if any("\u4e00" <= ch <= "\u9fff" for ch in a)),
+                aliases[0] if aliases else entity,
+            )
         rows.append(
             {
                 "entity": entity,

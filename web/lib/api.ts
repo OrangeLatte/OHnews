@@ -453,8 +453,8 @@ export const api = {
   // E3 聚合端点（返回裸 list[dict]，无命名 schema——内联类型）
   flowDaily: (days = 30) =>
     get<Array<Record<string, number | string>>>(`/flow/daily?days=${days}`),
-  ndiRank: (limit = 8) =>
-    get<Array<{ entity: string; label: string; ndi: number; event_id: string; ts: string; n_sources: number }>>(`/ndi/rank?limit=${limit}`),
+  ndiRank: (limit = 8, lang = "zh") =>
+    get<Array<{ entity: string; label: string; ndi: number; event_id: string; ts: string; n_sources: number }>>(`/ndi/rank?limit=${limit}&lang=${lang}`),
   emotionDensity: (days = 30) =>
     get<Array<Record<string, number | string>>>(`/annotations/emotion?days=${days}`),
   changeField: (days = 30, lang = "zh") =>

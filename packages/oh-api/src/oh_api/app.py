@@ -1012,10 +1012,14 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         )
 
     @app.get("/api/ndi/rank")
-    def ndi_rank(limit: int = 8) -> list[dict[str, Any]]:
+    def ndi_rank(limit: int = 8, lang: str = "zh") -> list[dict[str, Any]]:
         """G3：实体分歧榜——每实体最新可测 NDI 降序 Top-N（弃权点不计）。"""
         return build_ndi_rank(
-            _store().ndi_all(), registry=_registry(), now=_now(), limit=max(1, min(limit, 20))
+            _store().ndi_all(),
+            registry=_registry(),
+            now=_now(),
+            limit=max(1, min(limit, 20)),
+            lang="en" if lang.startswith("en") else "zh",
         )
 
     @app.get("/api/annotations/emotion")
@@ -1098,6 +1102,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             now=now,
             days=max(1, days),
             changes=landscape.qualified_changes,
+            lang="en" if lang.startswith("en") else "zh",
         )
 
     @app.get("/api/change-landscape", response_model=ChangeLandscape)
@@ -1164,7 +1169,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
         )
 
     @app.get("/api/changes/{change_id}", response_model=ChangeDossier)
-    def change_dossier(change_id: str, days: int = 3) -> ChangeDossier:
+    def change_dossier(change_id: str, days: int = 3, lang: str = "zh") -> ChangeDossier:
         """变化详情包（阶段 1-b）：Dossier 含三桶证据 + 缺口 + 覆盖摘要。"""
         dossier = build_dossier(
             change_id,
@@ -1174,6 +1179,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
             tier_map=_tier_map(),
             now=_now(),
             days=max(1, days),
+            lang="en" if lang.startswith("en") else "zh",
         )
         if dossier is None:
             raise HTTPException(404, f"change not found: {change_id}")
@@ -1652,7 +1658,7 @@ def create_app(paths: AppPaths | None = None) -> FastAPI:
                 store=_store(),
                 registry=_registry(),
                 tier_map=_tier_map(),
-            lang_by_source=_lang_map_safe(),
+                lang_by_source=_lang_map_safe(),
                 now=now,
                 days=7,
                 top=30,

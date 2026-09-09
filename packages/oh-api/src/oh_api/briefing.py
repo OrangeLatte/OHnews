@@ -140,11 +140,7 @@ def data_freshness(
         return DataFreshness(
             as_of=now,
             staleness="stale",
-            note=(
-                "No coverage in the corpus yet"
-                if lang == "en"
-                else "数据尚未覆盖任何有效记录"
-            ),
+            note=("No coverage in the corpus yet" if lang == "en" else "数据尚未覆盖任何有效记录"),
         )
     gap_hours = (now - newest).total_seconds() / 3600
     level: StalenessLevel = "fresh" if gap_hours < 24 else "aging" if gap_hours < 72 else "stale"
@@ -162,9 +158,7 @@ def data_freshness(
     )
 
 
-def _subjects(
-    signal: Signal, registry: EntityRegistry, lang: str = "zh"
-) -> list[SubjectRef]:
+def _subjects(signal: Signal, registry: EntityRegistry, lang: str = "zh") -> list[SubjectRef]:
     """信号 → 用户引用：实体必带；event 维度信号附事件引用。"""
     spec = registry.get(signal.entity_id)
     aliases = list(spec.aliases) if spec is not None else []
@@ -192,9 +186,7 @@ def _strength_word(strength: float) -> StrengthWord:
     return "insufficient"
 
 
-def _corpus_lang(
-    records: list[BronzeRecord], lang_by_source: dict[str, str] | None
-) -> str:
+def _corpus_lang(records: list[BronzeRecord], lang_by_source: dict[str, str] | None) -> str:
     """语料语言 = 窗口内各信源语言的多数派（缺省 zh，demo 英文源 majority=en）。"""
     if not lang_by_source:
         return "zh"
@@ -365,6 +357,7 @@ def bucket_evidence(
     as_of: datetime,
     registry: EntityRegistry | None = None,
     claim: str = "",
+    lang: str = "zh",
 ) -> EvidenceSet:
     """信号证据链 → 三桶 + 缺口（U3 证据语义）。
 
@@ -415,12 +408,24 @@ def bucket_evidence(
         if stance_rows:
             r0 = stance_rows[0]
             stance_value = r0.stance.value if hasattr(r0.stance, "value") else str(r0.stance)
-            reason = f"立场标注为「{_STANCE_ZH.get(stance_value, stance_value)}」"
+            if lang == "en":
+                reason = f'Stance annotated as "{stance_value.lower()}"'
+            else:
+                reason = f"立场标注为「{_STANCE_ZH.get(stance_value.upper(), stance_value)}」"
         else:
-            reason = "无立场标注，仅提供背景信息"
+            reason = (
+                "No stance annotation; contextual evidence only"
+                if lang == "en"
+                else "无立场标注，仅提供背景信息"
+            )
         enriched = cite.model_copy(
             update={
-                "claim": claim or f"关于 {signal.entity_id} 的{signal.kind.value}信号",
+                "claim": claim
+                or (
+                    f"{signal.kind.value} signal for {signal.entity_id}"
+                    if lang == "en"
+                    else f"关于 {signal.entity_id} 的{signal.kind.value}信号"
+                ),
                 "relation": relation,
                 "reason": reason,
                 "independent_source_id": cite.source_id,
@@ -491,10 +496,11 @@ def build_dossier(
     now: datetime,
     days: int = 3,
     min_per_source: int = 10,
+    lang: str = "zh",
 ) -> ChangeDossier | None:
     """变化详情包：change_id 反查信号 → Dossier（未命中返回 None）。"""
     records = list(bronze_iter)
-    fresh = data_freshness(records, now=now, lookback_days=days)
+    fresh = data_freshness(records, now=now, lookback_days=days, lang=lang)
     signals = detect_signals(
         iter(records),
         store,
@@ -508,7 +514,7 @@ def build_dossier(
     if signal is None:
         return None
 
-    brief = _brief(signal, registry)
+    brief = _brief(signal, registry, lang)
     bronze_by_key = {r.item_key: r for r in records}
     evidence = bucket_evidence(
         signal,
@@ -518,6 +524,7 @@ def build_dossier(
         as_of=now,
         registry=registry,
         claim=brief.headline,
+        lang=lang,
     )
 
     # 质量门 1.5-b：coverage 一律从分桶引文实算（与 EvidenceSet 严格一致），

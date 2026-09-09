@@ -167,7 +167,9 @@ export async function fetchLandscape(params: LandscapeParams | number): Promise<
 }
 
 export async function fetchNdiRank(limit = 8): Promise<NdiRankRow[]> {
-  const r = await fetch(`/api/ndi/rank?limit=${limit}`, { cache: "no-store" });
+  const lang =
+    typeof window !== "undefined" ? localStorage.getItem("oh-locale") || "zh" : "zh";
+  const r = await fetch(`/api/ndi/rank?limit=${limit}&lang=${lang}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`ndi/rank: HTTP ${r.status}`);
   return r.json();
 }
