@@ -35,3 +35,6 @@ config/gold_set/annotated_*.jsonl
 # GIF 中间帧（构建产物）
 docs/frames_en/
 docs/frames_zh/
+
+# demo bundle 构建产物
+dist/
