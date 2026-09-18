@@ -1,100 +1,59 @@
 # OH!News
 
-**AI 原生的新闻情报终端**：LangGraph 智能体对每篇文章提取 18 类结构化元素，把每条论断锚定到原文的字符级坐标，让多源新闻变成可追溯的闭环——*注意到变化 → 检验证据 → 形成自己的判断 → 长期追踪*。
+**证据优先的新闻工作台** —— 看清官方与市场媒体如何对同一事件给出不同叙事，点击任意 AI 论断
+即可跳回原文原句，并保留一条只增不改的记录：随着事件推进，你自己的判断如何变化。
 
-LLM 原生设计：三级模型路由 + schema 校验的结构化输出 + 对每条模型论断的确定性校验器 + 模型失效时对词典引擎的诚实降级。English · [English README](README.md)
+简体中文 · [English](README.md) · [更新日志](CHANGELOG.md) · [MIT 许可](LICENSE)
 
-认知闭环的新闻情报终端。简体中文 · [English](README.md)
+Python 3.12+ · FastAPI · Next.js 16 · LangGraph · 620+ 测试
 
-**许可**：[MIT](LICENSE) · Python 3.12+ · FastAPI · Next.js 16 · LangGraph · 627+ 测试
+---
 
-## 问题
+**输入：** 两周约 5,000 篇报道，来自 RSS / GDELT / FRED 信源（英文 + 中文）。
 
-今天的新闻消费在三个地方断裂：
+**输出：** 一个可运转的闭环——带置信区间的分歧信号、能点击回原文的证据、按实体追踪的变化、
+以及系统永不改写的判断时间线。
 
-1. **变化不可信。** 聚合器告诉你「发生了什么」，却没有任何东西告诉你：官方与市场的叙事是否真的
-   出现分歧——或者你以为的「转变」只是来源构成的改变。
-2. **证据不可达。** 结论引用「据报道」，但你永远打不开那条报道。从结论回到原文原句的路径是缺失的。
-3. **判断不留痕。** 你读完、形成看法，三周后无法回忆自己当时相信什么、依据是什么、之后出现的
-   信息是否本应改变它。
+![OH!News 演示：观察 → 调查 → 追踪 → 下判断](docs/demo_zh_v2.gif)
 
-OH!News 针对这三个断裂而建。
+全流程截图：[`docs/demo_zh`](docs/demo_zh) · 英文语料走查见英文版或下方。
 
-## 核心概念
+## 为什么不直接用 Feedly / Google News / ChatGPT？
 
-**认知闭环。** 产品按闭环组织，而不是信息流：
+| 能力 | Feedly / Google News | ChatGPT | OH!News |
+|---|---|---|---|
+| 发生了什么 | 标题 | 转述 | 标题 + 结构化信号 |
+| 官方 vs 市场叙事分歧 | ✗ | ✗ | ✓ NDI + bootstrap 置信区间（不可测时弃权） |
+| 论断 → 原文原句 | ✗ | ✗（可能幻觉） | ✓ 每个高亮都是经校验的字符级原文引用 |
+| 「自上次复核以来变了什么」 | ✗ | ✗ | ✓ 按实体建跟踪单元，复核日期显式 |
+| 记录*你的*判断且绝不悄悄改写 | ✗ | ✗ | ✓ 只增不改的认知时间线 |
+| 无 API Key 也能端到端运行 | — | ✗ | ✓ 词典引擎兜底 |
 
-```
-现在（什么变了）→ 调查（对证据验证）→ 追踪（跟踪后果）
-→ 记忆（存档你确认过的东西）→ 带着新基线回到现在
-```
+## 快速开始 —— 内置演示语料，无需 API Key
 
-每个阶段是独立的界面，承担不同的义务——发现必须诚实、验证必须有锚、追踪必须说明「自你上次
-复核以来变了什么」、记忆里只有你显式确认过的内容。
-
-**诚实测量。** 叙事分歧指数（NDI）度量同一事件上官方级报道与市场级报道的分歧程度：对两簇的
-框架分布做 Jeffreys 平滑，计算 Jensen–Shannon 距离并给出 bootstrap 置信区间。当任一簇的独立
-信源不足时，系统**弃权**——报告「不可测」而不是编造一个数字。同样的纪律贯穿全系统：LLM 不可用
-时拆解回退到标注为 `offline` 的词典引擎；缺测日期以断线呈现，绝不插值；覆盖率低于阈值时给出
-警告而不是掩盖。
-
-**有锚的论断。** AI 提取的每个元素（主体、核心事实、因果链、发布动机……）都携带 spans——原文中
-精确的字符区间。阅读视图将其渲染为颜色高亮；点击任一高亮即显示元素类型。坐标在服务端校验
-（越界或漂移的 span 被丢弃或重锚定），所以每个高亮都是原文引用，而非转述。
-
-**用户所有的判断。** 认知快照（立场+信心+理由）只在用户显式确认后写入。系统不会修订已存的判断，
-不会把指标转成建议，也不会把模型解释冒充为用户信念。
-
-**PIT 纪律。** 管道查询全部是时点查询：`*_asof` 访问器保证任何晚于 as-of 时刻发布的内容不会泄入
-答案。这使结果可复现、demo 数据集自洽。
-
-## 内部的 AI 设计
-
-- **三级模型路由**：`io` / `execute` / `strategic` 按任务成本与能力选模型（DeepSeek、智谱 GLM）。每次 LLM 调用都过 JSON-schema 门禁：输出不合法 ⇒ 该候选失败 ⇒ 路由器换下一供应商 ⇒ 全部失败则诚实降级，而不是猜一个答案。
-- **结构化信息抽取**：文章按句界分块、并发拆解（Semaphore ×3）为 18 类元素（主体、核心事实、硬核数据、因果链、立场、动机……），每个元素经三级定位器锚定原文——精确匹配 → 归一化匹配 → 顺序词锚定；超长 span 按自身 content 收窄，定位不到的如实记录，绝不编造坐标。
-- **对模型论断的确定性校验**：坐标映射回原文、漂移的引文丢弃、覆盖按字符区间并集统计——模型提议，校验器裁决。
-- **诚实的双引擎设计**：模型不可用或空产出时，回退词典引擎（规则 SVO/情绪词表）并标注 `engine=offline`——降级结果永远被标注，不会冒充模型输出。
-- **带人工闸门的 LangGraph 智能体**：共享 `AgentState` 增量 channel、横切 `user_gate` 条件边（运行中随时注入上下文）、`interrupt()` 确认闸门（落库前必经用户确认）、SQLite checkpointer 支持回放与时间旅行。
-- **成本纪律**：拆解按需触发+缓存；打分建议队列（信源可靠性×时效×实体相关性）+ 确认式入库，token 只花在你批准的文章上。
-- **prompt 工程纪律**：版本化 prompt（`dissect-v7`）、密度与反编造纪律、多语言抽取指引（en/zh/fr/es/de/ar）、prompt 变更被断言 system-prompt 不变量的测试门禁。
-
-## 演示
-
-两条完整走查（英文语料一条、中文语料一条），各走通 收件箱 → 研究 → 追踪 → 记忆 全流程，录制成 GIF：
-
-![英文演示](docs/demo_en_v2.gif)
-
-![中文演示](docs/demo_zh_v2.gif)
-
-高清截图：[`docs/demo_en`](docs/demo_en)、[`docs/demo_zh`](docs/demo_zh)。
-
-
-## 架构
-
-数据单向流动：信源采集进不可变 bronze 层，管道把原始文本变成被测量的信号，agent 与 API
-组装证据，网页呈现。全链 SQLite，除 LLM 供应商外无外部基础设施。
-
-```mermaid
-flowchart LR
-    S[oh-sources<br/>7 类适配器<br/>RSS / GDELT / FRED / ...] --> B[(bronze parquet<br/>不可变原始层)]
-    B --> P[oh-pipeline<br/>标注 · NDI · 检测 ·<br/>词典语义 · 知识图谱]
-    B --> A[oh-agents<br/>拆解 · 报告 ·<br/>简报 · 追踪 · 判断]
-    P --> ST[(oh-storage<br/>silver sqlite)]
-    A --> ST
-    ST --> API[oh-api<br/>FastAPI 门面<br/>observe / cases / tracking / archive]
-    LLM[oh-llm<br/>三级路由<br/>deepseek / zhipu] --> A
-    API --> W[web<br/>Next.js 报纸风前端<br/>NOW / INVESTIGATE / WATCH / MEMORY]
-    ST --> PE[(product_events<br/>12 类事件账本)]
+```bash
+git clone https://github.com/OrangeLatte/OHnews.git && cd OHnews
+bash scripts/dev/demo_up.sh
 ```
 
-认知闭环四阶段对应四个路由：NOW 呈现合格变化，INVESTIGATE 打开带锚定证据的变化档案，
-WATCH 追踪实体与元素，MEMORY 保存判断史与研究档案。
+打开 **http://localhost:3001** —— 一份真实的两周中英文语料（2026-08-26 → 09-08，约 5,000 篇）
+已就位，case、证据锚点、追踪历史可直接浏览。前端首次构建约 1 分钟。
 
+- 无需 LLM Key：不配 Key 系统照样端到端运行（词典引擎 + 模板报告）。Key 之后可在
+  网页 ⚙ 设置 → API Keys 配置。
+- 停止服务：`kill $(cat /tmp/ohnews-api.pid) $(cat /tmp/ohnews-web.pid)`
+- `demo_up.sh` 会用演示包**重置 data/**——别把它指向你在乎的数据目录。
 
-## 快速开始
+偏好 Docker？
 
-前置：Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)、Node 20+，可选一个 LLM API Key。
-没有 Key 系统照样端到端运行（词典引擎 + 模板报告）。
+```bash
+bash scripts/dev/demo_up.sh --docker    # 构建镜像，web 在 http://localhost:3100
+```
+
+<details>
+<summary>手动安装（用自己的数据，不用演示包）</summary>
+
+前置：Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)、Node 20+。
 
 ```bash
 # 1. 后端
@@ -116,47 +75,100 @@ uv run python scripts/dev/run_daily.py --days 15      # 事件/立场/NDI
 # 5. 打开 http://localhost:3001
 ```
 
-### 环境变量
-
 | 变量 | 必须 | 用途 |
 |---|---|---|
 | `DEEPSEEK_API_KEY` | 否 | io 层 LLM（JSON 模式结构化输出） |
 | `ZHIPU_API_KEY` | 否 | execute / strategic 层 |
 | `TAVILY_API_KEY` | 否 | agent 联网搜索 |
 
-## 教程：走完一个闭环
+</details>
 
-1. **观察**（`/observe`）——七个面板：信号、信源流、叙事框架、叙事分歧、情绪与行动、实体、
-   收件箱。每个面板对所选窗口的每一天渲染；缺测日有标记，不会跳过。
-2. **调查**（`/investigate`、`/cases`）——收件箱选一篇，建 case。系统抓取全文（剔除脚本与模板
-   噪音），拆解为 18 类元素并锚定字符区间，按需产出研究报告（真实性核查/意图动机/归因因果/
-   叙事框架/动态趋势/结构化摘要）。
+## 60 秒走完闭环
+
+```
+现在（什么变了）→ 调查（对证据验证）→ 追踪（跟踪后果）
+→ 记忆（存档你确认过的东西）→ 带着新基线回到现在
+```
+
+1. **现在**（`/observe`）——七个面板：信号、信源流、叙事框架、叙事分歧、情绪与行动、实体、
+   收件箱。缺测日有标记，绝不跳过。
+2. **调查**（`/investigate`）——收件箱选一篇，建 case。系统抓取全文，拆解为 18 类元素并锚定
+   字符区间，按需产出研究报告。
 3. **追踪**（`/watch`）——为实体、主题、问题或文章元素（如 `tone:optimism`）建跟踪单元。
    每个单元回答「自上次复核以来发生了什么」，复核日期显式呈现。
-4. **存档**（`/archive`）——只有你确认的才入库。档案可组合成一份带编者按的「档案报纸」。
-5. **下判断**——在任何变化页记录立场（维持/调整/反转/不确定）与信心。认知时间线只增不改，
-   系统永不改写。
+4. **记忆**（`/archive`）——只有你确认的才入库；档案可组合成一份带编者按的「档案报纸」。
+5. **下判断**——在任何变化页记录立场（维持/调整/反转/不确定）与信心。认知时间线只增不改。
 
-## 尚未实现（可拓展方向）
+**English demo**（同一闭环，英文语料）：
 
-当前版本是单用户、非商业的研究构建。以下是刻意留白的部分，均有一条清晰的拓展路径：
+![英文演示](docs/demo_en_v2.gif)
 
-- **语义检索。** 搜索目前是对 bronze 的子串匹配；没有 embedding，没有 FTS5 索引。标注库是
-  bge-small 级本地 embedding 层的天然底座（原计划 M3-S4，已推迟），落地后可解锁元素级、
-  情绪级的相似检索。
-- **LLM 增量标注。** 词典层按构造覆盖 100% 文章；对词典无法解析的子集（否定、反讽、隐含立场）
-  加一轮 LLM 标注可以提升立场质量。契约已区分 `engine=lexicon|llm`。
-- **知识图谱时序边。** 实体边库记录共现/层级/关系边及首末见时间，但没有时间切片的图遍历，
-  也没有图数据库。按 NDI 窗口投影边可以让叙事扩散可观察。
-- **作为模型的信念更新。** 认知快照已存储并可 diff，但系统不对信念修正建模（例如对新证据做
-  贝叶斯更新）。这是刻意的：闭环不应朝着「改变用户想法」的方向自我优化。
-- **多用户与鉴权。** 单用户；无账号、无同步。埋点账本已按 session 键控，是天然的挂点。
-- **流式采集。** 采集是批量/cron。流式路径（webhook、RSS pubsub）可以缩短新鲜度指示器当前
-  诚实呈现的时滞。
-- **跨语言对齐自动化。** 翻译由 LLM 生成并做确定性专名校验，但跨语言论断对齐（同一事实在两种
-  语言中的报道对齐）仍是人工。这是产品里最大的研究级空白。
-- **NDI 作为因果工具。** NDI 是分歧度量，不是预测器——界面如此声明。向因果归因拓展
-  （哪个来源簇移动了分歧）是开放问题。
+## 差异化在哪
+
+- **有锚的论断。** AI 提取的每个元素（主体、核心事实、因果链、动机……）都携带 spans——原文中
+  精确的字符区间。坐标在服务端校验：越界或漂移的 span 被丢弃或重锚定。每个高亮都是原文引用，
+  而非转述。
+- **诚实测量。** 叙事分歧指数（NDI）度量官方级与市场级报道的框架分歧：Jeffreys 平滑 +
+  Jensen–Shannon 距离 + bootstrap 置信区间。当任一簇独立信源不足时，系统**弃权**——报告
+  「不可测」而不是编造数字。
+- **用户所有的判断。** 认知快照（立场+信心+理由）只在用户显式确认后写入。系统不修订已存判断，
+  也不把模型解释冒充为用户信念。
+- **PIT 纪律。** 管道查询全部是时点查询（`*_asof` 访问器）：任何晚于 as-of 时刻发布的内容
+  不会泄入答案。结果可复现，演示数据集自洽。
+
+## 内部的 AI 设计
+
+- **三级模型路由**：`io` / `execute` / `strategic` 按任务成本与能力选模型（DeepSeek、智谱
+  GLM）。每次 LLM 调用都过 JSON-schema 门禁：输出不合法 ⇒ 该候选失败 ⇒ 换下一供应商 ⇒
+  全部失败则诚实降级，而不是猜一个答案。
+- **结构化信息抽取**：文章按句界分块、并发拆解为 18 类元素，每个元素经三级定位器锚定原文——
+  精确匹配 → 归一化匹配 → 顺序词锚定；定位不到的如实记录，绝不编造坐标。
+- **对模型论断的确定性校验**：坐标映射回原文、漂移的引文丢弃、覆盖按字符区间并集统计——
+  模型提议，校验器裁决。
+- **诚实的双引擎设计**：模型不可用时回退词典引擎并标注 `engine=offline`——降级结果永远被
+  标注，不会冒充模型输出。
+- **带人工闸门的 LangGraph 智能体**：共享 `AgentState` 增量 channel、横切 `user_gate`
+  条件边、`interrupt()` 确认闸门（落库前必经用户确认）、SQLite checkpointer 支持回放与
+  时间旅行。
+- **成本纪律**：拆解按需触发+缓存；打分建议队列 + 确认式入库，token 只花在你批准的文章上。
+
+## 架构
+
+数据单向流动：信源采集进不可变 bronze 层，管道把原始文本变成被测量的信号，agent 与 API
+组装证据，网页呈现。全链 SQLite，除 LLM 供应商外无外部基础设施。
+
+```mermaid
+flowchart LR
+    S[oh-sources<br/>7 类适配器<br/>RSS / GDELT / FRED / ...] --> B[(bronze parquet<br/>不可变原始层)]
+    B --> P[oh-pipeline<br/>标注 · NDI · 检测 ·<br/>词典语义 · 知识图谱]
+    B --> A[oh-agents<br/>拆解 · 报告 ·<br/>简报 · 追踪 · 判断]
+    P --> ST[(oh-storage<br/>silver sqlite)]
+    A --> ST
+    ST --> API[oh-api<br/>FastAPI 门面<br/>observe / cases / tracking / archive]
+    LLM[oh-llm<br/>三级路由<br/>deepseek / zhipu] --> A
+    API --> W[web<br/>Next.js 报纸风前端<br/>NOW / INVESTIGATE / WATCH / MEMORY]
+    ST --> PE[(product_events<br/>12 类事件账本)]
+```
+
+## 路线图
+
+| 已交付 | 下一步 | 开放研究 |
+|---|---|---|
+| 18 类锚定抽取、NDI+置信区间+弃权、跟踪单元、只增认知时间线、词典兜底、人工闸门 | 语义检索（本地 embedding）、对词典盲区的 LLM 立场标注、流式采集 | 知识图谱时序边、跨语言论断对齐、NDI 因果归因 |
+
+## 已知限制
+
+当前版本为单用户、非商业研究构建：
+
+- 搜索是对 bronze 的子串匹配（尚无 embedding / FTS5）。
+- 采集是批量/cron 而非流式——新鲜度指示器如实呈现时滞。
+- 认知快照已存储并可 diff，但不对信念修正建模（刻意的：闭环不应朝「改变用户想法」方向自我
+  优化）。
+- NDI 是描述性分歧度量，不是预测器——界面如此声明。
+- 无多用户鉴权与同步。
+
+完整设计决策与里程碑：[`docs/RECONSTRUCTION.md`](docs/RECONSTRUCTION.md) ·
+架构图：[`docs/ARCHITECTURE_MAP.md`](docs/ARCHITECTURE_MAP.md)。
 
 ## 仓库结构
 
@@ -164,16 +176,15 @@ uv run python scripts/dev/run_daily.py --days 15      # 事件/立场/NDI
 packages/          uv workspace：oh-contracts / oh-sources / oh-pipeline / oh-storage /
                    oh-agents / oh-api / oh-llm
 web/               Next.js 16 前端（App Router）
-scripts/dev/       serve / run_daily / cron_collect / backfill 工具
-docs/              RECONSTRUCTION.md（设计决策，M1–M6 里程碑）· ARCHITECTURE_MAP.md ·
-                   demo_en/ demo_zh/（全流程截图）
-data/              运行时 SQLite + Parquet bronze（不入库）
+scripts/dev/       serve / run_daily / cron_collect / demo_up / demo_snapshot / demo_restore
+docs/              RECONSTRUCTION.md · ARCHITECTURE_MAP.md · demo_en/ demo_zh/（全流程截图）
+data/              运行时 SQLite + Parquet bronze（不入库；演示包走 Release 下载）
 ```
 
 ## 测试
 
 ```bash
-uv run pytest -q          # 全仓 627+ 测试
+uv run pytest -q          # 全仓 620+ 测试
 cd web && npx tsc --noEmit && npx eslint .
 uv run ruff check packages scripts
 ```
